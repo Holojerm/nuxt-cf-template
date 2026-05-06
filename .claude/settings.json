@@ -1,0 +1,25 @@
+{
+  "enableAllProjectMcpServers": true,
+  "permissions": {
+    "allow": [
+      "Bash(bun run *)",
+      "Bash(bun dev*)",
+      "Bash(bun build*)",
+      "Bash(bunx drizzle-kit *)",
+      "Bash(bunx wrangler *)",
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add *)",
+      "Bash(git commit*)",
+      "Bash(git checkout*)",
+      "Bash(git branch*)",
+      "Bash(git push*)",
+      "Bash(git pull*)"
+    ],
+    "deny": [
+      "Bash(wrangler secret *)",
+      "Bash(rm -rf *)"
+    ]
+  }
+}

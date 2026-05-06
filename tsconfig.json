@@ -1,0 +1,13 @@
+{
+  // Nuxt generates .nuxt/tsconfig.json — extend it here.
+  // Do NOT configure paths, includes, or lib here; Nuxt manages that.
+  "extends": "./.nuxt/tsconfig.json",
+  "compilerOptions": {
+    // Vite/Nuxt recommended TypeScript settings
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "exactOptionalPropertyTypes": false
+  }
+}

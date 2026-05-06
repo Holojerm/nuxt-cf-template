@@ -1,0 +1,12 @@
+{
+  "plugins": ["vue", "typescript"],
+  "env": {
+    "browser": true,
+    "es2022": true
+  },
+  "ignorePatterns": [".nuxt/**", ".output/**", ".agents/**", ".claude/**", "dist/**", "node_modules/**"],
+  "rules": {
+    "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
+    "prefer-const": "error"
+  }
+}

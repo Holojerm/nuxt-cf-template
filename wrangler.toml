@@ -1,0 +1,33 @@
+# Wrangler config for Cloudflare Workers
+# NuxtHub Admin was sunset Feb 2, 2026 — deploy via `bun run deploy` (which runs `nuxt build && wrangler --cwd .output deploy`).
+# Requires `wrangler login` OR CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars.
+#
+# ─── PROJECT NAME ────────────────────────────────────────────────────────────
+# Update `name`, `database_name`, `bucket_name`, and `NUXT_PUBLIC_APP_NAME` to
+# match your project. Also update the `db:migrate*` scripts in package.json,
+# which hardcode the database name (wrangler's migrations subcommand requires it).
+# ─────────────────────────────────────────────────────────────────────────────
+
+name = "my-app"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "my-app-db"
+database_id = "YOUR_D1_DATABASE_ID"
+migrations_dir = "./server/db/migrations"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "YOUR_KV_NAMESPACE_ID"
+
+[[r2_buckets]]
+binding = "BLOB"
+bucket_name = "my-app-blob"
+
+[vars]
+NUXT_PUBLIC_APP_NAME = "My App"
+
+# Secrets (set via: wrangler secret put NUXT_SESSION_PASSWORD)
+# NUXT_SESSION_PASSWORD — 32+ char random string for sealed sessions
