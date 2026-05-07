@@ -226,7 +226,8 @@ if (!session.user) throw createError({ statusCode: 401 })
 ## Common Commands
 
 ```bash
-bun dev               # Start dev server (NuxtHub local emulator)
+bun dev               # Start dev server at https://<portless-name>.localhost (via portless — avoids port-3000 collisions across projects/agents)
+bun dev:app           # Bypass portless and run nuxt dev directly on http://localhost:3000
 bun build             # Build for Cloudflare
 bun lint              # Run oxlint
 bun lint:fix          # Auto-fix lint issues
@@ -274,7 +275,7 @@ This project ships with Claude Code configuration in `.mcp.json` and `.claude/`.
 **Setup notes:**
 - `cloudflare-*` and `nuxt-ui` work with no credentials — always available.
 - For GitHub MCP: set `GITHUB_TOKEN` in your shell (a PAT with repo read scope is enough).
-- For live Nuxt introspection: start `bun dev` before opening Claude Code.
+- For live Nuxt introspection: start `bun dev` before opening Claude Code. The `nuxt` server URL in `.mcp.json` is `https://<portless-name>.localhost/__mcp/sse` and must match the `portless.name` in `package.json`. Rename both when you fork.
 - Drizzle MCP works automatically via `bunx`.
 
 ### NuxtUI Skill (`.claude/skills/nuxt-ui/`)
