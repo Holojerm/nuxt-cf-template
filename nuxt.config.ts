@@ -39,6 +39,11 @@ export default defineNuxtConfig({
     // NUXT_PUBLIC_APP_NAME in wrangler.toml [vars] overrides this at runtime
     public: {
       appName: 'My App',
+      // PostHog — paste your project's phc_… key here (or set
+      // NUXT_PUBLIC_POSTHOG_KEY in env). Public-by-design; ships in the
+      // client bundle. Empty key = plugin no-ops, nothing tracked.
+      posthogKey: '',
+      posthogHost: 'https://us.i.posthog.com',
     },
   },
 
