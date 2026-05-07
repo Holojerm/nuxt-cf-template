@@ -2,6 +2,7 @@
   "name": "nuxt-cf-template",
   "private": true,
   "type": "module",
+  "portless": "my-app",
   "scripts": {
     "build": "nuxt build",
     "dev": "nuxt dev",
