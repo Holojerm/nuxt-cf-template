@@ -22,7 +22,7 @@ A production-ready template for full-stack apps on **Nuxt 4 + Cloudflare Workers
 
 ### 1. Rename the project
 
-`my-app` is the placeholder name. Update it in **three places**:
+`my-app` is the placeholder name. Update it in **three files**:
 
 **[`wrangler.toml`](./wrangler.toml):**
 
@@ -34,15 +34,21 @@ bucket_name = "my-app-blob"  # R2 bucket name
 NUXT_PUBLIC_APP_NAME = "My App"  # Display name shown in the UI
 ```
 
-**[`package.json`](./package.json) — `db:migrate` scripts hardcode the D1 name, and the `portless` key sets the local URL:**
+**[`package.json`](./package.json) — `db:migrate` scripts hardcode the D1 name, and the `portless.name` field sets the local dev URL:**
 
 ```json
 "db:migrate": "wrangler d1 migrations apply my-app-db --local",
 "db:migrate:remote": "wrangler d1 migrations apply my-app-db --remote",
-"portless": "my-app"
+"portless": { "name": "my-app", "script": "dev:app" }
 ```
 
-(The wrangler `migrations apply` subcommand takes the database name, not the binding, so it has to be hardcoded. The `portless` value controls your local dev URL — see [Local development with portless](#local-development-with-portless-optional) below.)
+**[`.mcp.json`](./.mcp.json) — the Nuxt MCP server URL:**
+
+```json
+"nuxt": { "type": "sse", "url": "https://my-app.localhost/__mcp/sse" }
+```
+
+(The wrangler `migrations apply` subcommand takes the database name, not the binding, so it has to be hardcoded. `portless.name` and the MCP URL must match — they both share the same `<name>.localhost` host.)
 
 ### 2. Create Cloudflare resources
 
@@ -93,8 +99,10 @@ In your repo → **Settings → Secrets and variables → Actions**, add:
 ```bash
 bun install
 bun db:migrate     # Apply initial migration to local D1
-bun dev            # Start dev server with local Cloudflare emulator
+bun dev            # Start dev server at https://my-app.localhost (via portless)
 ```
+
+> **First-run note:** `bun dev` runs through [portless](https://portless.sh) so multiple Nuxt projects (and AI agents) can run side-by-side without colliding on port 3000. The first invocation will request `sudo` once to bind port 443 and trust a local CA for HTTPS. Subsequent runs are silent. **macOS / Linux only — no Windows support.**
 
 Push to `main` to trigger a production deploy via GitHub Actions, or deploy manually:
 
@@ -104,32 +112,11 @@ bun run deploy     # Note: NOT `bun deploy` — that's reserved by Bun
 
 ---
 
-## Local development with portless (optional)
-
-Running multiple Nuxt projects (or multiple AI agents) at the same time, they all default to port 3000 and collide. [portless](https://portless.sh) gives each project a stable named URL like `https://my-app.localhost` and a random backend port, so they coexist.
-
-**One-time install** (macOS or Linux only — no Windows support):
-
-```bash
-npm install -g portless
-```
-
-**Run the project through portless instead of `bun dev`:**
-
-```bash
-portless          # → https://my-app.localhost
-```
-
-`portless` reads the `"portless"` key in `package.json` for the URL name, then runs the `dev` script through its proxy. First run will request `sudo` once to bind port 443 and trust a local CA for HTTPS. `bun dev` still works unchanged for anyone not using portless.
-
-> **Note on the Nuxt MCP server:** [`.mcp.json`](./.mcp.json) points the `nuxt` SSE server at `http://localhost:3000/__mcp/sse`. When you switch to portless, change that URL to `https://my-app.localhost/__mcp/sse` (using your renamed project name).
-
----
-
 ## Common commands
 
 ```bash
-bun dev               # Start dev server (local Cloudflare emulator)
+bun dev               # Start dev server at https://my-app.localhost (via portless)
+bun dev:app           # Start dev server directly on http://localhost:3000 (bypass portless)
 bun build             # Build for Cloudflare
 bun lint              # Run oxlint
 bun lint:fix          # Auto-fix lint issues
@@ -196,4 +183,4 @@ This template ships with Claude Code configuration out of the box:
 - **Skills** (`.claude/skills/`): NuxtUI, frontend design, theming, and more
 - **AI guide** (`CLAUDE.md`): stack conventions, patterns, and rules for AI-assisted development
 
-The Nuxt MCP server (`localhost:3000/__mcp/sse`) requires `bun dev` to be running. Everything else works without any extra setup.
+The Nuxt MCP server requires `bun dev` to be running — its URL in `.mcp.json` is `https://<your-portless-name>.localhost/__mcp/sse` (defaults to `my-app`; rename when you fork). Everything else works without any extra setup.

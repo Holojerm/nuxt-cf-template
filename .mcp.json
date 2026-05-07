@@ -17,7 +17,7 @@
     },
     "nuxt": {
       "type": "sse",
-      "url": "http://localhost:3000/__mcp/sse"
+      "url": "https://my-app.localhost/__mcp/sse"
     },
     "nuxt-ui": {
       "type": "http",
