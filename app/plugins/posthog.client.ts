@@ -1,9 +1,13 @@
-// PostHog product analytics + session replay + exception tracking.
-// Client-only — `.client.ts` suffix prevents this from running on the server.
+// PostHog product analytics + session replay + exception tracking + heatmaps
+// + web vitals + dead-click detection. Client-only — `.client.ts` suffix
+// prevents this from running on the server.
 //
 // Configure via runtime config (see nuxt.config.ts):
 //   - public.posthogKey    → NUXT_PUBLIC_POSTHOG_KEY
-//   - public.posthogHost   → NUXT_PUBLIC_POSTHOG_HOST (default: https://us.i.posthog.com)
+//   - public.posthogHost   → NUXT_PUBLIC_POSTHOG_HOST (used by the server-side
+//                            capture util only; the browser SDK talks to
+//                            `/ingest` which is reverse-proxied to PostHog by
+//                            server/routes/ingest/[...path].ts).
 //
 // The project API key (phc_…) is designed to be public — safe to ship in the
 // client bundle and to commit to wrangler.toml [vars]. Do NOT use the personal
@@ -14,27 +18,41 @@
 
 import posthog from 'posthog-js'
 
-export default defineNuxtPlugin(() => {
+export default defineNuxtPlugin((nuxtApp) => {
   const config = useRuntimeConfig()
   const key = config.public.posthogKey
-  const host = config.public.posthogHost || 'https://us.i.posthog.com'
 
   if (!key) return
 
   posthog.init(key, {
-    api_host: host,
+    // Same-origin reverse proxy — defeats ad blockers that drop *.posthog.com.
+    // The /ingest/* route in server/routes proxies to us.i.posthog.com.
+    api_host: '/ingest',
+    // ui_host is where "view in PostHog" links resolve to (the dashboard).
+    ui_host: 'https://us.posthog.com',
+
     person_profiles: 'identified_only',
+
     // Manual pageview capture below — Nuxt's SPA router doesn't emit the
     // navigation events posthog-js listens for by default.
     capture_pageview: false,
     capture_pageleave: true,
-    autocapture: true,
-    capture_exceptions: true,
+
+    // Maximum-feedback toggles. Each one is independently useful:
+    autocapture: true, // every click, form submit, change event
+    capture_exceptions: true, // window.onerror + unhandled rejections
+    capture_performance: true, // web vitals (LCP, CLS, INP) + resource timing
+    capture_dead_clicks: true, // clicks that produced no DOM change (UX signal)
+    enable_heatmaps: true, // mouse-position heatmap data on every page
+
     session_recording: {
       maskAllInputs: true,
       // Add `data-private` to any element whose text shouldn't be recorded.
       maskTextSelector: '[data-private]',
+      recordCrossOriginIframes: false,
     },
+    enable_recording_console_log: true, // include console.* in replays
+
     loaded: (ph) => {
       // Don't pollute production analytics with dev traffic.
       if (import.meta.dev) ph.opt_out_capturing()
@@ -48,7 +66,22 @@ export default defineNuxtPlugin(() => {
     })
   })
 
-  // Tie events to the authenticated user when a session exists; reset on logout.
+  // Vue runtime errors → PostHog. window.onerror (covered by
+  // `capture_exceptions`) misses errors swallowed by Vue's error boundary, so
+  // we hook the Vue handler too.
+  nuxtApp.vueApp.config.errorHandler = (err, instance, info) => {
+    const error = err instanceof Error ? err : new Error(String(err))
+    posthog.captureException(error, {
+      vue_component: instance?.$options?.name || instance?.$options?.__name,
+      vue_info: info,
+    })
+    if (import.meta.dev) console.error(err)
+  }
+
+  // Tie events to the authenticated user when a session exists; reset on
+  // logout. Sign-in/sign-out *events* are best fired server-side from your
+  // auth callbacks (see server/utils/posthog.ts) so they can attach the auth
+  // method (`google_oauth`, etc.).
   const { user } = useUserSession()
   watch(
     () => user.value,
