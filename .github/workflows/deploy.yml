@@ -9,8 +9,8 @@ on:
       - main
 
 jobs:
-  lint:
-    name: Lint & Type Check
+  check:
+    name: Lint, Type Check & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -35,10 +35,13 @@ jobs:
       - name: Type check
         run: bun run typecheck
 
+      - name: Test
+        run: bun run test
+
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
-    needs: lint
+    needs: check
     # Only deploy on push to main (not PRs)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
