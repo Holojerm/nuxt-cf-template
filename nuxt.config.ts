@@ -7,6 +7,11 @@ export default defineNuxtConfig({
 
   modules: ['@nuxt/ui', '@nuxthub/core', 'nuxt-auth-utils', 'nuxt-mcp'],
 
+  // NuxtUI v4 requires this CSS entry — without it, Tailwind utilities and
+  // NuxtUI semantic tokens (text-foreground, bg-background, etc.) won't apply
+  // and pages render unstyled. See app/assets/css/main.css.
+  css: ['~/assets/css/main.css'],
+
   // NuxtHub — Cloudflare D1, KV, R2, and Blob bindings
   hub: {
     db: 'sqlite', // D1 SQLite via Drizzle (auto-imports `db` and `schema` in server routes)

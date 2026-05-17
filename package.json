@@ -21,6 +21,7 @@
     "db:migrate": "wrangler d1 migrations apply my-app-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply my-app-db --remote",
     "db:studio": "drizzle-kit studio",
+    "seed": "bun run scripts/seed.ts",
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -32,6 +33,7 @@
     "nuxt": "^4.4.4",
     "nuxt-auth-utils": "^0.5.29",
     "posthog-js": "^1.372.9",
+    "tailwindcss": "^4.2.4",
     "vue": "^3.5.34",
     "vue-router": "^5.0.6",
     "zod": "^4.4.3"

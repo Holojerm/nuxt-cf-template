@@ -26,6 +26,10 @@ Thumbs.db
 # Cloudflare / Wrangler
 .wrangler/
 
+# Claude Code worktrees — created on demand by agent isolation features.
+# Never commit; vue-tsc / nuxt prepare otherwise tries to type-check them.
+.claude/worktrees/
+
 # Logs
 *.log
 npm-debug.log*

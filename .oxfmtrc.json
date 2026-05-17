@@ -4,5 +4,19 @@
   "tabWidth": 2,
   "useTabs": false,
   "printWidth": 100,
-  "ignorePatterns": [".nuxt/**", ".output/**", "dist/**"]
+  "ignorePatterns": [
+    ".nuxt/**",
+    ".output/**",
+    ".data/**",
+    ".wrangler/**",
+    "dist/**",
+    "node_modules/**",
+    ".agents/**",
+    ".claude/**",
+    ".github/**",
+    "docs/**",
+    "server/db/migrations/**",
+    "**/*.md",
+    "**/*.json"
+  ]
 }
