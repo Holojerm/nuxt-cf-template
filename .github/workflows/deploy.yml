@@ -44,6 +44,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Wrangler v4 requires Node 22+ (engines field in wrangler's package.json).
+      # Ubuntu runners ship multiple Node versions; pin to 22 explicitly so
+      # `bunx wrangler deploy` runs against a compatible runtime.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
