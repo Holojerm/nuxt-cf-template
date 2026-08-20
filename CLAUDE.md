@@ -18,7 +18,7 @@ When working with AI assistants (Claude, etc.), always reference this file first
 | File Storage | **Cloudflare R2**          | For uploads (images, videos, docs)                               |
 | Auth         | **nuxt-auth-utils**        | Sealed cookie sessions, OAuth                                    |
 | Deployment   | **Wrangler**               | `bun deploy` → `wrangler deploy` (NuxtHub Admin sunset Feb 2026) |
-| CI/CD        | **GitHub Actions**         | Lint → Type check → Deploy                                       |
+| CI/CD        | **Workers Builds**         | Cloudflare-native CI: `bun run ci` + deploy on push (see README) |
 | Linting      | **oxlint**                 | Fast Rust-based linter, config in `.oxlintrc.json`               |
 | Formatting   | **oxfmt**                  | Fast Rust-based formatter, config in `.oxfmtrc.json`             |
 | Validation   | **Zod**                    | All user input + API I/O                                         |
@@ -47,7 +47,7 @@ When working with AI assistants (Claude, etc.), always reference this file first
 │   └── utils/              # Server utilities (helpers, etc.)
 ├── scripts/                # One-off scripts (bun seed, etc.)
 ├── public/                 # Static assets
-├── .github/workflows/      # CI/CD
+├── .github/                # Dependabot config (CI/CD lives in Cloudflare Workers Builds)
 ├── drizzle.config.ts       # Drizzle Kit config
 ├── nuxt.config.ts
 ├── wrangler.toml
@@ -219,11 +219,11 @@ if (!session.user) throw createError({ statusCode: 401 })
 
 ## Git Workflow
 
-- **`main`** — production branch, auto-deploys via GitHub Actions
+- **`main`** — production branch, auto-deploys via Cloudflare Workers Builds
 - **`dev`** — integration branch (optional for larger features)
 - **Feature branches**: `feat/workout-builder`, `fix/auth-redirect`, `chore/update-deps`
 - **Commit format**: `feat: add workout builder`, `fix: correct auth redirect`, `chore: update deps`
-- **PRs require**: lint + typecheck to pass before merge
+- **PRs require**: lint + typecheck + tests to pass before merge — enforced by the Workers Builds check (non-production branch builds run `bun run ci` and post status + a preview URL back to the PR)
 
 ---
 
@@ -242,7 +242,9 @@ bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1
 bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db)
-bun deploy            # Deploy to Cloudflare via wrangler deploy
+bun run ci            # Lint + typecheck + test + build — what Workers Builds runs on every push
+bun run deploy        # Manual deploy to Cloudflare via wrangler (normally unnecessary —
+                      # Workers Builds deploys automatically on push to main).
                       # Requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars
 ```
 
@@ -318,9 +320,9 @@ NuxtHub serves the dev DB from `.data/db/sqlite.db`. Wrangler's own local D1 san
 
 When Claude Code agents use isolated worktrees, the worktree's older code lives under `.claude/worktrees/` and Nuxt's TypeScript pipeline picks it up — causing phantom type errors against deleted/renamed code. `.gitignore` excludes the directory, but if you see "module not found" errors for files that no longer exist in your tree, `rm -rf .claude/worktrees/<old>` is the fix. Don't try to exclude it via `tsconfig.json` — Nuxt regenerates `.nuxt/tsconfig.json` and overrides excludes.
 
-### `bunx wrangler` needs Node 22 on CI
+### Workers Builds: dashboard Worker name must match `wrangler.toml`
 
-Wrangler v4's `engines.node` is `>=22.0.0`. The GitHub Actions deploy job installs Node 22 explicitly via `actions/setup-node@v4` before `oven-sh/setup-bun`. If you copy that workflow elsewhere, keep the Node step.
+CI/CD runs on Cloudflare Workers Builds (repo connected in the dashboard under Worker → Settings → Build). The Worker's name in the dashboard must exactly match `name` in the root `wrangler.toml`, or every build fails before it starts. When you fork and rename the project, reconnect the repo to a Worker with the new name. Build settings live in the dashboard, not in the repo: build command `bun run ci`, deploy command `bunx wrangler --cwd .output deploy`, preview deploy command (non-production branches) `bunx wrangler --cwd .output versions upload`. `NUXT_SESSION_PASSWORD` must be set as a build variable there too — the old GitHub Actions secrets are gone.
 
 ### Don't add `nuxt-mcp-toolkit` config under `mcp:` in `nuxt.config.ts`
 

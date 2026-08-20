@@ -15,7 +15,7 @@ A production-ready template for full-stack apps on **Nuxt 4 + Cloudflare Workers
 | Validation | Zod |
 | Testing | Vitest + `@cloudflare/vitest-pool-workers` (real `workerd` runtime, real bindings) |
 | Deployment | Wrangler → Cloudflare Workers |
-| CI/CD | GitHub Actions (lint → typecheck → test → deploy) |
+| CI/CD | Cloudflare Workers Builds (lint → typecheck → test → build → deploy) |
 
 ---
 
@@ -87,13 +87,20 @@ Set the session password as a Worker secret (required for production):
 bunx wrangler secret put NUXT_SESSION_PASSWORD
 ```
 
-### 4. Add GitHub Actions secrets
+### 4. Connect Workers Builds (CI/CD)
 
-In your repo → **Settings → Secrets and variables → Actions**, add:
+CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/), Cloudflare's native build system — no GitHub Actions, no API tokens to rotate. In the [Cloudflare dashboard](https://dash.cloudflare.com/?to=/:account/workers-and-pages):
 
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
-- `NUXT_SESSION_PASSWORD`
+1. Select (or create) the Worker — its name **must match** `name` in `wrangler.toml`.
+2. Go to **Settings → Build → Connect** and pick this repository.
+3. Configure the build:
+   - **Build command**: `bun run ci` (lint → typecheck → test → build)
+   - **Deploy command**: `bunx wrangler --cwd .output deploy`
+   - **Preview deploy command**: `bunx wrangler --cwd .output versions upload`
+4. Under **Build Variables and Secrets**, add `NUXT_SESSION_PASSWORD` (mark it secret).
+5. Enable **non-production branch builds** (Settings → Build → Branch control) to get build checks and preview URLs on every PR.
+
+Every push to `main` now lints, typechecks, tests, builds, and deploys. Pushes to other branches run the same checks and post a preview URL as a PR comment.
 
 ### 5. Run locally and deploy
 
@@ -105,7 +112,7 @@ bun dev            # Start dev server at https://my-app.localhost (via portless)
 
 > **First-run note:** `bun dev` runs through [portless](https://portless.sh) so multiple Nuxt projects (and AI agents) can run side-by-side without colliding on port 3000. The first invocation will request `sudo` once to bind port 443 and trust a local CA for HTTPS. Subsequent runs are silent. **macOS / Linux only — no Windows support.**
 
-Push to `main` to trigger a production deploy via GitHub Actions, or deploy manually:
+Push to `main` to trigger a production deploy via Workers Builds, or deploy manually:
 
 ```bash
 bun run deploy     # Note: NOT `bun deploy` — that's reserved by Bun
@@ -123,6 +130,7 @@ bun lint              # Run oxlint
 bun lint:fix          # Auto-fix lint issues
 bun format            # Format with oxfmt
 bun typecheck         # TypeScript type checking
+bun run ci            # Lint + typecheck + test + build — what Workers Builds runs on every push
 bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1 (via wrangler)
 bun db:migrate:remote # Apply migrations to remote/prod D1
@@ -154,7 +162,7 @@ bun run deploy        # Build + deploy to Cloudflare (`bun deploy` is reserved b
 │   └── middleware/     # Server middleware (auth guard included)
 ├── test/               # Vitest tests (workerd-runtime, real CF bindings)
 ├── .claude/            # Claude Code config (commands, skills, MCP)
-├── .github/workflows/  # CI/CD
+├── .github/            # Dependabot config (CI/CD lives in Cloudflare Workers Builds)
 ├── vitest.config.ts    # Vitest + @cloudflare/vitest-pool-workers config
 ├── wrangler.toml       # Cloudflare config (rename project here)
 └── CLAUDE.md           # AI development guide
@@ -202,6 +210,8 @@ See [`test/example.test.ts`](./test/example.test.ts) for the starter pattern. Co
 2. `wrangler --cwd .output deploy` — uploads the built worker.
 
 The Cloudflare preset has to be pinned in `nuxt.config.ts`; the `@nuxthub/core` module does **not** auto-detect it for `nuxt build` (it only auto-detected in the legacy `nuxthub deploy` command, which Cloudflare sunset Feb 2026).
+
+Workers Builds runs the same two steps in CI — `bun run ci` covers the build (plus lint, typecheck, and tests), and the deploy command is the same `wrangler --cwd .output deploy`. Builds run inside your Cloudflare account, so CI needs no API token.
 
 ---
 
