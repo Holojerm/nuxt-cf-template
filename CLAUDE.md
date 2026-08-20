@@ -297,6 +297,18 @@ Installed via `npx skills add nuxt/ui --agent claude-code`. Provides Claude with
 | `/scaffold-api` | `/scaffold-api [path] [method]` | Generate an API route with Zod + auth |
 | `/db-migrate` | `/db-migrate` | Run the full Drizzle migration workflow |
 | `/new-feature` | `/new-feature FeatureName` | Full stack scaffold: component + API routes + schema |
+| `/routines` | `/routines sync\|status\|enable\|disable\|run` | Manage the cloud operations routines defined in `.claude/routines/` |
+
+### Operations Routines (`.claude/routines/`)
+
+Repo-shipped definitions for cloud agents that run the commercial side of a fork semi-autonomously:
+GitHub issue triage, bug-fix PRs, support-inbox drafting, weekly analytics review, marketing
+drafts, and a single daily digest email to the owner. **All ship default-inactive** — `/routines
+sync` registers them (disabled) in your claude.ai account, and each one is enabled explicitly.
+Routines coordinate through an `ops-journal` branch (never merged to `main`, so journal commits
+don't trigger deploys). When forking: fill in `.claude/routines/routines.config.md`, connect
+GitHub + Gmail at claude.ai/customize/connectors, then `/routines sync`. Full docs in
+[.claude/routines/README.md](.claude/routines/README.md).
 
 ---
 
