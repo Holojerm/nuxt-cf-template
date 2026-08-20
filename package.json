@@ -40,15 +40,15 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.16.6",
+    "@cloudflare/vitest-pool-workers": "^0.21.3",
     "@cloudflare/workers-types": "^4.20260506.1",
     "@libsql/client": "^0.17.3",
     "@nuxthub/core": "^0.10.7",
     "drizzle-kit": "^0.31.10",
     "nuxt-mcp": "^0.2.6",
-    "oxfmt": "^0.48.0",
+    "oxfmt": "^0.63.0",
     "oxlint": "^1.63.0",
-    "portless": "^0.12.0",
+    "portless": "^0.15.5",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6",
     "vue-tsc": "^3.2.8",
