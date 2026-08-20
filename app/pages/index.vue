@@ -1,7 +1,7 @@
 <template>
   <div class="flex flex-col items-center justify-center gap-8 py-20">
     <div class="text-center">
-      <h1 class="text-4xl font-bold tracking-tight text-foreground">
+      <h1 class="text-4xl text-highlighted sm:text-5xl">
         Welcome to {{ config.public.appName }}
       </h1>
       <p class="mt-4 text-lg text-muted">Nuxt 4 · NuxtUI · Cloudflare Workers · D1 · KV · R2</p>

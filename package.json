@@ -22,10 +22,11 @@
     "db:migrate:remote": "wrangler d1 migrations apply my-app-db --remote",
     "db:studio": "drizzle-kit studio",
     "seed": "bun run scripts/seed.ts",
+    "design:check": "bun run scripts/check-design-tokens.ts",
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
-    "ci": "bun run lint && bun run typecheck && bun run test && bun run build",
+    "ci": "bun run lint && bun run design:check && bun run typecheck && bun run test && bun run build",
     "deploy": "nuxt build && wrangler --cwd .output deploy"
   },
   "dependencies": {
@@ -42,6 +43,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.21.3",
     "@cloudflare/workers-types": "^4.20260506.1",
+    "@iconify-json/lucide": "^1.2.124",
     "@libsql/client": "^0.17.3",
     "@nuxthub/core": "^0.10.8",
     "drizzle-kit": "^0.31.10",
