@@ -25,6 +25,7 @@
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
+    "ci": "bun run lint && bun run typecheck && bun run test && bun run build",
     "deploy": "nuxt build && wrangler --cwd .output deploy"
   },
   "dependencies": {

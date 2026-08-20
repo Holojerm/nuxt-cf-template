@@ -1,6 +1,9 @@
 # Wrangler config for Cloudflare Workers
-# NuxtHub Admin was sunset Feb 2, 2026 — deploy via `bun run deploy` (which runs `nuxt build && wrangler --cwd .output deploy`).
-# Requires `wrangler login` OR CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars.
+# CI/CD runs on Workers Builds (Cloudflare-native): pushes to main build & deploy
+# automatically once the repo is connected in the dashboard (Worker → Settings → Build).
+# The Worker name in the dashboard MUST match `name` below or builds fail.
+# Manual deploys: `bun run deploy` (nuxt build && wrangler --cwd .output deploy),
+# which requires `wrangler login` OR CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars.
 #
 # ─── PROJECT NAME ────────────────────────────────────────────────────────────
 # Update `name`, `database_name`, `bucket_name`, and `NUXT_PUBLIC_APP_NAME` to
