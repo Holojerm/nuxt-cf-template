@@ -19,7 +19,7 @@
         "@cloudflare/vitest-pool-workers": "^0.16.6",
         "@cloudflare/workers-types": "^4.20260506.1",
         "@libsql/client": "^0.17.3",
-        "@nuxthub/core": "^0.10.7",
+        "@nuxthub/core": "^0.10.8",
         "drizzle-kit": "^0.31.10",
         "nuxt-mcp": "^0.2.6",
         "oxfmt": "^0.48.0",
@@ -349,7 +349,7 @@
 
     "@nuxt/vite-builder": ["@nuxt/vite-builder@4.4.4", "", { "dependencies": { "@nuxt/kit": "4.4.4", "@rollup/plugin-replace": "^6.0.3", "@vitejs/plugin-vue": "^6.0.6", "@vitejs/plugin-vue-jsx": "^5.1.5", "autoprefixer": "^10.5.0", "consola": "^3.4.2", "cssnano": "^7.1.7", "defu": "^6.1.7", "escape-string-regexp": "^5.0.0", "exsolve": "^1.0.8", "get-port-please": "^3.2.0", "jiti": "^2.6.1", "knitwork": "^1.3.0", "magic-string": "^0.30.21", "mlly": "^1.8.2", "mocked-exports": "^0.1.1", "nypm": "^0.6.6", "pathe": "^2.0.3", "pkg-types": "^2.3.1", "postcss": "^8.5.12", "seroval": "^1.5.2", "std-env": "^4.1.0", "ufo": "^1.6.4", "unenv": "^2.0.0-rc.24", "vite": "^7.3.2", "vite-node": "^5.3.0", "vite-plugin-checker": "^0.13.0", "vue-bundle-renderer": "^2.2.0" }, "peerDependencies": { "@babel/plugin-proposal-decorators": "^7.25.0", "@babel/plugin-syntax-jsx": "^7.25.0", "nuxt": "4.4.4", "rolldown": "^1.0.0-beta.38", "rollup-plugin-visualizer": "^6.0.0 || ^7.0.1", "vue": "^3.3.4" }, "optionalPeers": ["@babel/plugin-proposal-decorators", "@babel/plugin-syntax-jsx", "rolldown", "rollup-plugin-visualizer"] }, "sha512-SNyxEYVeTo3d26tt5rxS550VOFLyXx1UBqhZJexWhk42HgHa3d115LWZx+4e+FJf75SYZ1B/KTrkVeeOhfNBMw=="],
 
-    "@nuxthub/core": ["@nuxthub/core@0.10.7", "", { "dependencies": { "@cloudflare/workers-types": "^4.20260214.0", "@nuxt/kit": "^4.3.1", "@uploadthing/mime-types": "^0.3.6", "c12": "^3.3.3", "chokidar": "^5.0.0", "citty": "^0.2.1", "consola": "^3.4.2", "defu": "^6.1.4", "execa": "^9.6.1", "get-port-please": "^3.2.0", "h3": "^1.15.4", "hookable": "6.0.1", "mime": "^4.1.0", "nypm": "^0.6.5", "ofetch": "^1.5.1", "pathe": "^2.0.3", "pkg-types": "^2.3.0", "scule": "^1.3.0", "std-env": "^3.10.0", "tinyglobby": "^0.2.15", "tsdown": "^0.18.1", "ufo": "^1.6.1", "uncrypto": "^0.1.3", "unstorage": "^1.17.3", "zod": "^4.2.1" }, "bin": { "nuxt-hub": "cli/bin/nuxthub.mjs", "nuxt-db": "cli/bin/nuxt-db.mjs" } }, "sha512-L8GNzGE081udFIPyy3v8xlr8Cv6fijkEkvguB+Cg+0bMQiJSlzyay8FQyPDggXmn2ZcZLLCN3Z+VbTa9Vt93eQ=="],
+    "@nuxthub/core": ["@nuxthub/core@0.10.8", "", { "dependencies": { "@cloudflare/workers-types": "^4.20260214.0", "@nuxt/kit": "^4.3.1", "@uploadthing/mime-types": "^0.3.6", "c12": "^3.3.3", "chokidar": "^5.0.0", "citty": "^0.2.1", "consola": "^3.4.2", "defu": "^6.1.4", "execa": "^9.6.1", "get-port-please": "^3.2.0", "h3": "^1.15.11", "hookable": "6.0.1", "mime": "^4.1.0", "nypm": "^0.6.5", "ofetch": "^1.5.1", "pathe": "^2.0.3", "pkg-types": "^2.3.0", "scule": "^1.3.0", "std-env": "^3.10.0", "tinyglobby": "^0.2.15", "tsdown": "^0.18.1", "ufo": "^1.6.1", "uncrypto": "^0.1.3", "unstorage": "^1.17.3", "zod": "^4.2.1" }, "peerDependencies": { "@vercel/blob": ">=0.27.0" }, "optionalPeers": ["@vercel/blob"], "bin": { "nuxt-hub": "cli/bin/nuxthub.mjs", "nuxt-db": "cli/bin/nuxt-db.mjs" } }, "sha512-5FdvRleN8gqd/9wKnuYzcA3KXnyQ/wVwS+4ZJYCBKxI8XmGC/J3R98qgsRF3ATDYoViL625viPpACEhfcaQrDQ=="],
 
     "@nuxtjs/color-mode": ["@nuxtjs/color-mode@3.5.2", "", { "dependencies": { "@nuxt/kit": "^3.13.2", "pathe": "^1.1.2", "pkg-types": "^1.2.1", "semver": "^7.6.3" } }, "sha512-cC6RfgZh3guHBMLLjrBB2Uti5eUoGM9KyauOaYS9ETmxNWBMTvpgjvSiSJp1OFljIXPIqVTJ3xtJpSNZiO3ZaA=="],
 
