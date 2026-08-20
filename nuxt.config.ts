@@ -40,6 +40,13 @@ export default defineNuxtConfig({
     // Server-only secrets (access via useRuntimeConfig().mySecret)
     // Set via NUXT_SESSION_PASSWORD env var — Nuxt reads it automatically
     sessionPassword: '',
+    // Paddle billing (sandbox-first) — set via NUXT_PADDLE_* env vars / secrets
+    paddle: {
+      // Endpoint secret from Paddle → Developer tools → Notifications
+      webhookSecret: '',
+      // Server-side API key (only needed if you call Paddle's API, not for webhooks)
+      apiKey: '',
+    },
     // Public vars (access via useRuntimeConfig().public.myVar)
     // NUXT_PUBLIC_APP_NAME in wrangler.toml [vars] overrides this at runtime
     public: {
@@ -49,6 +56,10 @@ export default defineNuxtConfig({
       // client bundle. Empty key = plugin no-ops, nothing tracked.
       posthogKey: '',
       posthogHost: 'https://us.i.posthog.com',
+      // Paddle client-side token (public by design) + environment. Empty
+      // token = usePaddle() no-ops, so the template runs without a Paddle account.
+      paddleClientToken: '',
+      paddleEnv: 'sandbox',
     },
   },
 

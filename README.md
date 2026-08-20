@@ -223,6 +223,30 @@ To add OAuth (Google, GitHub, etc.), add the provider credentials to `.env` and 
 
 ---
 
+## Billing (Paddle)
+
+Subscription billing is pre-wired for [Paddle](https://www.paddle.com) (merchant of record), sandbox-first. With no Paddle env vars set, all of it no-ops — the template runs fine without a Paddle account.
+
+The pieces:
+
+| Piece | Where | What it does |
+| --- | --- | --- |
+| Webhook | [`server/routes/paddle/webhook.post.ts`](./server/routes/paddle/webhook.post.ts) | Verifies the `Paddle-Signature` HMAC (see `server/utils/paddle.ts`), upserts `entitlements` on `subscription.*` events. Lives outside `/api/` — the signature is the auth. |
+| Entitlements | `entitlements` table in [`server/db/schema.ts`](./server/db/schema.ts) | One row per Paddle subscription, keyed by `paddle_subscription_id`, mapped to a user via checkout `custom_data.userId`. |
+| Gating | `requireSubscription(event, productKey?)` in [`server/utils/billing.ts`](./server/utils/billing.ts) | Composes on `requireUserSession`; throws 401 signed-out, 402 unsubscribed. Auto-imported in all server routes. |
+| Checkout | `usePaddle()` in [`app/composables/usePaddle.ts`](./app/composables/usePaddle.ts) | Lazy-loads Paddle.js, opens overlay checkout with the signed-in user's email and `custom_data.userId`. |
+
+Setup (sandbox):
+
+1. Create a sandbox account at [sandbox-vendors.paddle.com](https://sandbox-vendors.paddle.com), add a product + price.
+2. Client token (Developer tools → Authentication) → `NUXT_PUBLIC_PADDLE_CLIENT_TOKEN`, keep `NUXT_PUBLIC_PADDLE_ENV=sandbox`.
+3. Notification destination (Developer tools → Notifications) pointing at `https://<your-app>/paddle/webhook`, subscribed to `subscription.*` and `transaction.completed`; its secret → `NUXT_PADDLE_WEBHOOK_SECRET` (via `wrangler secret put` in prod, `.env` in dev).
+4. In a page: `const { openCheckout } = usePaddle()` then `openCheckout('pri_…')`. Gate API routes with `await requireSubscription(event)`.
+
+Going live: swap the token/secret for live ones and set `NUXT_PUBLIC_PADDLE_ENV=production`.
+
+---
+
 ## Claude Code setup
 
 This template ships with Claude Code configuration out of the box:
