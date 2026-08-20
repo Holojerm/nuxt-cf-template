@@ -1,0 +1,23 @@
+{
+  "name": "my-app-mcp",
+  "private": true,
+  "type": "module",
+  "description": "Remote MCP server worker — OAuth-protected (workers-oauth-provider), sharing the app's D1 database.",
+  "scripts": {
+    "dev": "wrangler dev -c wrangler.jsonc",
+    "deploy": "wrangler deploy -c wrangler.jsonc",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply my-app-db --local -c wrangler.jsonc"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.10.3",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "agents": "^0.21.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260506.1",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.88.0"
+  }
+}

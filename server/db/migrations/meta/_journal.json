@@ -15,6 +15,13 @@
       "when": 1787203521187,
       "tag": "0001_legal_yellow_claw",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787203934571,
+      "tag": "0002_common_timeslip",
+      "breakpoints": true
     }
   ]
 }
