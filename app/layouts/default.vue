@@ -1,10 +1,10 @@
 <template>
-  <div class="min-h-screen bg-background">
+  <div class="min-h-screen bg-default">
     <!-- Navigation -->
-    <header class="border-b border-border">
-      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+    <header class="border-b border-default">
+      <UContainer>
         <div class="flex h-16 items-center justify-between">
-          <NuxtLink to="/" class="flex items-center gap-2 font-semibold text-foreground">
+          <NuxtLink to="/" class="flex items-center gap-2 font-semibold text-highlighted">
             <!-- Replace with your logo -->
             <span>{{ appName }}</span>
           </NuxtLink>
@@ -14,13 +14,13 @@
             <!-- Add nav links here -->
           </nav>
         </div>
-      </div>
+      </UContainer>
     </header>
 
     <!-- Main content -->
-    <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <UContainer as="main" class="py-8">
       <slot />
-    </main>
+    </UContainer>
   </div>
 </template>
 

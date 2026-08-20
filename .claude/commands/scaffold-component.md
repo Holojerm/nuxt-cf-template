@@ -19,7 +19,7 @@ The component must follow these conventions from CLAUDE.md:
 2. **Define props with a TypeScript interface** and `withDefaults(defineProps<Props>(), {...})`
 3. **Define emits with TypeScript** using `defineEmits<{ ... }>()`
 4. **Use NuxtUI components first** — check if `<UButton>`, `<UCard>`, `<UModal>`, etc. covers the need before writing custom markup
-5. **Semantic Tailwind tokens only** — `text-foreground`, `bg-background`, `text-muted`, `border-border` — never hardcoded colors like `text-gray-900`
+5. **Semantic NuxtUI v4 tokens only** — `text-default`/`text-muted`/`text-highlighted`, `bg-default`/`bg-muted`/`bg-elevated`, `border-default`/`border-muted`, plus `text-primary` etc. Never a numbered scale (`text-gray-900`) or a raw hex. Note `text-foreground`/`bg-background`/`border-border` are shadcn tokens and do **not** exist in NuxtUI v4
 6. **No manual imports** — Nuxt auto-imports `ref`, `computed`, `useFetch`, `useUserSession`, etc.
 7. **Mobile-first** — start with base styles, expand with `sm:`, `md:`, `lg:` breakpoints
 8. **PascalCase** component name in the filename
