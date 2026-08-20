@@ -246,7 +246,15 @@ bun run ci            # Lint + typecheck + test + build — what Workers Builds 
 bun run deploy        # Manual deploy to Cloudflare via wrangler (normally unnecessary —
                       # Workers Builds deploys automatically on push to main).
                       # Requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars
+bun run mcp:dev       # Run the optional MCP worker locally (mcp/ — bun install there first)
+bun run mcp:typecheck # Typecheck the MCP worker
+bun run mcp:deploy    # Deploy the MCP worker
 ```
+
+### Billing & MCP worker
+
+- **Paddle billing** is pre-wired: webhook at `server/routes/paddle/webhook.post.ts` (HMAC-verified, outside `/api/`), `entitlements` table, `requireSubscription(event, productKey?)` server util (throws 401/402), `usePaddle()` checkout composable. Gate paid API routes with `await requireSubscription(event)` — never trust client state for access control.
+- **MCP worker** (`mcp/`) is an optional second Worker: OAuth 2.1 (workers-oauth-provider + `OAUTH_KV`), stateless `createMcpHandler` tools at `/mcp`, sharing the app's D1 by `database_id`. The app owns all migrations; the worker reads with raw SQL. Users bridge identity with single-use connect codes (`POST /api/mcp/connect-code` ↔ the worker's `/authorize` page). Its wrangler scripts pass `-c wrangler.jsonc` — required, because the app build's `.wrangler/deploy/config.json` redirect confuses wrangler otherwise. Do not use `McpAgent` for new tools — it's deprecated in the agents SDK; `createMcpHandler` is the current path.
 
 ---
 
