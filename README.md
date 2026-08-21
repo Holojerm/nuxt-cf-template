@@ -116,7 +116,7 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
 1. Select (or create) the Worker — its name **must match** `name` in `wrangler.toml`.
 2. Go to **Settings → Build → Connect** and pick this repository.
 3. Configure the build:
-   - **Build command**: `bun run ci` (lint → design:check → seo:check → typecheck → test → a11y → build)
+   - **Build command**: `bun run ci` (lint → design:check → brand:check → seo:check → typecheck → test → a11y → build)
    - **Deploy command**: `bunx wrangler --cwd .output deploy`
    - **Preview deploy command**: `bunx wrangler --cwd .output versions upload`
 4. Under **Build Variables and Secrets**, add `NUXT_SESSION_PASSWORD` (mark it secret).
@@ -165,7 +165,9 @@ bun lint              # Run oxlint
 bun lint:fix          # Auto-fix lint issues
 bun format            # Format with oxfmt
 bun typecheck         # TypeScript type checking
-bun run ci            # Lint + design:check + seo:check + typecheck + test + test:a11y + build — Workers Builds runs this
+bun run brand:generate # Rebuild favicon, app icon, and og.png from the brand mark
+bun run brand:check   # Fail if those files no longer match the mark (part of ci)
+bun run ci            # Lint + design/brand/seo gates + typecheck + test + test:a11y + build — Workers Builds runs this
 bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1 (via wrangler)
 bun db:migrate:remote # Apply migrations to remote/prod D1
@@ -186,6 +188,7 @@ bun run deploy        # Build + deploy to Cloudflare (`bun deploy` is reserved b
 /
 ├── app/
 │   ├── components/     # Reusable UI components (group by feature)
+│   │   └── Brand/      # Logo.vue — the mark, and the only place it is drawn
 │   ├── composables/    # Shared stateful logic (usePaddle)
 │   ├── layouts/        # Page layouts (default.vue: nav + footer + legal links)
 │   ├── middleware/     # Route guards: auth, subscription (UX only — not the boundary)
@@ -207,6 +210,8 @@ bun run deploy        # Build + deploy to Cloudflare (`bun deploy` is reserved b
 ├── .claude/            # Claude Code config (commands, skills, MCP)
 ├── .github/            # Dependabot config (CI/CD lives in Cloudflare Workers Builds)
 ├── vitest.config.ts    # Vitest + @cloudflare/vitest-pool-workers config
+├── DESIGN.md           # Visual design system — the source of truth, see /design-sync
+├── brand.lock.json     # Fingerprint of the generated brand assets (see brand:check)
 ├── wrangler.toml       # Cloudflare config (rename project here)
 └── CLAUDE.md           # AI development guide
 ```
@@ -389,6 +394,43 @@ Going live: swap the token/secret for live ones and set `NUXT_PUBLIC_PADDLE_ENV=
 
 ---
 
+## Design system & brand mark
+
+[`DESIGN.md`](./DESIGN.md) is the source of truth for how this app looks — colour, type, space,
+motion, component behaviour, accessibility floors. It is written in the portable
+[DESIGN.md](https://designmd.app/) format, so Claude Code, Codex, and Cursor all read it
+directly. Two things compile out of it, and neither should ever be hand-edited:
+
+| Command | Reads | Writes |
+| --- | --- | --- |
+| `/design-sync` | DESIGN.md (colour, type, space, components) | `app/assets/css/main.css`, `app/app.config.ts` |
+| `/logo-sync` | DESIGN.md › Brand mark | `app/components/Brand/Logo.vue` |
+| `bun run brand:generate` | that component + the colour roles in DESIGN.md | `public/favicon.svg`, `public/apple-touch-icon.png`, `public/og.png`, `brand.lock.json` |
+
+The mark is drawn **once**, in a Vue component, and everything else is cut from it. That is the
+whole trick: a favicon, a home-screen icon, and a share image maintained as three separate
+files is three chances to redesign one of them and forget the others, and nothing ever fails
+when you do. Here the header renders the same `<svg data-brand-mark>` element the icons are
+generated from, and `bun run brand:check` — part of `bun run ci` — fails the build when the
+generated files stop matching it.
+
+Rasterising uses the Chromium that Playwright already installs for the accessibility suite, so
+there is no new dependency and `og.png` is composed in the same engine, with the same webfonts,
+that renders the site. It needs a network connection for those fonts; offline it still produces
+correct assets and tells you it fell back.
+
+Two gates keep app code inside the system: `bun run design:check` fails on anything that
+bypasses the token layer (a numbered colour scale, a raw hex, a suppressed focus ring), and
+`bun run test:a11y` runs axe in a real browser over every public route in both colour modes.
+The dev-only `/design-system` route renders every token, component state, and generated brand
+asset on one page — that is where you verify a change actually landed.
+
+Forking? Replace everything below the Identity heading in `DESIGN.md` (or drop in one from
+[designmd.app](https://designmd.app/)), run `/design-sync`, then `/logo-sync`. A fork that would
+rather hand-author its icons can drop `brand:check` from the `ci` script.
+
+---
+
 ## SEO & AEO
 
 Classic SEO is about being **findable**. Answer engines — AI Overviews, ChatGPT Search,
@@ -489,8 +531,10 @@ traffic graph months later. The gate fails the build on a page that skips `useSe
 declared), has a missing or badly-sized description, or has more than one `<h1>`. Escape hatch
 is `seo-check-ignore`, same as the design-token gate.
 
-`public/og.png` is a placeholder rendered in the template's own brand. **Replace it** — it says
-"My App" and `bun run rename` cannot rewrite an image.
+`public/og.png` is generated, not hand-made: `bun run brand:generate` composes it from the brand
+mark, the DESIGN.md colours, and the app name in `wrangler.toml`. So the fix for a share image
+that still says "My App" is to rename the project and re-run that command — and `bun run
+brand:check` fails the build until you do. See [Design system & brand mark](#design-system--brand-mark).
 
 The legal pages are the part people skip and then get stuck on: Paddle's onboarding review checks
 for reachable terms and privacy pages before approving an account. The ones here name the actual

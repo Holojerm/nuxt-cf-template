@@ -51,9 +51,12 @@ watch(
     <header class="border-b border-default">
       <UContainer>
         <div class="flex h-16 items-center justify-between gap-4">
-          <NuxtLink to="/" class="min-touch flex items-center gap-2 font-medium text-highlighted">
-            <!-- Replace with your logo -->
-            <span>{{ appName }}</span>
+          <!-- The mark and the wordmark both come from BrandLogo, which is also
+               what every generated icon is derived from (DESIGN.md › Brand mark).
+               Redesign it there and the tab, the home screen, and the share
+               image follow on the next `bun run brand:generate`. -->
+          <NuxtLink to="/" class="min-touch flex items-center" :aria-label="`${appName} — home`">
+            <BrandLogo />
           </NuxtLink>
 
           <div class="flex items-center gap-1 sm:gap-2">
