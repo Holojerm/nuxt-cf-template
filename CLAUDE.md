@@ -32,6 +32,7 @@ When working with AI assistants (Claude, etc.), always reference this file first
 ├── app/                    # Frontend (Vue/Nuxt pages, components, composables)
 │   ├── app.config.ts       # GENERATED from DESIGN.md — NuxtUI colors + component defaults
 │   ├── components/         # Reusable UI components
+│   │   ├── Brand/          # Logo.vue — the mark; every icon is generated from it
 │   │   └── [Feature]/      # Group by feature, e.g. app/components/Workout/
 │   ├── composables/        # Shared stateful logic (useAuth, useWorkout, etc.)
 │   ├── layouts/            # Page layouts
@@ -58,6 +59,7 @@ When working with AI assistants (Claude, etc.), always reference this file first
 ├── nuxt.config.ts
 ├── wrangler.toml
 ├── DESIGN.md               # Visual design system — source of truth, see /design-sync
+├── brand.lock.json         # Fingerprint of the generated brand assets — see bun run brand:check
 └── CLAUDE.md               # ← You are here
 ```
 
@@ -178,6 +180,23 @@ don't hand-edit them and expect the change to survive. `bun run design:check` (p
 
 The dev-only `/design-system` route renders every token and component state on one page in both
 color modes — use it to verify a design change actually landed.
+
+### The brand mark
+
+The logo is drawn **once**, in [`app/components/Brand/Logo.vue`](app/components/Brand/Logo.vue),
+and every standalone file is cut from it by `bun run brand:generate` — `public/favicon.svg`,
+`public/apple-touch-icon.png`, `public/og.png`. The header renders that same
+`<svg data-brand-mark>` element, so the tab icon cannot fall a redesign behind the app.
+
+- The geometry must stay **static** and paint with **`currentColor`** — a `.png` can't evaluate
+  a Vue binding, and a hex in there fails `design:check`. The generator refuses both.
+- Colours for the raster files come from the roles table in [DESIGN.md › Brand mark](DESIGN.md),
+  which names concrete `--color-*` tokens: a PNG has no color mode, so `--ui-*` aliases (which
+  flip) are not valid there.
+- Never hand-edit anything in `public/` that the pipeline generates. `bun run brand:check`
+  (part of `bun run ci`) fails the build when those files stop matching the mark.
+- Redesigning it is `/logo-sync`. Editing the component by hand is fine too — just run
+  `bun run brand:generate` after and commit what it writes.
 
 ### Component Usage
 
@@ -343,6 +362,8 @@ bun lint:fix          # Auto-fix lint issues
 bun format            # Format with oxfmt
 bun format:check      # Check formatting without writing
 bun run design:check  # Fail on UI code that bypasses the DESIGN.md token layer
+bun run brand:generate # Rebuild favicon.svg, apple-touch-icon.png and og.png from the brand mark
+bun run brand:check   # Fail when those generated files no longer match the mark
 bun run seo:check     # Fail on pages that bypass useSeo() or aren't declared public/noindex
 bun run test:a11y     # axe (Playwright/Chromium) over every public route, light + dark
 bun typecheck         # TypeScript type checking
@@ -352,7 +373,7 @@ bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db)
 bun run rename <name> # Rewrite the `my-app` placeholder across wrangler.toml, package.json,
                       # .mcp.json and mcp/ — all six occurrences, in one go
-bun run ci            # Lint + design:check + seo:check + typecheck + test + test:a11y + build — Workers Builds runs this
+bun run ci            # Lint + design/brand/seo gates + typecheck + test + test:a11y + build — Workers Builds runs this
 bun run deploy        # Manual deploy to Cloudflare via wrangler (normally unnecessary —
                       # Workers Builds deploys automatically on push to main).
                       # Requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars
@@ -414,6 +435,7 @@ Installed via `npx skills add nuxt/ui --agent claude-code`. Provides Claude with
 | --- | --- | --- |
 | `/scaffold-component` | `/scaffold-component Feature/Name` | Generate a Vue component following project conventions |
 | `/design-sync` | `/design-sync [brief\|url]` | Compile `DESIGN.md` into the NuxtUI token layer, then verify |
+| `/logo-sync` | `/logo-sync [brief\|path.svg]` | Design the brand mark from `DESIGN.md`, then generate every icon from it |
 | `/scaffold-api` | `/scaffold-api [path] [method]` | Generate an API route with Zod + auth |
 | `/db-migrate` | `/db-migrate` | Run the full Drizzle migration workflow |
 | `/new-feature` | `/new-feature FeatureName` | Full stack scaffold: component + API routes + schema |

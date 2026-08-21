@@ -8,6 +8,11 @@ format that Claude Code, Codex, Cursor, and friends read directly.
 generated files and expect them to survive. `bun run design:check` enforces that app code uses
 only the tokens declared here.
 
+The brand mark works the same way one level out: `/logo-sync` writes
+`app/components/Brand/Logo.vue` from the Brand mark section below, `bun run brand:generate`
+derives the favicon, app icon, and share image from that component, and `bun run brand:check`
+fails the build when they fall out of sync.
+
 > **Scope note:** this file means *visual* design — color, type, space, motion, component
 > behavior. Architectural rationale and stack decisions live in `CLAUDE.md`, not here.
 
@@ -38,6 +43,63 @@ only the tokens declared here.
 - Faux-bold headings (the display face ships at weight 400 only — never `font-bold` on it)
 - Pure black (`#000`) or pure white (`#fff`) as a surface color
 - Emoji as UI iconography
+
+---
+
+## Brand mark
+
+Two quarried strata, offset — the lower one shorter and lighter, cut from the same face.
+Abstract rather than a letterform on purpose: `bun run rename` cannot rewrite a picture, so
+an initial would still spell the template's name long after the app stopped being called that.
+
+**The mark lives in `app/components/Brand/Logo.vue`, and nowhere else.** Every standalone
+file is derived from that component by `bun run brand:generate`:
+
+| Generated file | Size | What it is |
+|---|---|---|
+| `public/favicon.svg` | 32 grid | The browser tab. Carries its own ground — a transparent mark vanishes against a dark tab strip. |
+| `public/apple-touch-icon.png` | 180×180 | iOS home screen. Full-bleed: iOS applies its own corner mask, so baking one in double-rounds it. |
+| `public/og.png` | 1200×630 | Every link preview of this site — mark, app name, one sentence. |
+
+`bun run brand:check` (part of `bun run ci`) fails the build when those files no longer match
+the component. A favicon a redesign behind the app is the normal outcome otherwise; nothing
+about it ever throws.
+
+### Construction
+
+- **Grid:** 32×32 viewBox, geometry on whole and half units only.
+- **Optical box:** the glyph spans 3→29 across and 7→25 down, so it is centred with room to
+  breathe once an icon square is drawn around it.
+- **Corners:** `rx 1.5` — slab corners that echo `--ui-radius`. Never a pill.
+- **Fill:** `currentColor`, one flat fill plus a single opacity step. No stroke, no gradient,
+  no second hue.
+- **Minimum size:** 16px. A mark that stops reading at favicon size is a different mark.
+- **Clear space:** half the mark's height on every side. In the lockup that is the `gap-2`
+  between glyph and wordmark.
+
+### Color roles
+
+A PNG has no color mode, so each role below resolves to a concrete ramp token rather than a
+`--ui-*` alias — the aliases flip between light and dark, and a file has to pick one.
+
+| Role | Token | Where it lands |
+|---|---|---|
+| `icon-ink` | `--color-clay-50` | The glyph inside the app icon |
+| `icon-ground` | `--color-clay-600` | The square behind it |
+| `og-mark` | `--color-clay-600` | The mark on the share image |
+| `og-ground` | `--color-stone-50` | Share image background |
+| `og-ink` | `--color-stone-900` | Share image title |
+| `og-muted` | `--color-stone-500` | Share image description and footer |
+
+In-app the mark takes `text-primary` and inherits the color mode for free. These six exist
+only for the files that can't.
+
+### Never
+
+- A second mark. If a surface seems to need a different logo, the logo is wrong.
+- Effects: shadow, gradient, outline, rotation, or animation on the mark.
+- The wordmark in anything but the display face at weight 400 (DESIGN.md › Typography).
+- Hand-editing anything in `public/` that this pipeline generates.
 
 ---
 
@@ -270,6 +332,13 @@ nav items, footer rows, buttons — don't need it.
 | Safe-area utilities | `main.css` → `@utility bottom-safe` / `right-safe` |
 | Touch-target floor | `main.css` → `@utility min-touch` |
 | Semantic shade choices | `main.css` → `:root`/`.dark` → `--ui-primary` … `--ui-error` |
+
+The Brand mark section compiles through a second, smaller pipeline of its own:
+
+| This file | Destination | Run by |
+|---|---|---|
+| Brand mark › Construction | `app/components/Brand/Logo.vue` | `/logo-sync` |
+| Brand mark › Color roles | `public/favicon.svg`, `apple-touch-icon.png`, `og.png` | `bun run brand:generate` |
 
 Two Accessibility rules land outside the generated files, because no CSS variable can
 express them: `<html lang>` and `viewport-fit=cover` live in `app.head` in

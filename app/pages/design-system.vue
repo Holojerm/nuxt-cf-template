@@ -59,6 +59,22 @@ const typeScale = [
   { token: 'text-xs', class: 'text-xs' },
 ]
 
+// DESIGN.md › Brand mark. 16px is the declared floor, so it leads.
+// markClass carries the color as well as the size — BrandLogo passes it through
+// rather than merging, so a caller that overrides it owns both.
+const markSizes = [
+  { class: 'size-4 text-primary', label: '16px' },
+  { class: 'size-6 text-primary', label: '24px' },
+  { class: 'size-8 text-primary', label: '32px' },
+  { class: 'size-12 text-primary', label: '48px' },
+]
+
+const brandAssets = [
+  { src: '/favicon.svg', alt: 'Generated favicon: the mark on its brand ground' },
+  { src: '/apple-touch-icon.png', alt: 'Generated iOS home screen icon' },
+  { src: '/og.png', alt: 'Generated social share image' },
+]
+
 const semanticColors = [
   'primary',
   'secondary',
@@ -87,6 +103,55 @@ useSeo({
       </p>
       <UColorModeButton />
     </header>
+
+    <!-- ── Brand mark ────────────────────────────────────────────────── -->
+    <!-- The pipeline's verification surface: the component on the left, the
+         files it generated on the right. If those two stop agreeing, this is
+         where you see it — `bun run brand:check` only knows they drifted, not
+         which one looks wrong. -->
+    <section class="space-y-6">
+      <h2 class="text-2xl text-highlighted">Brand mark</h2>
+
+      <div class="space-y-2">
+        <h3 class="text-lg text-highlighted">Lockup and sizes</h3>
+        <div class="flex flex-wrap items-end gap-8 rounded border border-default p-6">
+          <BrandLogo />
+          <div v-for="size in markSizes" :key="size.class" class="space-y-2 text-center">
+            <BrandLogo variant="mark" :mark-class="size.class" />
+            <p class="text-xs text-muted">{{ size.label }}</p>
+          </div>
+        </div>
+        <p class="text-sm text-muted">
+          16px is the floor — DESIGN.md › Brand mark. A mark that stops reading at favicon size is a
+          different mark.
+        </p>
+      </div>
+
+      <div class="space-y-2">
+        <h3 class="text-lg text-highlighted">On an inverted ground</h3>
+        <div class="flex items-center gap-8 rounded border border-default bg-inverted p-6">
+          <BrandLogo variant="mark" mark-class="size-12 text-inverted" />
+          <BrandLogo variant="mark" mark-class="size-6 text-inverted" />
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <h3 class="text-lg text-highlighted">Generated assets</h3>
+        <div class="grid gap-4 sm:grid-cols-3">
+          <div v-for="asset in brandAssets" :key="asset.src" class="space-y-2">
+            <div
+              class="flex h-32 items-center justify-center rounded border border-default bg-muted p-3"
+            >
+              <img :src="asset.src" :alt="asset.alt" class="max-h-full max-w-full" />
+            </div>
+            <code class="text-xs text-muted">{{ asset.src }}</code>
+          </div>
+        </div>
+        <p class="text-sm text-muted">
+          Written by <code class="text-default">bun run brand:generate</code> — never by hand.
+        </p>
+      </div>
+    </section>
 
     <!-- ── Color ─────────────────────────────────────────────────────── -->
     <section class="space-y-6">
