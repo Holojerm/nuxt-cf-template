@@ -197,6 +197,13 @@ color modes — use it to verify a design change actually landed.
   - There is no `text-foreground`, `bg-background`, or `border-border` in NuxtUI v4 — those are shadcn tokens and resolve to nothing.
 - **Spacing**: Use the standard Tailwind scale (4, 8, 12, 16, 24, 32...). Don't invent new sizes.
 - **Mobile-first**: All layouts start mobile, expand with `sm:`, `md:`, `lg:` breakpoints.
+- **Accessibility**: [DESIGN.md › Accessibility](DESIGN.md) is the contract — AA contrast, a
+  visible focus ring on everything focusable, `alt` on every image, `aria-label` on icon-only
+  buttons, `min-h-dvh` over `min-h-screen`, and the `bottom-safe`/`right-safe` utilities for
+  anything pinned to a viewport edge. `bun run design:check` fails the build on the
+  machine-checkable half, and `bun run test:a11y` runs axe in a real browser over every
+  public route in both color modes — that one owns contrast ratios, landmark uniqueness,
+  and heading order.
 
 ### Dark Mode
 
@@ -337,6 +344,7 @@ bun format            # Format with oxfmt
 bun format:check      # Check formatting without writing
 bun run design:check  # Fail on UI code that bypasses the DESIGN.md token layer
 bun run seo:check     # Fail on pages that bypass useSeo() or aren't declared public/noindex
+bun run test:a11y     # axe (Playwright/Chromium) over every public route, light + dark
 bun typecheck         # TypeScript type checking
 bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1
@@ -344,7 +352,7 @@ bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db)
 bun run rename <name> # Rewrite the `my-app` placeholder across wrangler.toml, package.json,
                       # .mcp.json and mcp/ — all six occurrences, in one go
-bun run ci            # Lint + design:check + seo:check + typecheck + test + build — what Workers Builds runs on every push
+bun run ci            # Lint + design:check + seo:check + typecheck + test + test:a11y + build — Workers Builds runs this
 bun run deploy        # Manual deploy to Cloudflare via wrangler (normally unnecessary —
                       # Workers Builds deploys automatically on push to main).
                       # Requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars
@@ -487,6 +495,34 @@ When Claude Code agents use isolated worktrees, the worktree's older code lives 
 ### Workers Builds: dashboard Worker name must match `wrangler.toml`
 
 CI/CD runs on Cloudflare Workers Builds (repo connected in the dashboard under Worker → Settings → Build). The Worker's name in the dashboard must exactly match `name` in the root `wrangler.toml`, or every build fails before it starts. When you fork and rename the project, reconnect the repo to a Worker with the new name. Build settings live in the dashboard, not in the repo: build command `bun run ci`, deploy command `bunx wrangler --cwd .output deploy`, preview deploy command (non-production branches) `bunx wrangler --cwd .output versions upload`. `NUXT_SESSION_PASSWORD` must be set as a build variable there too — the old GitHub Actions secrets are gone.
+
+### The a11y suite needs a browser, and CI installs it inside `bun run ci`
+
+`bun run test:a11y` runs axe through Playwright/Chromium, so CI needs a browser binary.
+Rather than change the Workers Builds *build command* (which lives in the dashboard, not the
+repo — so every fork would have to edit it), `bun run ci` calls `bun run playwright:install`
+itself. It's idempotent and a no-op once the download is cached.
+
+Two things to know when it breaks:
+
+- **Missing system libraries.** The headless shell needs `libnss3`, `libatk-1.0`, and
+  friends. Most Ubuntu-based images have them; if the build fails with a linker error, the
+  fix is `playwright install --with-deps chromium`, which needs root and may not be
+  available on Workers Builds. The fallback is to drop `test:a11y` from `ci` and run it in a
+  GitHub Action instead — the suite doesn't care what runs it.
+- **The suite starts its own dev server** (`playwright.config.ts` → `webServer`) on port
+  3000 with `reuseExistingServer: false`. That is deliberate: it only produces valid results
+  against a server started with `NUXT_DEVTOOLS=false`, and reusing a dev server you already
+  had running reports the devtools panel's own markup as your app's violations. It also
+  means a stale process on port 3000 makes the run fail to boot rather than silently lie —
+  kill it, don't flip `reuseExistingServer`.
+- **The `webServer.timeout` is sized for a cold cache, not your machine.** A cold `nuxt dev`
+  builds the whole app before it listens; anything that invalidates the Nuxt build cache
+  (editing `nuxt.config.ts`, a merge that touches it) puts you back on that path. Observed:
+  a 120s budget timed out on the first run after such a merge, and the very next warm boot
+  took 2s. CI is *always* cold, so the budget is 300s and the server runs with
+  `NUXT_TYPECHECK=false` to keep vue-tsc off the critical path — `bun run ci` has already
+  typechecked by then.
 
 ### Don't add `nuxt-mcp-toolkit` config under `mcp:` in `nuxt.config.ts`
 

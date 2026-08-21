@@ -68,8 +68,25 @@ A warm earth red. Confident at 600, quiet at 100.
 | `warning` | `amber` | Reversible risk |
 | `error` | `rose` | Failure, destructive actions |
 
-Primary resolves to **600** in light mode and **400** in dark — one step darker than NuxtUI's
-default for contrast against warm neutrals.
+Semantic colors resolve one to three steps darker than NuxtUI's 500 default in light mode,
+and to **400** in dark. This is not taste — NuxtUI's defaults fail WCAG AA in light mode in
+both directions that matter, as text on their own 10% tint (`subtle` alerts and badges) and
+as white text on the solid fill (`solid` buttons):
+
+| Role | Light shade | Text on tint | White on solid |
+|---|---|---|---|
+| `primary` | 600 | 4.04 ✗ | 4.58 ✓ |
+| `secondary` | 600 | 6.48 ✓ | 7.64 ✓ |
+| `success` | 700 | 4.66 ✓ | 5.36 ✓ |
+| `info` | 700 | 5.08 ✓ | 5.86 ✓ |
+| `warning` | 800 | 6.06 ✓ | 7.09 ✓ |
+| `error` | 700 | 5.19 ✓ | 6.03 ✓ |
+
+`primary` stays at 600 because it is the brand accent rather than a status color, and 600
+clears AA for its real uses. It is the one exception in the table: **never pair
+`color="primary"` with `variant="subtle"`** — clay-600 on a clay tint is 4.04:1. Use `solid`.
+
+Warning needs 800 specifically; amber-700 reaches only 4.39:1 on its tint.
 
 ### Surface and text rules
 
@@ -153,8 +170,87 @@ because this system is for reading. Never set arbitrary sizes (`text-[13px]`).
 - **Inputs:** 1px border, `bg-default`. Focus shows a 2px primary ring, never a glow.
 - **Focus:** every interactive element has a visible focus-visible ring. Never `outline: none`
   without a replacement.
+- **Navigation:** inline links from `sm` up; below that they collapse into a right-side
+  `USlideover` behind an `i-lucide-menu` trigger. Drawer rows are `size="lg"` and
+  `block`, left-aligned — full-width rows are the easiest thing on a screen to hit. The
+  drawer closes on route change, not on click, so redirects close it too. Never let the
+  header wrap to two lines or scroll sideways.
+- **Links:** inline prose links are `text-primary` **and** underlined (see Accessibility ›
+  Contrast). Standalone links in navigation or footers are colour-only by design.
 - **Empty states:** one line of `text-muted` explanation plus one action. No illustrations.
 - **Tables:** `font-mono` for numeric columns, right-aligned. Row separators, not zebra striping.
+
+---
+
+## Accessibility
+
+WCAG 2.2 AA is the floor, not the goal. Two gates enforce it, and they see different
+things: `bun run design:check` reads source for patterns a regex can catch, and
+`bun run test:a11y` runs axe in a real browser against every public route in **both** color
+modes, which is the only way to check a rendered contrast ratio. What neither can judge —
+whether a label actually describes its field, whether alt text is meaningful — is on review.
+
+### Contrast
+
+| Intent | Minimum |
+|---|---|
+| Body copy, labels, any text below `text-xl` | 4.5:1 |
+| `text-xl` and up | 3:1 |
+| Borders, focus rings, icons that carry meaning | 3:1 |
+| Disabled text, decorative rules | none |
+
+The semantic tokens in Color are vetted at both ends of the color-mode switch. A numbered
+scale is a build failure precisely because `text-stone-500` can pass in light mode and fail
+in dark — the token layer *is* the contrast guarantee.
+
+**Never convey state by color alone.** Every status pairs its color with an icon or a word.
+`<UBadge color="error" icon="i-lucide-x">Failed</UBadge>`, never a bare red dot.
+
+The same rule catches inline links: a link inside a paragraph is **underlined**
+(`underline underline-offset-2`), because `text-primary` alone distinguishes it from the
+surrounding prose by color only. Links that are already unmistakably links by position —
+nav items, footer rows, buttons — don't need it.
+
+### Keyboard and focus
+
+- Every interactive element is reachable and operable by keyboard, in DOM order.
+- A visible `focus-visible` ring on everything focusable: 2px, `primary`. Suppressing the
+  outline without replacing it is a build failure.
+- No positive `tabindex`. `tabindex="-1"` is for programmatic focus targets only.
+- Handlers go on a `<button>`, an `<a>`, or a NuxtUI component — never a `<div @click>`.
+  That is where roles and keyboard support come from for free.
+- A skip link is the first focusable element on the page, pointing at `#main`.
+
+### Structure and labels
+
+- `<html lang>` is set (`nuxt.config.ts` → `app.head.htmlAttrs`).
+- One `<h1>` per page. Heading levels never skip.
+- Landmarks on every page: `header`, `nav`, `main` (id `main`), `footer`.
+- Every image and avatar carries `alt`. Decorative images take `alt=""` — an empty string,
+  not a missing attribute.
+- Form fields get a visible label through `<UFormField>`. A placeholder is not a label.
+- Icon-only buttons need `aria-label`. An icon with no accessible name is an unlabeled
+  button to a screen reader.
+
+### Viewport and touch
+
+- **Height:** `min-h-dvh`, never `min-h-screen`. Mobile browser chrome makes `100vh` taller
+  than the visible viewport, which hides the bottom of the page under the URL bar.
+- **Safe areas:** anything pinned to a viewport edge uses the safe-area utilities
+  (`bottom-safe`, `right-safe`) so it clears the iOS home bar and the notch in landscape.
+  The `viewport-fit=cover` meta in `nuxt.config.ts` is what makes those insets non-zero.
+- **Target size:** two floors, because one number can't serve both a mouse and a thumb.
+  - **24x24px everywhere** (WCAG 2.5.8, AA). NuxtUI's `sm` and `md` sizes clear this on
+    their own; `size="xs"` does not reliably, so it is desktop-dense-chrome only.
+  - **44x44px on coarse pointers.** Apply the `min-touch` utility, which is scoped to
+    `@media (pointer: coarse)` — it buys the thumb its target without inflating the
+    mouse-driven UI, whose 29-33px controls are the density this system is for.
+
+  Every icon-only control gets `min-touch`; `design:check` enforces that one, because an
+  icon-only button is the case that ends up smallest and is hardest to spot by eye.
+  Anything pinned to a viewport edge or acting as a primary mobile action gets it too.
+- **Motion:** `prefers-reduced-motion` is honored globally in `main.css` (see Motion) — no
+  component should re-implement it.
 
 ---
 
@@ -171,6 +267,14 @@ because this system is for reading. Never set arbitrary sizes (`text-[13px]`).
 | Base type rules | `main.css` → `@layer base` |
 | Radius, container | `main.css` → `:root` → `--ui-radius`, `--ui-container` |
 | Component behavior | `app.config.ts` → per-component `slots` / `defaultVariants` |
+| Safe-area utilities | `main.css` → `@utility bottom-safe` / `right-safe` |
+| Touch-target floor | `main.css` → `@utility min-touch` |
+| Semantic shade choices | `main.css` → `:root`/`.dark` → `--ui-primary` … `--ui-error` |
+
+Two Accessibility rules land outside the generated files, because no CSS variable can
+express them: `<html lang>` and `viewport-fit=cover` live in `app.head` in
+`nuxt.config.ts`, and the skip link lives in `app/layouts/default.vue`. `/design-sync`
+does not own those three — leave them alone.
 
 Verify the result at `/design-system` in dev — every token and component state on one page,
 in both color modes.

@@ -37,3 +37,7 @@ pnpm-debug.log*
 
 # Test coverage
 coverage
+
+# Playwright (axe a11y suite)
+playwright-report/
+test-results/

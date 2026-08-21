@@ -105,7 +105,7 @@ useSeo({
         </UButton>
         <UButton to="/pricing" size="lg" color="neutral" variant="outline">See pricing</UButton>
       </div>
-      <p class="text-sm text-dimmed">No credit card to look around.</p>
+      <p class="text-sm text-muted">No credit card to look around.</p>
     </section>
 
     <!-- Features -->

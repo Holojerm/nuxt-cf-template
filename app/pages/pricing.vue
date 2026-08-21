@@ -130,9 +130,7 @@ useSeo({
           <div>
             <div class="flex items-center gap-2">
               <h2 class="text-xl text-highlighted">{{ plan.name }}</h2>
-              <UBadge v-if="plan.featured" color="primary" variant="subtle" size="sm">
-                Best value
-              </UBadge>
+              <UBadge v-if="plan.featured" color="primary" variant="solid"> Best value </UBadge>
             </div>
             <p class="mt-3 flex items-baseline gap-2">
               <span class="font-display text-3xl text-highlighted">{{ plan.price }}</span>
@@ -160,14 +158,14 @@ useSeo({
             >
               {{ loggedIn ? `Get ${plan.name}` : 'Sign in to continue' }}
             </UButton>
-            <p v-if="!plan.purchasable" class="text-xs text-dimmed">
+            <p v-if="!plan.purchasable" class="text-xs text-muted">
               {{
                 paddleReady
                   ? 'No price ID configured for this plan yet.'
                   : 'Set NUXT_PUBLIC_PADDLE_CLIENT_TOKEN to enable checkout.'
               }}
             </p>
-            <p v-else-if="!plan.recurring" class="text-xs text-dimmed">
+            <p v-else-if="!plan.recurring" class="text-xs text-muted">
               One-time charge. Never renews.
             </p>
           </div>
@@ -189,8 +187,8 @@ useSeo({
         </div>
       </dl>
       <p class="text-sm text-muted">
-        The <ULink to="/terms" class="text-primary">Terms</ULink> carry the full refund and
-        cancellation policy.
+        The <ULink to="/terms" class="text-primary underline underline-offset-2">Terms</ULink> carry
+        the full refund and cancellation policy.
       </p>
     </section>
   </div>

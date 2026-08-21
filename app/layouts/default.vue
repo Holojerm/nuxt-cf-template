@@ -17,39 +17,108 @@ const navLinks = computed(() => [
   { label: 'Pricing', to: '/pricing' },
   ...(loggedIn.value ? [{ label: 'Dashboard', to: '/dashboard' }] : []),
 ])
+
+// Mobile nav drawer. Two links don't need one — five do, and this is the seam a
+// fork grows through, so the pattern ships now rather than being retrofitted
+// once the header has already started wrapping.
+const navOpen = ref(false)
+
+// Close on navigation. A route watcher rather than a click handler on each link:
+// it also covers programmatic redirects (the auth middleware bouncing someone to
+// /login) that never fire a click.
+const route = useRoute()
+watch(
+  () => route.fullPath,
+  () => {
+    navOpen.value = false
+  },
+)
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col bg-default">
+  <div class="flex min-h-dvh flex-col bg-default">
+    <!-- Skip link — WCAG 2.4.1. First focusable element on every page, so a
+         keyboard or screen-reader user can jump the nav instead of tabbing it on
+         each navigation. Visually hidden until focused. -->
+    <a
+      href="#main"
+      class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-sm focus:bg-elevated focus:px-4 focus:py-2 focus:text-highlighted focus:ring-2 focus:ring-primary"
+    >
+      Skip to content
+    </a>
+
     <!-- Navigation -->
     <header class="border-b border-default">
       <UContainer>
         <div class="flex h-16 items-center justify-between gap-4">
-          <NuxtLink to="/" class="flex items-center gap-2 font-medium text-highlighted">
+          <NuxtLink to="/" class="min-touch flex items-center gap-2 font-medium text-highlighted">
             <!-- Replace with your logo -->
             <span>{{ appName }}</span>
           </NuxtLink>
 
-          <nav class="flex items-center gap-2">
-            <UButton
-              v-for="link in navLinks"
-              :key="link.to"
-              :to="link.to"
-              color="neutral"
-              variant="ghost"
-              size="sm"
-            >
-              {{ link.label }}
-            </UButton>
-            <UColorModeButton />
+          <div class="flex items-center gap-1 sm:gap-2">
+            <!-- Inline nav, desktop only. Below `sm` these move into the drawer
+                 rather than wrapping or scrolling horizontally. -->
+            <nav aria-label="Primary" class="hidden items-center gap-2 sm:flex">
+              <UButton
+                v-for="link in navLinks"
+                :key="link.to"
+                :to="link.to"
+                color="neutral"
+                variant="ghost"
+                size="sm"
+              >
+                {{ link.label }}
+              </UButton>
+            </nav>
+
+            <UColorModeButton class="min-touch" />
             <AuthUserMenu />
-          </nav>
+
+            <!-- Drawer trigger, mobile only. -->
+            <USlideover
+              v-model:open="navOpen"
+              title="Menu"
+              side="right"
+              :ui="{ content: 'max-w-xs' }"
+            >
+              <UButton
+                class="min-touch sm:hidden"
+                color="neutral"
+                variant="ghost"
+                icon="i-lucide-menu"
+                aria-label="Open menu"
+              />
+
+              <template #body>
+                <nav aria-label="Mobile" class="flex flex-col gap-1">
+                  <UButton
+                    v-for="link in navLinks"
+                    :key="link.to"
+                    :to="link.to"
+                    color="neutral"
+                    variant="ghost"
+                    size="lg"
+                    block
+                    class="min-touch justify-start"
+                  >
+                    {{ link.label }}
+                  </UButton>
+                </nav>
+              </template>
+            </USlideover>
+          </div>
         </div>
       </UContainer>
     </header>
 
     <!-- Main content -->
-    <UContainer as="main" class="flex-1 py-8">
+    <!-- tabindex="-1" so the skip link moves focus here, not just the scroll
+         position — without it the next Tab lands back at the top of the nav.
+         The focus-visible rule protects elements a user can Tab to; `main` is only
+         ever focused programmatically by the skip link, and a ring around the whole
+         page region reads as a rendering bug. design-check-ignore -->
+    <UContainer id="main" as="main" tabindex="-1" class="flex-1 py-8 focus:outline-none">
       <slot />
     </UContainer>
 
@@ -60,7 +129,7 @@ const navLinks = computed(() => [
       <UContainer>
         <div class="flex flex-col gap-4 py-8 sm:flex-row sm:items-center sm:justify-between">
           <p class="text-sm text-muted">© {{ year }} {{ appName }}</p>
-          <nav class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+          <nav aria-label="Footer" class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
             <ULink to="/pricing" class="text-muted hover:text-default">Pricing</ULink>
             <ULink to="/terms" class="text-muted hover:text-default">Terms</ULink>
             <ULink to="/privacy" class="text-muted hover:text-default">Privacy</ULink>

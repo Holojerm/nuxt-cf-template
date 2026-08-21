@@ -35,7 +35,7 @@ const items = computed(() => [
 
 <template>
   <UDropdownMenu v-if="loggedIn" :items="items" :ui="{ content: 'w-56' }">
-    <UButton color="neutral" variant="ghost" class="gap-2">
+    <UButton color="neutral" variant="ghost" class="min-touch gap-2">
       <UAvatar :src="user?.avatarUrl ?? undefined" :alt="user?.name" size="2xs" />
       <span class="hidden max-w-32 truncate sm:inline">{{ user?.name }}</span>
     </UButton>
@@ -54,6 +54,7 @@ const items = computed(() => [
     v-else-if="!isLoginPage"
     :to="{ path: '/login', query: { redirect: route.fullPath } }"
     size="sm"
+    class="min-touch"
   >
     Sign in
   </UButton>

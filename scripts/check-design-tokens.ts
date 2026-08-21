@@ -71,6 +71,9 @@ interface Rule {
   name: string
   pattern: RegExp
   remedy: string
+  /** `line` matches within a single line (the default). `file` matches across the whole
+   *  file, for markup whose attributes wrap onto several lines. */
+  scope?: 'line' | 'file'
 }
 
 const RULES: Rule[] = [
@@ -104,7 +107,60 @@ const RULES: Rule[] = [
     pattern: /\sstyle="/g,
     remedy: 'use utilities; :style is allowed only for animated dynamic values',
   },
+
+  // ── Accessibility (DESIGN.md › Accessibility) ──────────────────────────────
+  // These are the subset of that section a regex can see. Contrast ratios,
+  // heading order, and whether a label actually describes its field are not
+  // machine-checkable here — they stay on review.
+  {
+    name: 'suppressed focus outline',
+    pattern: /\boutline-none\b|outline:\s*none/g,
+    remedy: 'focus must stay visible (DESIGN.md › Accessibility › Keyboard and focus)',
+  },
+  {
+    name: 'fixed viewport height',
+    pattern: /\b(?:min-|max-)?h-screen\b|\b(?:min-|max-)?h-\[100vh\]/g,
+    remedy: 'use the dvh equivalent — 100vh overflows on mobile (DESIGN.md › Viewport and touch)',
+  },
+  {
+    name: 'positive tabindex',
+    pattern: /tabindex="[1-9]/g,
+    remedy: 'let DOM order drive focus order; -1 is the only allowed value',
+  },
+  {
+    name: 'image without alt',
+    pattern: /<(?:img|UAvatar)\b(?:(?!>)[\s\S])*?\/?>/g,
+    remedy: 'add alt (alt="" if decorative) — DESIGN.md › Accessibility › Structure and labels',
+    scope: 'file',
+  },
+  {
+    name: 'icon-only button without aria-label',
+    pattern: /<UButton\b(?:(?!>)[\s\S])*?\/>/g,
+    remedy: 'an icon is not an accessible name — add aria-label or a label',
+    scope: 'file',
+  },
+  {
+    name: 'icon-only button below the touch floor',
+    pattern: /<UButton\b(?:(?!>)[\s\S])*?\/>/g,
+    remedy: 'add the min-touch utility (DESIGN.md › Accessibility › Viewport and touch)',
+    scope: 'file',
+  },
 ]
+
+/** Rules whose regex intentionally over-matches, narrowed here rather than in the
+ *  pattern — a single regex for "tag that lacks attribute X" is unreadable and
+ *  breaks on attribute order. Returns true when the match is a real violation. */
+const REFINEMENTS: Record<string, (match: string) => boolean> = {
+  'image without alt': (match) => !/\s:?alt[=\s]/.test(match),
+  'icon-only button without aria-label': (match) =>
+    /\s:?icon[=\s]/.test(match) &&
+    !/\s:?label[=\s]/.test(match) &&
+    !/\saria-label[=\s]/.test(match),
+  // An icon-only button is square and small by construction — the one control
+  // that reliably lands under 44px on a phone.
+  'icon-only button below the touch floor': (match) =>
+    /\s:?icon[=\s]/.test(match) && !/\s:?label[=\s]/.test(match) && !/\bmin-touch\b/.test(match),
+}
 
 function walk(dir: string): string[] {
   const found: string[] = []
@@ -129,29 +185,53 @@ interface Violation {
 
 const violations: Violation[] = []
 
+/** Multi-line matches are unreadable in a one-line report. */
+const collapse = (text: string) => text.trim().replace(/\s+/g, ' ')
+
 for (const file of walk(SCAN_DIR)) {
   const relativePath = relative(ROOT, file)
   if (EXEMPT_FILES.includes(relativePath)) continue
 
-  const lines = readFileSync(file, 'utf8').split('\n')
+  const content = readFileSync(file, 'utf8')
+  const lines = content.split('\n')
 
-  lines.forEach((source, index) => {
-    const previous = lines[index - 1] ?? ''
-    if (source.includes('design-check-ignore') || previous.includes('design-check-ignore')) return
+  // A match is suppressed by `design-check-ignore` on its own line or the one
+  // above it. For a file-scope rule that means the line the match *starts* on —
+  // the escape hatch goes where a reader would naturally put it.
+  const ignored = (index: number) =>
+    (lines[index] ?? '').includes('design-check-ignore') ||
+    (lines[index - 1] ?? '').includes('design-check-ignore')
 
-    for (const rule of RULES) {
-      rule.pattern.lastIndex = 0
-      for (const match of source.matchAll(rule.pattern)) {
-        violations.push({
-          file: relativePath,
-          line: index + 1,
-          rule,
-          match: match[0].trim(),
-          source: source.trim(),
-        })
+  const record = (rule: Rule, match: string, index: number) => {
+    const refine = REFINEMENTS[rule.name]
+    if (refine && !refine(match)) return
+    if (ignored(index)) return
+    violations.push({
+      file: relativePath,
+      line: index + 1,
+      rule,
+      match: collapse(match),
+      source: collapse(lines[index] ?? ''),
+    })
+  }
+
+  for (const rule of RULES) {
+    rule.pattern.lastIndex = 0
+
+    if (rule.scope === 'file') {
+      for (const match of content.matchAll(rule.pattern)) {
+        // Offset → line number, by counting newlines before the match.
+        const index = content.slice(0, match.index).split('\n').length - 1
+        record(rule, match[0], index)
       }
+      continue
     }
-  })
+
+    lines.forEach((source, index) => {
+      rule.pattern.lastIndex = 0
+      for (const match of source.matchAll(rule.pattern)) record(rule, match[0], index)
+    })
+  }
 }
 
 if (violations.length === 0) {

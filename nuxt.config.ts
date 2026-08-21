@@ -23,6 +23,10 @@ export default defineNuxtConfig({
       // pronunciation and translation tools guess the source language — and
       // Google treats a missing lang as a weak signal about who the page is for.
       htmlAttrs: { lang: 'en' },
+      // viewport-fit=cover is what makes env(safe-area-inset-*) resolve to
+      // anything but 0 on iOS — the `bottom-safe` / `right-safe` utilities in
+      // main.css are inert without it (DESIGN.md › Accessibility › Viewport).
+      viewport: 'width=device-width, initial-scale=1, viewport-fit=cover',
       // Deliberately no `theme-color`: the correct value is the page
       // background, which lives in the token layer and differs per color mode.
       // Hardcoding a hex here would bypass DESIGN.md and be wrong in the dark.
@@ -47,10 +51,15 @@ export default defineNuxtConfig({
     // colors: { primary: 'blue', neutral: 'slate' }
   },
 
-  // TypeScript — follow Vite/Nuxt recommended defaults
+  // TypeScript — follow Vite/Nuxt recommended defaults.
+  //
+  // typeCheck runs vue-tsc in-process on `nuxt dev`. The a11y suite's dev server
+  // sets NUXT_TYPECHECK=false to skip it: `bun run ci` has already run
+  // `bun run typecheck` by that point, so doing it again just puts vue-tsc in
+  // competition with the cold Vite build for the same CI runner.
   typescript: {
     strict: true,
-    typeCheck: true,
+    typeCheck: process.env.NUXT_TYPECHECK !== 'false',
   },
 
   // Icons — DESIGN.md › Identity › Iconography. `scan` inlines only the
@@ -61,8 +70,10 @@ export default defineNuxtConfig({
     clientBundle: { scan: true },
   },
 
-  // DevTools
-  devtools: { enabled: true },
+  // DevTools. Disabled when NUXT_DEVTOOLS=false, which the a11y suite sets:
+  // the devtools panel injects its own markup into every page, and axe would
+  // scan it and report violations that aren't in this app's code.
+  devtools: { enabled: process.env.NUXT_DEVTOOLS !== 'false' },
 
   experimental: {
     // Teach Nuxt's build-time definePageMeta scanner about our own key, so the
