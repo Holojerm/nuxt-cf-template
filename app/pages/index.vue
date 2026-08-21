@@ -3,10 +3,24 @@
 // hero, proof, features, pricing pointer, closing CTA — so replacing the words
 // gets you a real marketing page instead of a rewrite.
 //
-// Public and indexable: it and /pricing are the two pages sitemap.xml pushes.
+// Public and indexable — the `sitemap` page meta below is what puts it in
+// sitemap.xml, and it carries the SoftwareApplication node that tells an answer
+// engine what this product is and what it costs.
+
+definePageMeta({
+  publicPage: {
+    changefreq: 'weekly',
+    priority: '1.0',
+    title: 'Overview',
+    summary:
+      'What the product is, who it is for, and the capabilities that ship with it — auth, billing, email, analytics, and the edge stack underneath.',
+  },
+})
 
 const config = useRuntimeConfig()
 const { loggedIn } = useUserSession()
+const site = useSiteContext()
+const plans = usePlans()
 
 const features = [
   {
@@ -47,14 +61,29 @@ const features = [
   },
 ]
 
-useSeoMeta({
+// One source for the product's one-sentence claim — also used by /llms.txt and
+// the SoftwareApplication node, so all three agree.
+const description = config.public.appDescription
+
+useSeo({
+  // 'exact' because the brand should lead on the landing page — everywhere else
+  // useSeo appends `· AppName` for you.
+  titleMode: 'exact',
   title: `${config.public.appName} — ship the product, not the plumbing`,
-  description:
-    'A full-stack SaaS template on Nuxt 4 and Cloudflare Workers: auth, billing, email, and analytics already wired together.',
-  ogTitle: `${config.public.appName}`,
-  ogDescription:
-    'Auth, billing, email, and analytics already wired together on Nuxt 4 + Cloudflare Workers.',
-  ogType: 'website',
+  description,
+  schema: [
+    softwareApplicationSchema(site, {
+      description,
+      offers: plans.value.map((plan) => ({
+        name: plan.name,
+        description: plan.description,
+        amount: plan.amount,
+        currency: plan.currency,
+        unit: plan.unit,
+        recurring: plan.recurring,
+      })),
+    }),
+  ],
 })
 </script>
 

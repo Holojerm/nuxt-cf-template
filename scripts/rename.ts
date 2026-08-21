@@ -124,4 +124,7 @@ Still yours to do — these need values only you have:
   4. Workers Builds   the Worker in the dashboard must be named exactly "${name}",
                       or every build fails before it starts
   5. bun install      regenerate the lockfile entry for the renamed package
+  6. public/og.png    the social share image still reads "${PLACEHOLDER_DISPLAY}" — a script
+                      cannot rewrite an image, and this one shows up in every
+                      link preview of your site
 `)
