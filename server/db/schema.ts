@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
 // ─────────────────────────────────────────────
 // Database Schema (Drizzle ORM + Cloudflare D1)
@@ -70,9 +70,54 @@ export const mcpConnectCodes = sqliteTable('mcp_connect_codes', {
   ...timestamps,
 })
 
+// Feedback — first-party customer feedback capture (POST /api/feedback).
+// PostHog tells you what users *did*; this table is what they *said*, and it's
+// yours: joinable against users/entitlements, and it survives dropping PostHog.
+//
+// `user_id` is deliberately NOT a foreign key. Feedback is accepted from signed-
+// out visitors (null) and must never be lost to a constraint failure when a
+// session exists for a user row that doesn't (OAuth-first sign-in, seeded envs).
+// `ip_hash` is a salted SHA-256 — enough to rate-limit, useless as an identifier.
+export const feedback = sqliteTable(
+  'feedback',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text('user_id'),
+    // bug | idea | praise | confusion | other — see FEEDBACK_KINDS
+    kind: text('kind').notNull().default('idea'),
+    message: text('message').notNull(),
+    // Optional 1–5 satisfaction score for programmatic prompts (post-cancellation,
+    // post-onboarding). The in-app widget leaves it null.
+    rating: integer('rating'),
+    // Reply-to address, only collected from signed-out submitters.
+    email: text('email'),
+    // Route the user was on when they submitted.
+    path: text('path'),
+    // Deep link to the PostHog session replay of this moment — the single most
+    // useful field on a bug report.
+    replayUrl: text('replay_url'),
+    posthogDistinctId: text('posthog_distinct_id'),
+    ipHash: text('ip_hash'),
+    userAgent: text('user_agent'),
+    // new | triaged | closed — see FEEDBACK_STATUSES
+    status: text('status').notNull().default('new'),
+    // Set once the feedback-triage routine (or a human) files it.
+    issueUrl: text('issue_url'),
+    ...timestamps,
+  },
+  (table) => [
+    index('feedback_status_created_idx').on(table.status, table.createdAt),
+    index('feedback_ip_hash_created_idx').on(table.ipHash, table.createdAt),
+  ],
+)
+
 // Type exports — use these in your app, not raw Drizzle types
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Entitlement = typeof entitlements.$inferSelect
 export type NewEntitlement = typeof entitlements.$inferInsert
 export type McpConnectCode = typeof mcpConnectCodes.$inferSelect
+export type Feedback = typeof feedback.$inferSelect
+export type NewFeedback = typeof feedback.$inferInsert

@@ -2,8 +2,9 @@
 // Use this for global auth checks, logging, CORS, etc.
 
 export default defineEventHandler(async (event) => {
-  // Only protect /api routes that aren't public
-  const path = event.path
+  // Only protect /api routes that aren't public. Strip the query string —
+  // the feedback rule below matches an exact path.
+  const path = event.path.split('?')[0] ?? ''
 
   // Public routes — no auth needed.
   // - /api/health: liveness probe
@@ -13,6 +14,12 @@ export default defineEventHandler(async (event) => {
   const publicRoutes = ['/api/health', '/api/auth/', '/api/_auth/']
 
   if (publicRoutes.some((route) => path.startsWith(route))) {
+    return
+  }
+
+  // Anonymous feedback: submitting is public, reading and triaging are not.
+  // Method-scoped so GET /api/feedback and PATCH /api/feedback/:id stay gated.
+  if (path === '/api/feedback' && event.method === 'POST') {
     return
   }
 

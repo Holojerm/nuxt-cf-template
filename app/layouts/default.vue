@@ -21,6 +21,11 @@
     <UContainer as="main" class="py-8">
       <slot />
     </UContainer>
+
+    <!-- Feedback entry point — on every page, open to signed-out visitors too.
+         Remove this and drop <FeedbackWidget position="inline" /> into specific
+         pages if a floating button doesn't suit the product. -->
+    <FeedbackWidget />
   </div>
 </template>
 
