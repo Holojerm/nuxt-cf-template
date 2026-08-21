@@ -354,7 +354,8 @@ with it. Add a case to that function, not an ad-hoc send in a handler.
 ## Common Commands
 
 ```bash
-bun dev               # Start dev server at https://<portless-name>.localhost (via portless — avoids port-3000 collisions across projects/agents)
+bun dev               # Dev server at https://<portless-name>.localhost (via portless). In a linked
+                      # worktree the host is <worktree-dir>.<portless-name>.localhost — printed on start.
 bun dev:app           # Bypass portless and run nuxt dev directly on http://localhost:3000
 bun build             # Build for Cloudflare
 bun lint              # Run oxlint
@@ -423,6 +424,7 @@ This project ships with Claude Code configuration in `.mcp.json` and `.claude/`.
 - `cloudflare-*` and `nuxt-ui` work with no credentials — always available.
 - For GitHub MCP: set `GITHUB_TOKEN` in your shell (a PAT with repo read scope is enough).
 - For live Nuxt introspection: start `bun dev` before opening Claude Code. The `nuxt` server URL in `.mcp.json` is `https://<portless-name>.localhost/__mcp/sse` and must match the `portless.name` in `package.json`. Rename both when you fork.
+- **In a linked worktree the dev host is different**, so that committed URL is wrong there by design — see the worktree section below. `bun dev` prints the host it's using, and `nuxt-mcp` repoints `.mcp.json` at it on boot so introspection keeps working. That leaves a modified `.mcp.json` in the worktree: expected, and **not something to commit**.
 - Drizzle MCP works automatically via `bunx`.
 
 ### NuxtUI Skill (`.claude/skills/nuxt-ui/`)
@@ -561,6 +563,29 @@ Three rules follow, and each one exists because something broke it:
    server URL on every boot, and `test:a11y` boots one — so a green run used to end with a dirty
    tree, and `git add -A` would commit a throwaway port. It's now disabled whenever
    `NUXT_DEVTOOLS=false` (`nuxt.config.ts` › `modules`), which is exactly the automated case.
+
+### `bun dev` gets a per-worktree hostname
+
+`bun dev` runs `scripts/dev.ts`, which hands portless an explicit hostname instead of letting it
+infer one: the bare configured name in the main checkout (`my-app.localhost` — unchanged), and
+`<worktree-dir>.my-app.localhost` in a linked worktree. It prints the host on startup.
+
+The wrapper exists because portless's own worktree prefix is derived from the **branch**, and a
+branch is not a unique key for a worktree. Three ways that collides, all of them silent:
+
+| Case | portless alone | Why it happens |
+| --- | --- | --- |
+| Worktree checked out on `main` | `my-app.localhost` — same as the main checkout | `main`/`master` are treated as default branches and skipped |
+| Detached-HEAD worktree | `my-app.localhost` | Branch reads as `HEAD`, also skipped — and Claude Code creates detached worktrees |
+| `feat/magic-link` vs `claude/magic-link` | both `magic-link.my-app.localhost` | The prefix is only the branch's last path segment |
+
+The worktree *directory* has none of those problems: git won't create two worktrees at one path,
+so it's unique by construction and — unlike the branch — doesn't change under you. That's what
+keeps the URL stable when you switch branches inside a worktree.
+
+`scripts/dev.ts` uses the positional `portless <name> <cmd>` form, which takes the name verbatim.
+`portless run --name` would stack its branch prefix on top: still unique, but the hostname would
+move every time the branch did. `bun dev:app` bypasses the proxy entirely.
 
 > **Historical note.** This section used to warn that `vue-tsc` picked up `.claude/worktrees/`
 > and to fix it with `rm -rf .claude/worktrees/<old>`. That is no longer true on Nuxt 4.5: the

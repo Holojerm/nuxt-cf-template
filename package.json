@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "nuxt build",
-    "dev": "portless",
+    "dev": "bun run scripts/dev.ts",
     "dev:app": "nuxt dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",

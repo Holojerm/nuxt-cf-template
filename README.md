@@ -137,6 +137,8 @@ NuxtHub applies everything in `server/db/migrations/` to its local database
 not read — see CLAUDE.md › Gotchas.
 
 > **First-run note:** `bun dev` runs through [portless](https://portless.sh) so multiple Nuxt projects (and AI agents) can run side-by-side without colliding on port 3000. The first invocation will request `sudo` once to bind port 443 and trust a local CA for HTTPS. Subsequent runs are silent. **macOS / Linux only — no Windows support.**
+>
+> Each git worktree gets its own hostname (`<worktree-dir>.my-app.localhost`), printed on startup, so several checkouts — or several agents — can run `bun dev` at once. See CLAUDE.md › Gotchas for why the worktree directory is the key rather than the branch.
 
 Push to `main` to trigger a production deploy via Workers Builds, or deploy manually:
 
@@ -158,7 +160,8 @@ bun run deploy     # Note: NOT `bun deploy` — that's reserved by Bun
 ## Common commands
 
 ```bash
-bun dev               # Start dev server at https://my-app.localhost (via portless)
+bun dev               # Start dev server at https://my-app.localhost (via portless).
+                      # In a git worktree: https://<worktree-dir>.my-app.localhost
 bun dev:app           # Start dev server directly on http://localhost:3000 (bypass portless)
 bun build             # Build for Cloudflare
 bun lint              # Run oxlint
