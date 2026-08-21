@@ -30,6 +30,7 @@ When working with AI assistants (Claude, etc.), always reference this file first
 ```
 /
 ├── app/                    # Frontend (Vue/Nuxt pages, components, composables)
+│   ├── app.config.ts       # GENERATED from DESIGN.md — NuxtUI colors + component defaults
 │   ├── components/         # Reusable UI components
 │   │   └── [Feature]/      # Group by feature, e.g. app/components/Workout/
 │   ├── composables/        # Shared stateful logic (useAuth, useWorkout, etc.)
@@ -51,6 +52,7 @@ When working with AI assistants (Claude, etc.), always reference this file first
 ├── drizzle.config.ts       # Drizzle Kit config
 ├── nuxt.config.ts
 ├── wrangler.toml
+├── DESIGN.md               # Visual design system — source of truth, see /design-sync
 └── CLAUDE.md               # ← You are here
 ```
 
@@ -162,6 +164,16 @@ await db.run(sql`SELECT * FROM users`)
 
 ## Design Standards
 
+**[DESIGN.md](DESIGN.md) is the source of truth for this app's visual design** — color, type,
+space, motion, component behavior. Read it before writing any UI.
+
+`app/assets/css/main.css` and `app/app.config.ts` are *compiled from it* by `/design-sync`;
+don't hand-edit them and expect the change to survive. `bun run design:check` (part of
+`bun run ci`) fails the build on anything that bypasses the token layer.
+
+The dev-only `/design-system` route renders every token and component state on one page in both
+color modes — use it to verify a design change actually landed.
+
 ### Component Usage
 
 - **Use NuxtUI components first.** Before building a custom component, check if `<UButton>`, `<UModal>`, `<UForm>`, `<UTable>`, etc. covers your need.
@@ -172,7 +184,12 @@ await db.run(sql`SELECT * FROM users`)
 
 - **Tailwind utility classes only.** No custom CSS files unless for truly global styles.
 - **No inline `style` attributes** unless animating dynamic values (e.g. `style="width: ${progress}%"`).
-- **Color palette**: Use NuxtUI's semantic color tokens (`text-foreground`, `bg-background`, `text-muted`, `border-border`) for light/dark mode compatibility. Avoid hardcoded colors like `text-gray-900`.
+- **Color palette**: Use NuxtUI v4's semantic utilities so light/dark mode works for free. Never hardcode a numbered scale (`text-gray-900`, `bg-slate-50`) or a raw hex — `bun run design:check` fails the build on both.
+  - Text: `text-default` (body), `text-muted` (secondary), `text-dimmed` (placeholders), `text-toned` (subtitles), `text-highlighted` (headings), `text-inverted`
+  - Background: `bg-default` (page), `bg-muted` (subtle sections), `bg-elevated` (cards, modals), `bg-accented` (hover), `bg-inverted`
+  - Border: `border-default`, `border-muted`, `border-accented`, `border-inverted`
+  - Semantic colors: `text-primary`, `bg-primary`, `border-primary`, likewise for `secondary`/`success`/`info`/`warning`/`error`/`neutral`
+  - There is no `text-foreground`, `bg-background`, or `border-border` in NuxtUI v4 — those are shadcn tokens and resolve to nothing.
 - **Spacing**: Use the standard Tailwind scale (4, 8, 12, 16, 24, 32...). Don't invent new sizes.
 - **Mobile-first**: All layouts start mobile, expand with `sm:`, `md:`, `lg:` breakpoints.
 
@@ -237,12 +254,13 @@ bun lint              # Run oxlint
 bun lint:fix          # Auto-fix lint issues
 bun format            # Format with oxfmt
 bun format:check      # Check formatting without writing
+bun run design:check  # Fail on UI code that bypasses the DESIGN.md token layer
 bun typecheck         # TypeScript type checking
 bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1
 bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db)
-bun run ci            # Lint + typecheck + test + build — what Workers Builds runs on every push
+bun run ci            # Lint + design:check + typecheck + test + build — what Workers Builds runs on every push
 bun run deploy        # Manual deploy to Cloudflare via wrangler (normally unnecessary —
                       # Workers Builds deploys automatically on push to main).
                       # Requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars
@@ -302,6 +320,7 @@ Installed via `npx skills add nuxt/ui --agent claude-code`. Provides Claude with
 | Command | Usage | Purpose |
 | --- | --- | --- |
 | `/scaffold-component` | `/scaffold-component Feature/Name` | Generate a Vue component following project conventions |
+| `/design-sync` | `/design-sync [brief\|url]` | Compile `DESIGN.md` into the NuxtUI token layer, then verify |
 | `/scaffold-api` | `/scaffold-api [path] [method]` | Generate an API route with Zod + auth |
 | `/db-migrate` | `/db-migrate` | Run the full Drizzle migration workflow |
 | `/new-feature` | `/new-feature FeatureName` | Full stack scaffold: component + API routes + schema |

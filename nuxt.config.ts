@@ -32,8 +32,27 @@ export default defineNuxtConfig({
     typeCheck: true,
   },
 
+  // Icons — DESIGN.md › Identity › Iconography. `scan` inlines only the
+  // i-lucide-* icons actually used in source into the client bundle, so the
+  // Worker never round-trips to the Iconify API to render them. The collection
+  // itself comes from the @iconify-json/lucide devDependency.
+  icon: {
+    clientBundle: { scan: true },
+  },
+
   // DevTools
   devtools: { enabled: true },
+
+  hooks: {
+    // /design-system is the dev-only style guide (app/pages/design-system.vue)
+    // used to verify DESIGN.md changes actually landed. Strip it from the
+    // production route table so it never ships to users.
+    'pages:extend'(pages) {
+      if (process.env.NODE_ENV !== 'production') return
+      const index = pages.findIndex((page) => page.path === '/design-system')
+      if (index !== -1) pages.splice(index, 1)
+    },
+  },
 
   // Runtime config — public vars go in public, secrets stay private
   runtimeConfig: {
