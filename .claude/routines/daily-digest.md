@@ -22,7 +22,7 @@ summarizing what the routines (and the repo) did that day and what needs a human
    - Subject: `[<product name>] Daily ops digest — YYYY-MM-DD`
    - **Needs your attention** first (escalations, PRs awaiting merge, support drafts awaiting
      send — with direct links). If nothing, say "Nothing needs you today."
-   - **Done today** — grouped by function (bugs, support, analytics, marketing), one line each
+   - **Done today** — grouped by function (bugs, feedback, support, analytics, marketing), one line each
      with links. Routines that didn't run or were skipped: one line at the bottom, not a
      section.
    - Keep the whole email under ~30 lines. Quiet day → short email ("Quiet day: no issues, no

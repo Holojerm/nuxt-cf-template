@@ -13,6 +13,7 @@ treat placeholder values as "not configured" and skip the dependent work (journa
 | Support inbox search query | `<Gmail query for support mail, e.g. to:support@product.example is:unread>` |
 | Support reply signature | `<PRODUCT_NAME> support` |
 | Analytics sources | Cloudflare Workers analytics for the production Worker; `<add PostHog/Stripe/etc. when wired up>` |
+| Feedback queue | D1 `feedback` table (in-app widget → `POST /api/feedback`); read via `wrangler d1 execute --remote` |
 | Target audience (for marketing tone) | `<who the product is for>` |
 
 ## Product context

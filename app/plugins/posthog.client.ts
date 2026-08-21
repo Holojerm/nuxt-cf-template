@@ -45,6 +45,12 @@ export default defineNuxtPlugin((nuxtApp) => {
     capture_dead_clicks: true, // clicks that produced no DOM change (UX signal)
     enable_heatmaps: true, // mouse-position heatmap data on every page
 
+    // Surveys (NPS, CSAT, "why did you cancel?") are on by default and fetch
+    // their config + surveys.js through the same /ingest proxy — create one in
+    // the PostHog dashboard and it appears with no deploy. Surveys are the
+    // *asking* half of feedback; app/components/Feedback/FeedbackWidget.vue →
+    // POST /api/feedback is the *telling* half, and lands in your own D1.
+
     session_recording: {
       maskAllInputs: true,
       // Add `data-private` to any element whose text shouldn't be recorded.

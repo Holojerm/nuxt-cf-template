@@ -1,8 +1,8 @@
 # Operations Routines
 
 Repo-shipped definitions for the cloud agents ("routines") that run the commercial side of this
-product: issue triage, bug fixes, support inbox, analytics review, marketing drafts, and a single
-daily digest email summarizing everything that happened.
+product: issue triage, bug fixes, in-app feedback triage, support inbox, analytics review,
+marketing drafts, and a single daily digest email summarizing everything that happened.
 
 **All routines ship default-inactive.** Nothing runs until you explicitly enable it.
 
@@ -27,6 +27,7 @@ so the repo ships the *definitions* and a sync command:
 | --- | --- | --- | --- |
 | `issue-triage.md` | Daily 11:00 | Labels, deduplicates, and assesses new GitHub issues | GitHub connector |
 | `bug-fix.md` | Daily 12:00 | Picks the top triaged bug, opens a fix PR (never pushes to main) | GitHub connector |
+| `feedback-triage.md` | Daily 11:30 | Turns the in-app feedback queue (D1 `feedback` table) into GitHub issues | GitHub connector (+ Cloudflare API token) |
 | `support-inbox.md` | Daily 13:00 | Triages support email, **drafts** replies (never sends), files bugs as issues | Gmail + GitHub connectors |
 | `analytics-review.md` | Weekly Mon 12:30 | Reviews product/traffic metrics, writes a report, files opportunities | GitHub connector (+ analytics access) |
 | `marketing-content.md` | Weekly Thu 14:00 | Drafts changelog + marketing copy into `ops/marketing/` for review | GitHub connector |
