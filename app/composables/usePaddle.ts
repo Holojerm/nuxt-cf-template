@@ -15,7 +15,8 @@ interface PaddleCheckoutItem {
 }
 
 interface PaddleJs {
-  Initialize(opts: { token: string; environment?: 'sandbox' | 'production' }): void
+  Environment: { set(env: 'sandbox' | 'production'): void }
+  Initialize(opts: { token: string }): void
   Checkout: {
     open(opts: {
       items: { priceId: string; quantity: number }[]
@@ -45,7 +46,10 @@ function loadPaddle(
     script.async = true
     script.onload = () => {
       if (!window.Paddle) return resolve(null)
-      window.Paddle.Initialize({ token, environment })
+      // Paddle.js v2: environment is set via Environment.set() BEFORE
+      // Initialize — passing it as an Initialize option throws.
+      if (environment === 'sandbox') window.Paddle.Environment.set('sandbox')
+      window.Paddle.Initialize({ token })
       resolve(window.Paddle)
     }
     script.onerror = () => resolve(null)
