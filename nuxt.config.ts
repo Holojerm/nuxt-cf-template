@@ -66,6 +66,23 @@ export default defineNuxtConfig({
       // Server-side API key (only needed if you call Paddle's API, not for webhooks)
       apiKey: '',
     },
+    // OAuth providers, read by nuxt-auth-utils' defineOAuth*EventHandler.
+    // Declared here (rather than left implicit) so /api/auth/providers can tell
+    // the login page which buttons to render — an unconfigured provider dead-ends
+    // in a "missing configuration" error instead of a sign-in.
+    // Set via NUXT_OAUTH_GITHUB_CLIENT_ID etc.
+    oauth: {
+      github: { clientId: '', clientSecret: '' },
+      google: { clientId: '', clientSecret: '' },
+    },
+    // Transactional email (server/utils/email.ts). Empty key = no-op, so the
+    // template runs without a Resend account.
+    resend: {
+      apiKey: '',
+      // Must be an address on a domain you've verified in Resend, e.g.
+      // "My App <hello@myapp.com>". Anything else is rejected at send time.
+      from: '',
+    },
     // Public vars (access via useRuntimeConfig().public.myVar)
     // NUXT_PUBLIC_APP_NAME in wrangler.toml [vars] overrides this at runtime
     public: {
@@ -79,6 +96,25 @@ export default defineNuxtConfig({
       // token = usePaddle() no-ops, so the template runs without a Paddle account.
       paddleClientToken: '',
       paddleEnv: 'sandbox',
+      // Paddle price IDs (pri_…) for the plans on /pricing. Kept in config
+      // rather than in app/utils/plans.ts so sandbox and production can point at
+      // different prices without a code change. Empty = that plan's button is
+      // disabled instead of opening a checkout that 400s.
+      paddlePriceMonthly: '',
+      paddlePriceYearly: '',
+      paddlePricePass: '',
+      // The app's canonical public origin, no trailing slash. Absolute links in
+      // emails, sitemap.xml, robots.txt, and og: tags are built from this —
+      // there is no request context in a webhook to infer it from.
+      appUrl: 'http://localhost:3000',
+      // Set false on preview deploys so robots.txt disallows everything and an
+      // ephemeral URL never competes with production in the index.
+      indexable: true,
+      // Shown on /terms and /privacy and used as the Reply-To on transactional
+      // email. A legal page with no way to reach a human is not a legal page.
+      supportEmail: 'support@example.com',
+      // Legal entity named in /terms and /privacy. Your company, not your app.
+      legalEntity: 'My Company Ltd',
     },
   },
 

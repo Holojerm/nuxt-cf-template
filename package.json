@@ -22,6 +22,7 @@
     "db:migrate:remote": "wrangler d1 migrations apply my-app-db --remote",
     "db:studio": "drizzle-kit studio",
     "seed": "bun run scripts/seed.ts",
+    "rename": "bun run scripts/rename.ts",
     "design:check": "bun run scripts/check-design-tokens.ts",
     "typecheck": "nuxt typecheck",
     "test": "vitest run",

@@ -140,15 +140,30 @@ export interface UpsertSubscriptionParams {
   currentPeriodEnd?: Date | null
 }
 
+export interface UpsertSubscriptionResult {
+  /** The status this row held before the event, or null if it's brand new. */
+  previousStatus: string | null
+}
+
 /**
  * Upsert the entitlement behind an auto-renewing subscription. Every
  * `subscription.*` event carries the full entity, so one upsert keyed on the
  * subscription id keeps status + period end current.
+ *
+ * Reports the prior status because Paddle sends a `subscription.updated` for
+ * every trivial change (a card edit, a metadata tweak). The webhook emails on
+ * *transitions* — active → past_due, new → active — and a caller that can't see
+ * the old status has to either skip the emails or send duplicates.
  */
 export async function upsertSubscription(
   db: EntitlementDb,
   params: UpsertSubscriptionParams,
-): Promise<void> {
+): Promise<UpsertSubscriptionResult> {
+  const prior = await db.query.entitlements.findFirst({
+    where: eq(tables.entitlements.paddleSubscriptionId, params.subscriptionId),
+    columns: { status: true },
+  })
+
   const values = {
     userId: params.userId,
     paddleCustomerId: params.customerId ?? null,
@@ -169,6 +184,8 @@ export async function upsertSubscription(
         updatedAt: new Date(),
       },
     })
+
+  return { previousStatus: prior?.status ?? null }
 }
 
 /** The adjustment fields we care about (Paddle `adjustment.created|updated`). */
@@ -285,7 +302,7 @@ export const paddleEventSchema = z.object({
 export type PaddleEvent = z.infer<typeof paddleEventSchema>
 
 export type PaddleEventOutcome =
-  | { kind: 'subscription'; userId: string; status: string }
+  | { kind: 'subscription'; userId: string; status: string; previousStatus: string | null }
   | { kind: 'pass'; userId: string; granted: boolean; endsAt: Date; stackedOn: Date | null }
   | { kind: 'adjustment'; action: string; result: RevokeResult }
   | { kind: 'ignored'; reason: 'no_user' | 'subscription_transaction' | 'unhandled_event' }
@@ -304,7 +321,7 @@ export async function applyPaddleEvent(
     // has no userId to map back to.
     if (!userId) return { kind: 'ignored', reason: 'no_user' }
     const status = data.status ?? 'unknown'
-    await upsertSubscription(db, {
+    const { previousStatus } = await upsertSubscription(db, {
       userId,
       subscriptionId: data.id,
       customerId: data.customer_id,
@@ -314,7 +331,7 @@ export async function applyPaddleEvent(
         ? new Date(data.current_billing_period.ends_at)
         : null,
     })
-    return { kind: 'subscription', userId, status }
+    return { kind: 'subscription', userId, status, previousStatus }
   }
 
   if (eventType === 'transaction.completed') {
