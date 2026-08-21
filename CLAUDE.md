@@ -535,9 +535,38 @@ constant fails `isSerializable` and is dropped, silently, the same way.
 
 `app/assets/css/main.css` must contain `@import "tailwindcss"; @import "@nuxt/ui";` and be listed under `css:` in `nuxt.config.ts`. Without this, NuxtUI's generated theme (`.nuxt/ui.css`) doesn't get bundled — pages render in browser default fonts/colors with no Tailwind utilities working. Already wired up in this template; don't remove either piece.
 
-### `vue-tsc` scans `.claude/worktrees/`
+### Parallel agent worktrees are supported — keep them that way
 
-When Claude Code agents use isolated worktrees, the worktree's older code lives under `.claude/worktrees/` and Nuxt's TypeScript pipeline picks it up — causing phantom type errors against deleted/renamed code. `.gitignore` excludes the directory, but if you see "module not found" errors for files that no longer exist in your tree, `rm -rf .claude/worktrees/<old>` is the fix. Don't try to exclude it via `tsconfig.json` — Nuxt regenerates `.nuxt/tsconfig.json` and overrides excludes.
+Agents can work in isolated git worktrees under `.claude/worktrees/<name>` (gitignored), several
+at once. Everything in `bun run ci` is scoped to the checkout it runs in, so a sibling worktree
+full of half-finished or deleted code cannot contaminate your run. That is a property worth
+stating, because it is easy to break and the breakage is confusing rather than loud.
+
+How each gate stays scoped — **match this when you add a gate**:
+
+| Gate | Why a sibling worktree can't reach it |
+| --- | --- |
+| `lint` | `.oxlintrc.json` › `ignorePatterns` lists `.claude/**` |
+| `design:check` / `seo:check` / `brand:check` | Walk `ROOT/app`, `ROOT/app/pages`, and fixed root-relative asset paths |
+| `test` | `vitest.config.ts` › `include` is `test/**` + `server/**`, relative to the checkout |
+| `typecheck` | Nuxt's generated `.nuxt/tsconfig.*` use scoped includes (`../app/**/*`, `../server/**/*`), not a root glob |
+| `test:a11y` | Per-checkout port — see below |
+| `build` | Nuxt only reads `app/`, `server/`, `shared/` |
+
+Three rules follow, and each one exists because something broke it:
+
+1. **A gate takes its scan root from the checkout** — not a walk upward, not a bare `**/*` glob.
+2. **A gate that binds a port derives it** via `scripts/worktree-port.ts`. Never hardcode one.
+3. **A gate never writes to a tracked file.** `nuxt-mcp` rewrites `.mcp.json` with the live dev
+   server URL on every boot, and `test:a11y` boots one — so a green run used to end with a dirty
+   tree, and `git add -A` would commit a throwaway port. It's now disabled whenever
+   `NUXT_DEVTOOLS=false` (`nuxt.config.ts` › `modules`), which is exactly the automated case.
+
+> **Historical note.** This section used to warn that `vue-tsc` picked up `.claude/worktrees/`
+> and to fix it with `rm -rf .claude/worktrees/<old>`. That is no longer true on Nuxt 4.5: the
+> generated tsconfigs scope their includes, and a worktree containing deliberately unbuildable
+> code now passes `bun typecheck` untouched. Believing the old note is the more expensive
+> mistake, because it argues against running agents in parallel at all.
 
 ### Workers Builds: dashboard Worker name must match `wrangler.toml`
 
@@ -557,12 +586,17 @@ Two things to know when it breaks:
   fix is `playwright install --with-deps chromium`, which needs root and may not be
   available on Workers Builds. The fallback is to drop `test:a11y` from `ci` and run it in a
   GitHub Action instead — the suite doesn't care what runs it.
-- **The suite starts its own dev server** (`playwright.config.ts` → `webServer`) on port
-  3000 with `reuseExistingServer: false`. That is deliberate: it only produces valid results
-  against a server started with `NUXT_DEVTOOLS=false`, and reusing a dev server you already
-  had running reports the devtools panel's own markup as your app's violations. It also
-  means a stale process on port 3000 makes the run fail to boot rather than silently lie —
-  kill it, don't flip `reuseExistingServer`.
+- **The suite starts its own dev server** (`playwright.config.ts` → `webServer`) with
+  `reuseExistingServer: false`. That is deliberate: it only produces valid results against a
+  server started with `NUXT_DEVTOOLS=false`, and reusing a dev server you already had running
+  reports the devtools panel's own markup as your app's violations. So a stale process on the
+  suite's port makes the run fail to boot rather than silently lie — kill it, don't flip
+  `reuseExistingServer`.
+- **The port is derived from the checkout path**, not fixed (`scripts/worktree-port.ts`,
+  range 3100–3899). Every worktree gets its own, so parallel agents don't collide and a
+  `bun run dev:app` on 3000 doesn't either. It's deterministic, so the same checkout always
+  gets the same port and you can open it by hand mid-run — `bun run test:a11y` prints it.
+  Set `A11Y_PORT` to pin a value. Any future suite that binds a port must use this helper.
 - **The `webServer.timeout` is sized for a cold cache, not your machine.** A cold `nuxt dev`
   builds the whole app before it listens; anything that invalidates the Nuxt build cache
   (editing `nuxt.config.ts`, a merge that touches it) puts you back on that path. Observed:
