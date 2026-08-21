@@ -9,7 +9,22 @@ export default defineNuxtConfig({
     compatibilityVersion: 4,
   },
 
-  modules: ['@nuxt/ui', '@nuxthub/core', 'nuxt-auth-utils', 'nuxt-mcp'],
+  modules: [
+    '@nuxt/ui',
+    '@nuxthub/core',
+    'nuxt-auth-utils',
+    // nuxt-mcp rewrites `.mcp.json` — a *tracked* file — with the live dev
+    // server URL every time a dev server boots. Helpful when you started that
+    // server yourself; destructive in automation, because `bun run test:a11y`
+    // boots one too. An agent or CI run would finish with a dirty tree, and a
+    // `git add -A` would sweep a throwaway port into the commit, clobbering the
+    // `my-app.localhost` URL that `bun run rename` is responsible for.
+    //
+    // Gated on the same signal the a11y suite already sets. Options go in the
+    // array form because nuxt-mcp registers `configKey: 'mcp'` without
+    // augmenting `@nuxt/schema`, so a top-level `mcp:` key would not typecheck.
+    ['nuxt-mcp', { updateConfig: process.env.NUXT_DEVTOOLS === 'false' ? false : 'auto' }],
+  ],
 
   // NuxtUI v4 requires this CSS entry — without it, Tailwind utilities and
   // NuxtUI semantic tokens (text-foreground, bg-background, etc.) won't apply

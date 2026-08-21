@@ -9,8 +9,19 @@
 
 import { defineConfig, devices } from '@playwright/test'
 
-const PORT = 3000
+import { playwrightPort } from './scripts/worktree-port'
+
+// Derived from the checkout path rather than fixed at 3000, so parallel git
+// worktrees each get their own server. See scripts/worktree-port.ts for why a
+// hash beats both a fixed port and a free-port scan. Override with A11Y_PORT.
+const PORT = playwrightPort()
 const HOST = `http://localhost:${PORT}`
+
+// Printed because the port is derived rather than known: without this the only
+// way to open the app while a run is in flight is to recompute the hash.
+// Playwright re-imports this config in every worker process, so print only from
+// the runner — otherwise the line repeats once per worker in the CI log.
+if (process.env.TEST_WORKER_INDEX === undefined) console.info(`a11y suite → ${HOST}`)
 
 export default defineConfig({
   testDir: './test/a11y',
@@ -41,6 +52,11 @@ export default defineConfig({
     // started with NUXT_DEVTOOLS=false, and a dev server already on this port
     // was almost certainly started without it. Reusing one silently reports
     // the devtools panel's own markup as this app's violations.
+    //
+    // This is also why the port above is per-checkout. `false` means a second
+    // worktree running the suite does not share the first one's server, it
+    // fails to boot — correct, and fatal for parallel agents until each
+    // checkout got a port of its own.
     reuseExistingServer: false,
     // CI is always a cold cache, and a cold `nuxt dev` builds the whole app
     // before it listens. 120s was not enough — it timed out on the first run
@@ -48,7 +64,8 @@ export default defineConfig({
     // 2s. Budget for the cold path, not the one you see locally.
     timeout: 300_000,
     // NUXT_TYPECHECK=false keeps vue-tsc off the critical path; `bun run ci`
-    // has already typechecked before this suite runs.
-    env: { NUXT_DEVTOOLS: 'false', NUXT_TYPECHECK: 'false' },
+    // has already typechecked before this suite runs. NUXT_PORT is what makes
+    // `nuxt dev` listen on the derived port instead of its own default 3000.
+    env: { NUXT_DEVTOOLS: 'false', NUXT_TYPECHECK: 'false', NUXT_PORT: String(PORT) },
   },
 })
