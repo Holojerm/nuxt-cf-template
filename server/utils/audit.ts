@@ -1,0 +1,218 @@
+// Audit trail — the append-only record of privileged actions.
+//
+// Like server/utils/entitlements.ts, every function here takes the Drizzle
+// client as its first argument rather than reaching for the auto-imported `db`,
+// so test/audit.test.ts can drive it against a real D1 binding inside workerd
+// without booting Nitro. The H3-facing helper at the bottom is the exception,
+// and it is the only thing in this file a test can't call.
+//
+// ── Policy: audit before act ─────────────────────────────────────────────────
+// The audit row is written BEFORE the privileged action runs, and a failed
+// audit write fails the action. This is the whole reason `withAudit()` exists
+// rather than a pair of calls a handler is trusted to order correctly.
+//
+// The alternative — act first, then record, and swallow a failed insert the way
+// sendEmail() swallows a failed send — is the wrong trade here, and the two
+// cases are worth separating because they look similar:
+//
+//   - A dropped email is a customer inconvenience. The money event behind it
+//     already happened and is still in the database. Failing the webhook to
+//     save the email would make Paddle replay a payment.
+//   - A dropped audit row is the *disappearance of the only evidence* that an
+//     admin reached into someone else's account. Nothing else records it. An
+//     entitlement appears in a customer's billing history with no explanation,
+//     and there is no query that recovers who did it or why.
+//
+// So: an unrecorded privileged action is strictly worse than a refused one.
+// A refused grant is visible immediately — the admin sees an error and retries.
+// An unrecorded grant is invisible forever. This is the same reasoning the
+// `audit_log` table comment gives for having no foreign key and no updated_at:
+// the write must not fail for an incidental reason, and the row must not be
+// editable afterwards. Everything here is in service of "the record is true".
+//
+// The cost is real and accepted: D1 being down takes the admin console's
+// mutations down with it. D1 being down has already taken the rest of the app
+// down, so the marginal loss is small.
+//
+// ── What this means for metadata ─────────────────────────────────────────────
+// Because the row is written first, its metadata describes the *intent*, not
+// the outcome — "grant 2 passes to user X, because Y", not "user X now expires
+// on Z". Anything the action computes is not available yet, and deliberately so:
+// a row that could be corrected after the fact is a row that can be corrected
+// after the fact. The resulting state lives in the table the action wrote to;
+// this one answers "who decided, and what did they decide".
+
+import { and, desc, eq } from 'drizzle-orm'
+import type { drizzle } from 'drizzle-orm/d1'
+import type { H3Event } from 'h3'
+import * as tables from '../db/schema'
+import type { AuditLogEntry, AuditMetadata } from '../db/schema'
+import { hashIp } from './feedback'
+
+/** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
+export type AuditDb = ReturnType<typeof drizzle<typeof tables>>
+
+/**
+ * Every action this app records, as a closed union.
+ *
+ * Closed rather than free text for the same reason FEEDBACK_KINDS is: a typo'd
+ * action name doesn't fail anything, it just quietly splits the trail into two
+ * buckets, and you find out when the one query this table exists to serve comes
+ * back short. Adding an action is one line here.
+ *
+ * Naming: past tense, namespaced by surface. `admin.*` is a human acting on
+ * someone else's data through the console.
+ */
+export const AUDIT_ACTIONS = [
+  /** An admin searched the user directory by email. Records the needle. */
+  'admin.user_searched',
+  /** An admin opened one user's detail page — identity, billing, feedback. */
+  'admin.user_viewed',
+  /** An admin rendered a read-only "view as" of what a user would see. */
+  'admin.user_viewed_as',
+  /** An admin granted comp access (the apology grant). */
+  'admin.pass_granted',
+] as const
+
+export type AuditAction = (typeof AUDIT_ACTIONS)[number]
+
+/** What gets recorded. Only `actorUserId` and `action` are ever required. */
+export interface AuditEntry {
+  /**
+   * The user id behind the action. Not a foreign key (see the table comment) —
+   * for `actorType: 'system'` this is a sentinel like `system` rather than a row.
+   */
+  actorUserId: string
+  actorType?: 'admin' | 'system'
+  action: AuditAction
+  /** What was acted on — 'user', 'feedback', 'entitlement'. Null for bulk reads. */
+  targetType?: string | null
+  targetId?: string | null
+  /** Flat scalars only — see AuditMetadata in server/db/schema.ts for why. */
+  metadata?: AuditMetadata | null
+  /** Salted SHA-256 of the caller's IP; use auditIpHash(event) to build it. */
+  ipHash?: string | null
+}
+
+/**
+ * Append one row. Throws if the insert fails — callers must not catch it, which
+ * is what `withAudit()` below exists to make hard to get wrong.
+ */
+export async function writeAudit(db: AuditDb, entry: AuditEntry): Promise<AuditLogEntry> {
+  const [row] = await db
+    .insert(tables.auditLog)
+    .values({
+      actorUserId: entry.actorUserId,
+      actorType: entry.actorType ?? 'admin',
+      action: entry.action,
+      targetType: entry.targetType ?? null,
+      targetId: entry.targetId ?? null,
+      metadata: entry.metadata ?? null,
+      ipHash: entry.ipHash ?? null,
+    })
+    .returning()
+
+  // A silent no-op insert would be indistinguishable from a recorded action, so
+  // it gets the same treatment as a thrown error rather than a warning.
+  if (!row) throw new Error('audit insert returned no row')
+  return row
+}
+
+/**
+ * Run a privileged action behind its audit row — the executable form of the
+ * policy at the top of this file.
+ *
+ * `act` runs only if the audit row landed. Nothing here catches: an audit
+ * failure propagates to the handler as a 500, the action never happens, and
+ * the admin sees an error instead of a silent success.
+ *
+ *   return withAudit(db, { actorUserId: admin.id, action: 'admin.pass_granted', … },
+ *     () => grantCompPasses(db, { … }))
+ *
+ * Reads go through it too, not just mutations. Looking up a customer's email,
+ * billing history, and support tickets is a privileged read of another person's
+ * data; that it changes nothing does not make it unremarkable.
+ */
+export async function withAudit<T>(
+  db: AuditDb,
+  entry: AuditEntry,
+  act: () => Promise<T>,
+): Promise<T> {
+  await writeAudit(db, entry)
+  // `return await`, not `return`. Returning the promise bare makes an async
+  // function adopt it a microtask later, which leaves a rejecting action
+  // momentarily unhandled — workerd reports that as an unhandled rejection even
+  // though the caller does catch it. Awaiting attaches the handler in the same
+  // tick, so a failed action logs once, as itself.
+  return await act()
+}
+
+export interface ListAuditOptions {
+  /** Everything one admin did — the index the table carries. */
+  actorUserId?: string
+  targetType?: string
+  /** Everything done TO one subject, which is the support-facing question. */
+  targetId?: string
+  limit?: number
+}
+
+/** Newest-first audit rows for the console. Capped; this table only grows. */
+export async function listAudit(
+  db: AuditDb,
+  options: ListAuditOptions = {},
+): Promise<AuditLogEntry[]> {
+  const filters = [
+    options.actorUserId ? eq(tables.auditLog.actorUserId, options.actorUserId) : undefined,
+    options.targetType ? eq(tables.auditLog.targetType, options.targetType) : undefined,
+    options.targetId ? eq(tables.auditLog.targetId, options.targetId) : undefined,
+  ].filter((f) => f !== undefined)
+
+  return db
+    .select()
+    .from(tables.auditLog)
+    .where(filters.length ? and(...filters) : undefined)
+    .orderBy(desc(tables.auditLog.createdAt))
+    .limit(Math.min(options.limit ?? 50, 200))
+}
+
+/** The wire shape of an audit row — dates as ISO strings, for the console. */
+export interface AuditView {
+  id: string
+  actorUserId: string
+  actorType: string
+  action: string
+  targetType: string | null
+  targetId: string | null
+  metadata: AuditMetadata | null
+  createdAt: string
+}
+
+export function toAuditView(row: AuditLogEntry): AuditView {
+  // `ip_hash` is deliberately not on the wire. It is an investigation aid for
+  // someone with database access, not something the console needs to render,
+  // and shipping it to a browser makes an opaque identifier one screenshot away
+  // from being pasted into a ticket.
+  return {
+    id: row.id,
+    actorUserId: row.actorUserId,
+    actorType: row.actorType,
+    action: row.action,
+    targetType: row.targetType,
+    targetId: row.targetId,
+    metadata: row.metadata,
+    createdAt: row.createdAt.toISOString(),
+  }
+}
+
+// ─── H3-facing ───────────────────────────────────────────────────────────────
+
+/**
+ * Salted hash of the caller's IP for an audit row, built exactly the way
+ * server/api/feedback.post.ts builds the one on a feedback row — same salt,
+ * same construction, so the two are comparable in an investigation and neither
+ * is an identifier on its own.
+ */
+export async function auditIpHash(event: H3Event): Promise<string | null> {
+  const ip = getHeader(event, 'cf-connecting-ip') ?? getRequestIP(event, { xForwardedFor: true })
+  return hashIp(ip, useRuntimeConfig(event).sessionPassword)
+}
