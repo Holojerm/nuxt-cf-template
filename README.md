@@ -128,9 +128,13 @@ Every push to `main` now lints, typechecks, tests, builds, and deploys. Pushes t
 
 ```bash
 bun install
-bun db:migrate     # Apply initial migration to local D1
 bun dev            # Start dev server at https://my-app.localhost (via portless)
 ```
+
+NuxtHub applies everything in `server/db/migrations/` to its local database
+(`.data/db/sqlite.db`) when the dev server boots, so there is no local migrate step.
+`bun db:migrate` targets wrangler's *separate* local sandbox, which the dev server does
+not read — see CLAUDE.md › Gotchas.
 
 > **First-run note:** `bun dev` runs through [portless](https://portless.sh) so multiple Nuxt projects (and AI agents) can run side-by-side without colliding on port 3000. The first invocation will request `sudo` once to bind port 443 and trust a local CA for HTTPS. Subsequent runs are silent. **macOS / Linux only — no Windows support.**
 
@@ -139,6 +143,15 @@ Push to `main` to trigger a production deploy via Workers Builds, or deploy manu
 ```bash
 bun run deploy     # Note: NOT `bun deploy` — that's reserved by Bun
 ```
+
+> **Migrations do not run on deploy.** Neither `wrangler deploy` nor Workers Builds applies
+> them to your remote D1, and NuxtHub's build-time migration step writes to a local file on
+> the build machine. After the first deploy — and after every schema change — run this once
+> against production, or the Worker will query tables that don't exist:
+>
+> ```bash
+> bun run db:migrate:remote
+> ```
 
 ---
 

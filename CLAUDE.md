@@ -396,7 +396,7 @@ This project ships with Claude Code configuration in `.mcp.json` and `.claude/`.
 | `nuxt-ui` | Remote HTTP | NuxtUI v4 component API docs, composables, templates, migration guide — always active |
 | `github` | Remote HTTP | GitHub repo/PR/issue context — requires `GITHUB_TOKEN` env var |
 | `nuxt` | Local SSE | Live project introspection (pages, components, auto-imports, config) — requires `bun dev` |
-| `drizzle` | Local stdio | Schema introspection against `server/database/schema.ts` |
+| `drizzle` | Local stdio | Schema introspection against `server/db/schema.ts` |
 
 **Setup notes:**
 - `cloudflare-*` and `nuxt-ui` work with no credentials — always available.
@@ -439,6 +439,31 @@ Sharp edges that have bitten this template before — read before forking or bef
 ### Local D1 lives in two places — only one is real
 
 NuxtHub serves the dev DB from `.data/db/sqlite.db`. Wrangler's own local D1 sandbox lives at `.wrangler/state/v3/d1/`. Migrations applied via `wrangler d1 execute --local` or direct writes via `wrangler d1 execute --local` land in the **wrangler** path, which the dev server does NOT read. Seed via `bun seed` (see `scripts/seed.ts`), which uses `bun:sqlite` against the NuxtHub path directly. The two only converge in production.
+
+### Nothing applies migrations to production D1 — you have to
+
+Locally this is invisible: NuxtHub's dev plugin (`applyMigrationsDuringDev`) applies
+`server/db/migrations/` to `.data/db/sqlite.db` on every dev boot, so schema changes just
+appear. Production has no equivalent.
+
+`wrangler deploy` does not apply D1 migrations, and NuxtHub's `applyMigrationsDuringBuild`
+step runs against the **libsql driver's local file on the build machine** (`hub.db` resolves
+to `sqlite`/`libsql` here, not the `d1` driver), so it never touches your remote database.
+The `.sql` files are copied into `.output/server/db/migrations/` and the generated
+`wrangler.json` points `migrations_dir` at them — but nothing ever runs them.
+
+So a deploy that adds a table ships a Worker querying a table that does not exist, and the
+failure surfaces as a 500 on a route that worked perfectly in dev. Run it yourself, after
+the first deploy and after every schema change:
+
+```bash
+bun run db:migrate:remote
+```
+
+One wrinkle if you script it: the root `wrangler.toml` sets no `migrations_table`, so that
+command tracks state in wrangler's default `d1_migrations`, while the generated
+`.output/server/wrangler.json` sets `migrations_table = "_hub_migrations"`. Both work; pick
+one and stay on it, because alternating makes each think nothing has been applied.
 
 ### The dev server caches its DB connection — external writes need a restart
 

@@ -19,10 +19,12 @@ Then execute in this order:
 
 ### 1. Schema (if new table or columns needed)
 
-Update `server/database/schema.ts` to add the new table or columns. Follow the existing patterns:
-- UUID primary keys with `$default: () => crypto.randomUUID()`
-- `created_at` and `updated_at` with auto-timestamps
-- Foreign keys for user/trainer relationships
+Update `server/db/schema.ts` to add the new table or columns. Follow the existing patterns:
+- UUID primary keys: `.$defaultFn(() => crypto.randomUUID())`
+- Spread the shared `timestamps` helper for `created_at` / `updated_at` — don't redeclare them
+- Foreign keys as `<table_singular>_id` with `.references(() => users.id)`. Omit the FK
+  deliberately if the row must survive a missing parent, and comment why (see `feedback.userId`)
+- Add an `index()` for any column pair you filter or sort on
 - Export the inferred types: `export type [Name] = typeof [table].$inferSelect`
 
 After updating schema, remind the user to run `/db-migrate` to generate and apply the migration.
@@ -36,7 +38,11 @@ Create the needed routes in `server/api/[feature]/`:
 - `[id].put.ts` — update
 - `[id].delete.ts` — delete
 
-Only create the routes that are actually needed. Follow all conventions from `/scaffold-api`.
+Only create the routes that are actually needed. Follow all conventions from `/scaffold-api`,
+including its gate table — **ask whether this feature is part of what the product sells.** If it
+is, every one of these routes opens with `await requireSubscription(event)`; the client-side
+`subscription` middleware is not a boundary. Put anything with real branching in
+`server/utils/[feature].ts` as a function taking `db` first, so it can be tested in workerd.
 
 ### 3. Component
 
@@ -55,7 +61,11 @@ If the feature warrants its own page, create `app/pages/[feature]/index.vue` tha
 ### Summary
 
 After scaffolding, output a checklist of what was created and what manual steps remain:
-- [ ] Run `/db-migrate` if schema was changed
+- [ ] Run `/db-migrate` if schema was changed — and remember production D1 needs
+      `bun run db:migrate:remote` explicitly; deploying does not apply migrations
 - [ ] Customize Zod schemas in API routes
+- [ ] Confirm the gate on every new route (`requireUserSession` / `requireSubscription` / `requireAdmin`)
 - [ ] Add any missing props/emits to components
 - [ ] Wire up page navigation in the layout if needed
+- [ ] If the page is public, add `definePageMeta({ publicPage: … })` and call `useSeo()` once —
+      `bun run seo:check` fails the build otherwise
