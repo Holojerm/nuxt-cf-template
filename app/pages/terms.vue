@@ -11,6 +11,16 @@
 // you take real money. The banner at the top of the page says the same thing to
 // you, in the browser, until you remove it.
 
+definePageMeta({
+  publicPage: {
+    changefreq: 'yearly',
+    priority: '0.3',
+    title: 'Terms of Service',
+    summary:
+      'The contract: what you may do with the service, how billing and cancellation work, and the full refund policy.',
+  },
+})
+
 const config = useRuntimeConfig()
 
 // Bump when you change the terms. Users are entitled to know when the deal changed.
@@ -20,9 +30,10 @@ const app = computed(() => config.public.appName)
 const entity = computed(() => config.public.legalEntity)
 const support = computed(() => config.public.supportEmail)
 
-useSeoMeta({
-  title: `Terms of Service · ${config.public.appName}`,
-  description: `The terms that govern your use of ${config.public.appName}.`,
+useSeo({
+  title: 'Terms of Service',
+  description: `The terms that govern your use of ${config.public.appName} — billing, cancellation, refunds, and acceptable use.`,
+  breadcrumb: [{ name: 'Terms of Service', path: '/terms' }],
 })
 </script>
 

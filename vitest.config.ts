@@ -33,6 +33,10 @@ export default defineConfig({
       // like `import { ... } from '~/server/db/schema'` resolve correctly.
       '~': fileURLToPath(new URL('./', import.meta.url)),
       '~~': fileURLToPath(new URL('./', import.meta.url)),
+      // Nuxt 4's shared/ alias. Server utils import through it rather than
+      // relying on auto-imports, which typecheck everywhere but are not always
+      // injected at runtime — see CLAUDE.md › Gotchas.
+      '#shared': fileURLToPath(new URL('./shared', import.meta.url)),
     },
   },
   test: {

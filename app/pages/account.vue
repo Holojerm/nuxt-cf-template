@@ -8,7 +8,6 @@
 
 definePageMeta({ middleware: 'auth' })
 
-const config = useRuntimeConfig()
 const { user, clear: clearSession } = useUserSession()
 const toast = useToast()
 
@@ -76,7 +75,11 @@ function formatDate(value: string | null) {
   return new Date(value).toLocaleDateString(undefined, { dateStyle: 'medium' })
 }
 
-useSeoMeta({ title: `Account · ${config.public.appName}`, robots: 'noindex' })
+useSeo({
+  title: 'Account',
+  description: 'Your plan, billing history, and account settings.',
+  noindex: true,
+})
 </script>
 
 <template>

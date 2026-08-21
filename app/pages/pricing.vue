@@ -7,11 +7,26 @@
 //      purchase without one can't be mapped back to an account by the webhook.
 //   3. Existing subscribers get told they already have access instead of being
 //      sold a second subscription.
+//
+// It is also the page answer engines care most about, so it carries the Offer
+// nodes and the FAQPage — both built from the same arrays the template renders
+// (app/utils/plans.ts, app/utils/faq.ts), never from a second copy of the copy.
+
+definePageMeta({
+  publicPage: {
+    changefreq: 'weekly',
+    priority: '0.8',
+    title: 'Pricing',
+    summary:
+      'Every plan and what it costs — a monthly subscription, a yearly subscription, and a one-time 30-day pass — plus answers on billing, cancellation, and refunds.',
+  },
+})
 
 const config = useRuntimeConfig()
 const { loggedIn } = useUserSession()
 const { openCheckout, ready: paddleReady } = usePaddle()
 const plans = usePlans()
+const site = useSiteContext()
 const toast = useToast()
 const route = useRoute()
 
@@ -50,10 +65,25 @@ async function choose(plan: (typeof plans.value)[number]) {
 // Set by the `subscription` route middleware when it turns someone away.
 const gatedFrom = computed(() => (typeof route.query.from === 'string' ? route.query.from : null))
 
-useSeoMeta({
-  title: `Pricing · ${config.public.appName}`,
-  description: `Plans and pricing for ${config.public.appName}.`,
-  ogTitle: `Pricing · ${config.public.appName}`,
+useSeo({
+  title: 'Pricing',
+  description: `Plans and pricing for ${config.public.appName}: a monthly subscription, a yearly subscription, and a one-time 30-day pass. Every plan includes everything.`,
+  breadcrumb: [{ name: 'Pricing', path: '/pricing' }],
+  schema: [
+    softwareApplicationSchema(site, {
+      description: `Plans and pricing for ${config.public.appName}.`,
+      offers: plans.value.map((plan) => ({
+        name: plan.name,
+        description: plan.description,
+        amount: plan.amount,
+        currency: plan.currency,
+        unit: plan.unit,
+        recurring: plan.recurring,
+      })),
+    }),
+    // Valid only because the same array is rendered below — see app/utils/faq.ts.
+    faqSchema(PRICING_FAQ),
+  ],
 })
 </script>
 
@@ -143,14 +173,23 @@ useSeoMeta({
       </UCard>
     </div>
 
-    <div class="mx-auto max-w-2xl text-sm text-muted">
-      <p>
-        Payments and invoicing are handled by Paddle, our merchant of record — your receipt comes
-        from them. Subscriptions can be cancelled from your account page at any time, and access
-        runs to the end of the period you've paid for. Refunds end access immediately; see the
-        <ULink to="/terms" class="text-primary underline underline-offset-2">Terms</ULink> for the
-        full policy.
+    <!--
+      The FAQ is rendered from the same PRICING_FAQ array that feeds the
+      FAQPage JSON-LD above. Answer engines quote these strings; visitors read
+      them. Edit app/utils/faq.ts and both change together.
+    -->
+    <section class="mx-auto flex w-full max-w-2xl flex-col gap-6">
+      <h2 class="text-2xl text-highlighted">Common questions</h2>
+      <dl class="flex flex-col gap-6">
+        <div v-for="item in PRICING_FAQ" :key="item.question" class="flex flex-col gap-2">
+          <dt class="font-medium text-highlighted">{{ item.question }}</dt>
+          <dd class="text-sm text-muted">{{ item.answer }}</dd>
+        </div>
+      </dl>
+      <p class="text-sm text-muted">
+        The <ULink to="/terms" class="text-primary underline underline-offset-2">Terms</ULink> carry
+        the full refund and cancellation policy.
       </p>
-    </div>
+    </section>
   </div>
 </template>

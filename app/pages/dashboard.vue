@@ -13,10 +13,9 @@
 
 definePageMeta({ middleware: ['auth', 'subscription'] })
 
-const config = useRuntimeConfig()
 const { user } = useUserSession()
 
-useSeoMeta({ title: `Dashboard · ${config.public.appName}`, robots: 'noindex' })
+useSeo({ title: 'Dashboard', description: 'The gated example page.', noindex: true })
 </script>
 
 <template>

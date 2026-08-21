@@ -116,7 +116,7 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
 1. Select (or create) the Worker — its name **must match** `name` in `wrangler.toml`.
 2. Go to **Settings → Build → Connect** and pick this repository.
 3. Configure the build:
-   - **Build command**: `bun run ci` (lint → design:check → typecheck → test → a11y → build)
+   - **Build command**: `bun run ci` (lint → design:check → seo:check → typecheck → test → a11y → build)
    - **Deploy command**: `bunx wrangler --cwd .output deploy`
    - **Preview deploy command**: `bunx wrangler --cwd .output versions upload`
 4. Under **Build Variables and Secrets**, add `NUXT_SESSION_PASSWORD` (mark it secret).
@@ -152,7 +152,7 @@ bun lint              # Run oxlint
 bun lint:fix          # Auto-fix lint issues
 bun format            # Format with oxfmt
 bun typecheck         # TypeScript type checking
-bun run ci            # Lint + design:check + typecheck + test + test:a11y + build — what Workers Builds runs
+bun run ci            # Lint + design:check + seo:check + typecheck + test + test:a11y + build — Workers Builds runs this
 bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1 (via wrangler)
 bun db:migrate:remote # Apply migrations to remote/prod D1
@@ -241,7 +241,7 @@ See [`test/example.test.ts`](./test/example.test.ts) for the starter pattern. Co
 
 The Cloudflare preset has to be pinned in `nuxt.config.ts`; the `@nuxthub/core` module does **not** auto-detect it for `nuxt build` (it only auto-detected in the legacy `nuxthub deploy` command, which Cloudflare sunset Feb 2026).
 
-Workers Builds runs the same two steps in CI — `bun run ci` covers the build (plus lint, the design-token gate, typecheck, unit tests, and the axe accessibility suite), and the deploy command is the same `wrangler --cwd .output deploy`. Builds run inside your Cloudflare account, so CI needs no API token.
+Workers Builds runs the same two steps in CI — `bun run ci` covers the build (plus lint, the design-token and SEO gates, typecheck, unit tests, and the axe accessibility suite), and the deploy command is the same `wrangler --cwd .output deploy`. Builds run inside your Cloudflare account, so CI needs no API token.
 
 ---
 
@@ -374,10 +374,110 @@ Going live: swap the token/secret for live ones and set `NUXT_PUBLIC_PADDLE_ENV=
 | `/terms`, `/privacy` | Public | Templates written to match what this codebase actually does. **Have a lawyer read them.** |
 | `/design-system` | Dev only | Stripped from the production route table in `nuxt.config.ts`. |
 
-`robots.txt` and `sitemap.xml` are generated at
-[`server/routes/`](./server/routes/) rather than dropped in `public/`, so they can use the real
-deployment origin. Set `NUXT_PUBLIC_INDEXABLE=false` on preview deploys and robots.txt disallows
-everything — an indexed preview URL competes with production for the same content.
+---
+
+## SEO & AEO
+
+Classic SEO is about being **findable**. Answer engines — AI Overviews, ChatGPT Search,
+Perplexity — are about being **quotable**: they need to extract, without guessing, what the
+product is, who runs it, what it costs. Prose gets paraphrased wrongly; a typed graph doesn't.
+Both halves are wired here, and both are enforced by CI.
+
+### One call per page
+
+Every page calls [`useSeo()`](./app/composables/useSeo.ts) exactly once. It emits the four
+things that have to happen together, three of which are easy to forget:
+
+| | Why it's in the wrapper |
+| --- | --- |
+| `<link rel="canonical">` | `useSeoMeta()` does **not** emit one. On Workers the same app answers on `*.workers.dev` *and* your custom domain — without a canonical you publish two spellings of every page and split the ranking. |
+| Open Graph + Twitter | With an **absolute** `og:image`. Relative ones are dropped by most unfurlers, so a share renders as bare text. |
+| JSON-LD | The `@graph` an answer engine actually reads — see below. |
+| `noindex` | Per-page, plus globally on preview deploys. |
+
+```ts
+useSeo({
+  title: 'Pricing',                        // `· My App` is appended for you
+  description: 'Plans and pricing …',
+  breadcrumb: [{ name: 'Pricing', path: '/pricing' }],
+  schema: [softwareApplicationSchema(site, { … }), faqSchema(PRICING_FAQ)],
+})
+```
+
+### Public pages declare themselves
+
+```ts
+definePageMeta({
+  publicPage: { changefreq: 'weekly', priority: '0.8', title: 'Pricing', summary: '…' },
+})
+```
+
+That single declaration is what puts a page in **both** `sitemap.xml` and `llms.txt`. There is
+no list to keep in sync — the previous version of this template had a hardcoded array in the
+sitemap route, and a hardcoded array is a second place to remember. Add `/changelog`, ship it,
+and it was simply never in the sitemap, with nothing failing.
+
+A page without the key is in neither, which is the right default: most pages added to an app
+are private. Dynamic routes (`/posts/[id]`) are one pattern, not N URLs — query D1 for those in
+[`sitemap.xml.get.ts`](./server/routes/sitemap.xml.get.ts).
+
+`<lastmod>` is the **build date**, not the request date. `new Date()` at request time tells
+crawlers every page changed today, on every fetch, and they discount a lastmod that always
+says "now".
+
+### Structured data
+
+Builders live in [`shared/utils/schema.ts`](./shared/utils/schema.ts) as pure functions, so
+their shapes are unit-testable without booting Nuxt. Nodes are linked by `@id` rather than
+duplicated — one `Organization`, one `WebSite`, everything else pointing at them — which is
+what lets a consumer resolve "this page" and "this company" to single entities.
+
+`/` and `/pricing` carry `SoftwareApplication` with a real `AggregateOffer`; `/pricing` adds
+`FAQPage`. Two rules worth keeping:
+
+- **Never describe something in JSON-LD that isn't on the page.** The pricing FAQ is rendered
+  from the same [`PRICING_FAQ`](./app/utils/faq.ts) array that feeds the markup, so the two
+  cannot disagree. FAQ markup without a visible FAQ is a manual-action risk with Google.
+- **Prices are numbers, not display strings.** `app/utils/plans.ts` carries `amount`,
+  `currency`, and `unit` next to the `'$12'` copy, because parsing a currency glyph out of
+  display text breaks the first time someone writes `'From $12'` — and a wrong price published
+  to answer engines is a bad failure to have.
+
+### The three crawler files
+
+All generated at [`server/routes/`](./server/routes/) rather than dropped in `public/`, so they
+can use the real deployment origin:
+
+- **`robots.txt`** — names every AI crawler explicitly (GPTBot, ClaudeBot, PerplexityBot,
+  Google-Extended, …) instead of leaving them to `User-agent: *`. Not because the default is
+  wrong, but because a policy you can read is a policy you can change. Defaults to allowing
+  them: for a SaaS marketing site, being quotable is distribution, not theft. Flip with
+  `NUXT_PUBLIC_ALLOW_AI_CRAWLERS=false`.
+- **`sitemap.xml`** — derived from the route table, as above.
+- **`llms.txt`** — the [llmstxt.org](https://llmstxt.org) convention: a short Markdown map of
+  the site for a model with limited context and no patience for navigation. A map, not a
+  mirror — every line is a link plus one sentence, built from the same `publicPage`
+  declarations, so it can't drift.
+
+Set `NUXT_PUBLIC_INDEXABLE=false` on preview deploys: robots.txt disallows everything, every
+page renders `noindex`, sitemap.xml goes empty and llms.txt 404s. An indexed preview URL
+competes with production for the same content.
+
+### The gate
+
+```bash
+bun run seo:check
+```
+
+Part of `bun run ci`. The SEO layer is only a contract if something enforces it, and its
+failure mode is the worst kind: nothing throws, the page renders, and you find out from a
+traffic graph months later. The gate fails the build on a page that skips `useSeo()`, calls
+`useSeoMeta()`/`useHead()` behind its back, is indexable but undeclared (or `noindex` *and*
+declared), has a missing or badly-sized description, or has more than one `<h1>`. Escape hatch
+is `seo-check-ignore`, same as the design-token gate.
+
+`public/og.png` is a placeholder rendered in the template's own brand. **Replace it** — it says
+"My App" and `bun run rename` cannot rewrite an image.
 
 The legal pages are the part people skip and then get stuck on: Paddle's onboarding review checks
 for reachable terms and privacy pages before approving an account. The ones here name the actual

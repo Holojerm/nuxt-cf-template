@@ -42,8 +42,13 @@ export default defineConfig({
     // was almost certainly started without it. Reusing one silently reports
     // the devtools panel's own markup as this app's violations.
     reuseExistingServer: false,
-    // Nuxt's first cold request compiles the app; 2 minutes is the CI budget.
-    timeout: 120_000,
-    env: { NUXT_DEVTOOLS: 'false' },
+    // CI is always a cold cache, and a cold `nuxt dev` builds the whole app
+    // before it listens. 120s was not enough — it timed out on the first run
+    // after a merge that touched nuxt.config.ts, while the next warm boot took
+    // 2s. Budget for the cold path, not the one you see locally.
+    timeout: 300_000,
+    // NUXT_TYPECHECK=false keeps vue-tsc off the critical path; `bun run ci`
+    // has already typechecked before this suite runs.
+    env: { NUXT_DEVTOOLS: 'false', NUXT_TYPECHECK: 'false' },
   },
 })
