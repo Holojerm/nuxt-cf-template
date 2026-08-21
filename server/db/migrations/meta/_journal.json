@@ -43,6 +43,13 @@
       "when": 1787323493343,
       "tag": "0005_easy_joshua_kane",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1787338269124,
+      "tag": "0006_yellow_starfox",
+      "breakpoints": true
     }
   ]
 }

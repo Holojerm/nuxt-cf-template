@@ -10,7 +10,7 @@ import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import { normalizeEmail, upsertOAuthUser } from '../server/utils/users'
+import { generateReferralCode, normalizeEmail, upsertOAuthUser } from '../server/utils/users'
 
 const db = drizzle(env.DB, { schema })
 
@@ -124,6 +124,46 @@ describe('upsertOAuthUser', () => {
     // GitHub returns name: null for anyone who never filled in their profile.
     const { user } = await upsertOAuthUser(db, { provider: 'github', email: 'ada@example.com' })
     expect(user.name).toBe('ada')
+  })
+})
+
+// ── Referral codes ──────────────────────────────────────────────────────────
+// A code that is shared is a code that gets mistyped, so the properties worth
+// pinning are the transcription ones — and that provisioning mints one at all,
+// since a later wave will assume every new account has one.
+
+describe('generateReferralCode', () => {
+  it('avoids the characters people confuse when reading a code aloud', () => {
+    // 0/O and 1/I/L are the whole reason the alphabet isn't base36.
+    for (let i = 0; i < 200; i++) {
+      expect(generateReferralCode()).toMatch(/^[23456789ABCDEFGHJKMNPQRSTVWXYZ]{8}$/)
+    }
+  })
+
+  it('does not repeat itself', () => {
+    // Not a randomness proof — a canary for the generator collapsing to a
+    // constant, which is what a broken rejection loop looks like.
+    const codes = new Set(Array.from({ length: 500 }, () => generateReferralCode()))
+    expect(codes.size).toBe(500)
+  })
+})
+
+describe('upsertOAuthUser referral codes', () => {
+  it('mints one on the account it creates', async () => {
+    const { user } = await upsertOAuthUser(db, { provider: 'github', email: 'ada@example.com' })
+    expect(user.referralCode).toMatch(/^[23456789ABCDEFGHJKMNPQRSTVWXYZ]{8}$/)
+    // Redemption is a later wave's job; nothing sets this yet.
+    expect(user.referredBy).toBeNull()
+  })
+
+  it('gives two accounts different codes, and never re-mints on sign-in', async () => {
+    const first = await upsertOAuthUser(db, { provider: 'github', email: 'ada@example.com' })
+    const second = await upsertOAuthUser(db, { provider: 'github', email: 'grace@example.com' })
+    expect(first.user.referralCode).not.toBe(second.user.referralCode)
+
+    // A code someone has already shared must survive them signing in again.
+    const again = await upsertOAuthUser(db, { provider: 'google', email: 'ada@example.com' })
+    expect(again.user.referralCode).toBe(first.user.referralCode)
   })
 })
 

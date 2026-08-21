@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 // ─────────────────────────────────────────────
 // Database Schema (Drizzle ORM + Cloudflare D1)
@@ -6,7 +6,9 @@ import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 // Convention:
 //   - Table names: snake_case plural (e.g. users, posts)
 //   - Column names: snake_case
-//   - All tables have: id, created_at, updated_at
+//   - All tables have: id, created_at, and updated_at — unless the table is
+//     append-only, in which case updated_at is omitted rather than lied about
+//     (see audit_log)
 //   - Foreign keys: <table_singular>_id (e.g. user_id)
 // ─────────────────────────────────────────────
 
@@ -53,6 +55,21 @@ export const users = sqliteTable('users', {
   signupMedium: text('signup_medium'),
   signupCampaign: text('signup_campaign'),
   signupReferrer: text('signup_referrer'),
+  // ── Referrals ──────────────────────────────────────────────────────────────
+  // The user's own code, minted once at provisioning (server/utils/users.ts).
+  // Nullable because accounts created before this column existed have none, and
+  // backfilling would hand codes to dormant accounts that will never share one.
+  // Unique, and nullable-unique is exactly right here: SQLite treats NULLs as
+  // distinct in a unique index, so every legacy row coexists while every minted
+  // code is still guaranteed to point at one account.
+  referralCode: text('referral_code').unique(),
+  // Who referred this user — the *other* account's referral_code, resolved at
+  // signup. Deliberately NOT a foreign key, for the reasons written out on
+  // `feedback.user_id` below: attribution must never be lost to a constraint
+  // failure, and the answer to "where did this customer come from" has to
+  // survive the referrer's row being deleted. A dangling code is a readable
+  // fact; a blocked signup is a lost customer.
+  referredBy: text('referred_by'),
   ...timestamps,
 })
 
@@ -143,6 +160,163 @@ export const feedback = sqliteTable(
   ],
 )
 
+/**
+ * Structured context on an audit row. Deliberately flat and scalar-only rather
+ * than `unknown` or a nested blob: an audit row is read by a human at 2am
+ * trying to reconstruct what happened, and a nested JSON tree does not get
+ * read. Flat key/value also survives `LIKE '%…%'` when you have no index and no
+ * time. Widen this union if you must — never to `any`, which would put
+ * arbitrary un-serializable objects into a column D1 stores as TEXT.
+ */
+export type AuditMetadata = Record<string, string | number | boolean | null>
+
+// Audit log — append-only record of privileged actions (admin acting on another
+// user's data, a system job changing an entitlement, anything you would need to
+// explain to a customer or a regulator).
+//
+// Append-only is the whole point, so it does NOT spread `timestamps`. An
+// `updated_at` on a table whose rows are never updated is a standing lie: it
+// invites code to "correct" a row, and a correctable audit trail is not one.
+// Rows are only ever inserted and read. Retention is a delete-by-age job, not
+// an edit.
+//
+// `actor_user_id` is deliberately NOT a foreign key — three reasons, all of
+// which point the same way:
+//   1. Audit rows must outlive the actor. Deleting an account (or honouring an
+//      erasure request) must not cascade away the record of what that account
+//      did, nor be blocked by it.
+//   2. Not every actor is a user row. System actions record a sentinel id with
+//      `actor_type = 'system'`; an FK would make the most important class of
+//      automated action unrecordable.
+//   3. The write must never fail. Same reasoning as `feedback.user_id` below:
+//      an action that happened but went unrecorded is strictly worse than an
+//      orphaned row, and a constraint failure here would 500 the privileged
+//      operation itself.
+export const auditLog = sqliteTable(
+  'audit_log',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    actorUserId: text('actor_user_id').notNull(),
+    // admin | system — notNull with a default because a null here makes a row
+    // ambiguous forever, and an ambiguous audit row is not evidence.
+    actorType: text('actor_type').notNull().default('admin'),
+    // Verb, past tense and namespaced: 'user.role_changed', 'feedback.replied'.
+    action: text('action').notNull(),
+    // What was acted on. Null when the action has no single subject (a bulk
+    // export, a config change), which is why neither column is notNull.
+    targetType: text('target_type'),
+    targetId: text('target_id'),
+    metadata: text('metadata', { mode: 'json' }).$type<AuditMetadata>(),
+    // Salted SHA-256, same construction as `feedback.ip_hash` — enough to tell
+    // two sessions apart in an investigation, useless as an identifier.
+    ipHash: text('ip_hash'),
+    createdAt: integer('created_at', { mode: 'timestamp' })
+      .$defaultFn(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    // The only query this table serves in anger: "everything <actor> did,
+    // newest first."
+    index('audit_log_actor_user_id_created_idx').on(table.actorUserId, table.createdAt),
+  ],
+)
+
+// Files — metadata for objects in R2, written by the upload path.
+//
+// The invariant this table exists to record: `r2_key` is **user-scoped**, of the
+// form `uploads/<user_id>/<something>`. The API enforces it by constructing the
+// key from the session rather than accepting one from the client; the schema
+// documents it so nobody later adds an endpoint that takes a caller-supplied
+// key and turns a list-my-files query into a read-anyone's-files bug. The
+// unique index on `r2_key` is the backstop: two rows can never claim one object.
+//
+// `user_id` IS a real foreign key here, unlike `audit_log.actor_user_id` — the
+// opposite decision for the opposite reason. A file row whose owner is gone is
+// not evidence of anything; it is an unreachable row pointing at an R2 object
+// nobody can list, download, or bill for. Failing loudly at write time beats
+// accumulating orphans that quietly cost money.
+export const files = sqliteTable(
+  'files',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    // As supplied by the user — display only. Never used to build `r2_key`, or a
+    // filename of `../../etc/passwd` becomes a path traversal.
+    filename: text('filename').notNull(),
+    mimeType: text('mime_type').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    r2Key: text('r2_key').notNull().unique(),
+    // pending | uploaded. The row is written before the object exists (the client
+    // uploads to R2 directly), so `pending` is the honest default and a row that
+    // never reaches `uploaded` is an abandoned upload for a sweeper to collect.
+    status: text('status').notNull().default('pending'),
+    // pending → uploaded is a real transition, so updated_at means something here
+    // — unlike on audit_log above.
+    ...timestamps,
+  },
+  (table) => [
+    // "This user's files, newest first" — the one query the upload feature is
+    // built around. Composite rather than a bare `user_id` index because the
+    // ORDER BY is half the query: with only `user_id`, SQLite finds the rows by
+    // index and then sorts them in a temp B-tree, so the user with the most
+    // files pays the most to list them — the exact wrong shape for a table that
+    // only ever grows. Leading with `user_id` also keeps this usable for a plain
+    // "how many files does this user have" count.
+    index('files_user_id_created_idx').on(table.userId, table.createdAt),
+  ],
+)
+
+// Notification preferences — per-user, per-channel, per-event opt-outs.
+//
+// Absence of a row means **default-on**. Storing only the exceptions is what
+// keeps this table from needing a backfill every time a new event type ships,
+// and it means a failed read degrades toward sending rather than toward silence.
+//
+// Billing and security mail (payment failed, subscription cancelled, sign-in
+// from a new device) is NOT opt-out-able, and that rule does NOT live here.
+// There is no column for it and there must never be one: the moment the
+// exemption is data, a bad UPDATE or a helpful admin can switch off the email
+// that tells someone their card was declined. It belongs in the reader function
+// that consults this table — a hardcoded allowlist of always-send event types
+// checked before the lookup, so no row in this table can suppress them.
+export const notificationPreferences = sqliteTable(
+  'notification_preferences',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    // email today; push/sms later. notNull — see the unique index below.
+    channel: text('channel').notNull().default('email'),
+    // The event being opted out of, matching the keys the notification decider
+    // uses (server/utils/billing-notifications.ts › decideNotification).
+    eventType: text('event_type').notNull(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    ...timestamps,
+  },
+  (table) => [
+    // One row per (user, channel, event) — anything else and a "did they opt
+    // out?" lookup has to pick between contradictory answers.
+    //
+    // This is also why `channel` and `event_type` are notNull: SQLite treats
+    // NULLs as distinct in a unique index, so a nullable component would let
+    // unlimited duplicate rows through the constraint that exists to stop them.
+    uniqueIndex('notification_preferences_user_channel_event_idx').on(
+      table.userId,
+      table.channel,
+      table.eventType,
+    ),
+  ],
+)
+
 // Type exports — use these in your app, not raw Drizzle types
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
@@ -151,3 +325,11 @@ export type NewEntitlement = typeof entitlements.$inferInsert
 export type McpConnectCode = typeof mcpConnectCodes.$inferSelect
 export type Feedback = typeof feedback.$inferSelect
 export type NewFeedback = typeof feedback.$inferInsert
+export type AuditLogEntry = typeof auditLog.$inferSelect
+export type NewAuditLogEntry = typeof auditLog.$inferInsert
+// `FileRecord`, not `File` — `File` is a DOM/Workers global, and shadowing it
+// here would silently retype every `File` in upload code that forgot to import.
+export type FileRecord = typeof files.$inferSelect
+export type NewFileRecord = typeof files.$inferInsert
+export type NotificationPreference = typeof notificationPreferences.$inferSelect
+export type NewNotificationPreference = typeof notificationPreferences.$inferInsert
