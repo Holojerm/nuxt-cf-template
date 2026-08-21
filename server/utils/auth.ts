@@ -11,6 +11,7 @@
 //   completeOAuthSignIn()  → wraps it in the 302s an OAuth callback must return.
 
 import type { H3Event } from 'h3'
+import { ATTRIBUTION_COOKIE, readAttributionCookie } from '#shared/utils/attribution'
 import type { OAuthProfile } from './users'
 
 /** Cookie the login page sets before bouncing to a provider. */
@@ -91,7 +92,18 @@ export async function establishSession(
     })
   }
 
-  const { user, created } = await upsertOAuthUser(db, profile)
+  // First-touch attribution, set on the visitor's first landing by
+  // app/plugins/attribution.client.ts. Untrusted — readAttributionCookie()
+  // parses it through a strict, length-capped Zod schema and returns null for
+  // anything else, so a hand-crafted cookie can dirty one row's marketing
+  // columns and nothing more.
+  const attribution = readAttributionCookie(getCookie(event, ATTRIBUTION_COOKIE))
+
+  const { user, created } = await upsertOAuthUser(db, profile, attribution)
+
+  // Consumed — clearing it keeps a stale channel off the next account created
+  // from this browser (shared machines, and every demo you ever give).
+  if (created && attribution) deleteCookie(event, ATTRIBUTION_COOKIE, { path: '/' })
 
   await setUserSession(event, {
     user: {
@@ -106,7 +118,18 @@ export async function establishSession(
   await captureServerEvent({
     distinctId: user.id,
     event: created ? 'user_signed_up' : 'user_signed_in',
-    properties: { provider: profile.provider },
+    properties: {
+      provider: profile.provider,
+      // Only on the signup event — attaching a channel to every subsequent
+      // sign-in would make "signups by source" uncountable in PostHog.
+      ...(created && attribution
+        ? {
+            signup_source: attribution.source,
+            signup_medium: attribution.medium,
+            signup_campaign: attribution.campaign,
+          }
+        : {}),
+    },
   })
 
   if (created) {

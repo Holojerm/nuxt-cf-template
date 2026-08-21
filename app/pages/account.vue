@@ -5,6 +5,12 @@
 // The cancellation path is deliberately prominent. Making people email support
 // to stop paying is a dark pattern, it generates the support load you least want,
 // and in several jurisdictions it isn't legal. One button, straight to Paddle.
+//
+// The one thing between that button and Paddle is a question, never an obstacle:
+// cancelling happens on Paddle's hosted portal, a different origin where no
+// survey of ours can run, so this is the only moment the reason can be asked at
+// all. The prompt's primary button leaves whether or not anything is answered,
+// and no retention offer is inserted — see app/utils/churn.ts.
 
 definePageMeta({ middleware: 'auth' })
 
@@ -14,6 +20,42 @@ const toast = useToast()
 const { data: billing, status } = await useFetch('/api/billing/entitlement')
 
 const portalPending = ref(false)
+
+// ── Cancellation prompt ─────────────────────────────────────────────────────
+const cancelOpen = ref(false)
+// `undefined`, not `null`: URadioGroup's modelValue is `T | undefined`.
+const cancelReason = ref<string | undefined>()
+const cancelDetail = ref('')
+const cancelReasons = CANCEL_REASONS
+const { submit: submitFeedback } = useFeedback()
+
+/**
+ * "Manage or cancel" on a live subscription asks why first. "Manage billing"
+ * (no cancellable subscription) goes straight through — someone updating a card
+ * has not told us they're leaving, and asking would be noise.
+ */
+function requestPortal(): void {
+  if (billing.value?.cancellable) {
+    cancelOpen.value = true
+    return
+  }
+  void openBillingPortal()
+}
+
+async function continueToPortal(): Promise<void> {
+  // Awaited, not floated: the very next thing this function does is navigate
+  // to another origin, which cancels in-flight requests. submit() swallows its
+  // own errors and returns a boolean, so a failed write costs a few hundred
+  // milliseconds and never blocks the cancellation.
+  if (cancelReason.value) {
+    await submitFeedback({
+      kind: 'churn',
+      message: cancelFeedbackMessage(cancelReason.value, cancelDetail.value),
+    })
+  }
+  cancelOpen.value = false
+  await openBillingPortal()
+}
 
 async function openBillingPortal(): Promise<void> {
   portalPending.value = true
@@ -146,7 +188,7 @@ useSeo({
             color="neutral"
             variant="outline"
             icon="i-lucide-external-link"
-            @click="openBillingPortal"
+            @click="requestPortal"
           >
             {{ billing.cancellable ? 'Manage or cancel' : 'Manage billing' }}
           </UButton>
@@ -249,5 +291,42 @@ useSeo({
         <ULink to="/privacy" class="text-primary">Privacy Policy</ULink>.
       </p>
     </div>
+
+    <!-- Cancellation prompt. Every control here leads out; there is no path
+         that keeps someone subscribed against their intent. -->
+    <UModal v-model:open="cancelOpen" title="Before you go">
+      <template #body>
+        <div class="flex flex-col gap-5">
+          <p class="text-muted">
+            What's making you cancel? Answering is optional and changes nothing about your
+            cancellation — it just tells us what to fix.
+          </p>
+
+          <URadioGroup
+            v-model="cancelReason"
+            legend="Reason for cancelling"
+            :items="cancelReasons"
+          />
+
+          <UFormField label="Anything else?" name="cancel-detail">
+            <UTextarea
+              v-model="cancelDetail"
+              :rows="3"
+              class="w-full"
+              placeholder="Optional — the more specific, the more useful."
+            />
+          </UFormField>
+        </div>
+      </template>
+
+      <template #footer>
+        <div class="flex flex-wrap gap-3">
+          <UButton :loading="portalPending" @click="continueToPortal"> Continue to cancel </UButton>
+          <UButton color="neutral" variant="ghost" @click="cancelOpen = false">
+            Never mind
+          </UButton>
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>

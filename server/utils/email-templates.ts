@@ -180,6 +180,38 @@ export function accessEndedEmail(
   return { subject: `Your ${brand.appName} access has ended`, ...body }
 }
 
+/**
+ * A human reply to something someone sent through the feedback widget.
+ *
+ * The only email here that isn't triggered by a state change — it exists
+ * because feedback with no return path is extraction rather than a loop. Sent
+ * from POST /api/feedback/[id]/reply, which is admin-gated; the triage routine
+ * is explicitly forbidden from calling it.
+ *
+ * `originalMessage` is untrusted text written by anyone on the internet. It is
+ * safe here only because layout() escapes every paragraph it renders — pass it
+ * anywhere that doesn't, and you have built an HTML-injection vector into your
+ * own outbound mail.
+ */
+export function feedbackReplyEmail(
+  brand: Branding,
+  opts: { reply: string; originalMessage: string },
+): EmailContent {
+  // Quoted back because the reply may land weeks later, and nobody remembers
+  // what they typed into a widget.
+  const quoted =
+    opts.originalMessage.length > 600
+      ? `${opts.originalMessage.slice(0, 600)}…`
+      : opts.originalMessage
+
+  const body = layout(brand.appName, brand.appUrl, {
+    heading: 'Re: your feedback',
+    paragraphs: [opts.reply, '—', `You wrote: "${quoted}"`],
+    footnote: `You're receiving this because you sent feedback through ${brand.appName}. Replying to this email reaches a person.`,
+  })
+  return { subject: `Re: your feedback on ${brand.appName}`, ...body }
+}
+
 /** Pull app name + absolute URL out of runtime config for the templates above. */
 export function emailBranding(): Branding {
   const config = useRuntimeConfig()

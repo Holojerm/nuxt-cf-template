@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   accessEndedEmail,
+  feedbackReplyEmail,
   paymentFailedEmail,
   purchaseEmail,
   welcomeEmail,
@@ -85,5 +86,42 @@ describe('accessEndedEmail', () => {
   it('points at pricing, because coming back should be one click', () => {
     const email = accessEndedEmail(BRAND, { name: 'Ada', reason: 'canceled' })
     expect(email.html).toContain('https://example.com/pricing')
+  })
+})
+
+describe('feedbackReplyEmail', () => {
+  it('quotes back what the person originally wrote', () => {
+    const email = feedbackReplyEmail(BRAND, {
+      reply: 'Fixed in this morning\u2019s release \u2014 thanks for the report.',
+      originalMessage: 'The export button does nothing on Safari',
+    })
+    expect(email.html).toContain('The export button does nothing on Safari')
+    expect(email.subject).toContain('My App')
+  })
+
+  it('escapes the original message, which anyone on the internet can write', () => {
+    // POST /api/feedback is public by design, so this string is genuinely
+    // attacker-supplied — and it ends up in an email we send from our domain.
+    const email = feedbackReplyEmail(BRAND, {
+      reply: 'Thanks!',
+      originalMessage: '<img src=x onerror="alert(1)">',
+    })
+    expect(email.html).not.toContain('<img')
+    expect(email.html).toContain('&lt;img')
+  })
+
+  it('truncates a very long original rather than mailing the whole essay back', () => {
+    const email = feedbackReplyEmail(BRAND, {
+      reply: 'Noted.',
+      originalMessage: 'x'.repeat(2000),
+    })
+    expect(email.html).toContain('\u2026')
+    expect(email.html.length).toBeLessThan(4000)
+  })
+
+  it('ships a plain-text alternative', () => {
+    const email = feedbackReplyEmail(BRAND, { reply: 'Thanks!', originalMessage: 'Hello' })
+    expect(email.text).not.toContain('<')
+    expect(email.text).toContain('Thanks!')
   })
 })

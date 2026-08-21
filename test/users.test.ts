@@ -126,3 +126,46 @@ describe('upsertOAuthUser', () => {
     expect(user.name).toBe('ada')
   })
 })
+
+// ── First-touch attribution ─────────────────────────────────────────────────
+// The rule worth a test is the one that is invisible when broken: attribution
+// must be written once and never again, or every customer eventually looks like
+// they arrived via a branded search.
+
+describe('upsertOAuthUser attribution', () => {
+  const PROFILE = { provider: 'github', email: 'ada@example.com', name: 'Ada Lovelace' }
+
+  it('records the channel on the account it creates', async () => {
+    const { user } = await upsertOAuthUser(db, PROFILE, {
+      source: 'newsletter',
+      medium: 'email',
+      campaign: 'launch',
+      referrer: 'https://news.example.com/post',
+    })
+
+    expect(user.signupSource).toBe('newsletter')
+    expect(user.signupMedium).toBe('email')
+    expect(user.signupCampaign).toBe('launch')
+    expect(user.signupReferrer).toBe('https://news.example.com/post')
+  })
+
+  it('never overwrites it on a later sign-in', async () => {
+    await upsertOAuthUser(db, PROFILE, { source: 'newsletter', medium: 'email' })
+
+    // Same person comes back weeks later, this time via a branded search.
+    const { user, created } = await upsertOAuthUser(db, PROFILE, {
+      source: 'google.com',
+      medium: 'organic',
+    })
+
+    expect(created).toBe(false)
+    expect(user.signupSource).toBe('newsletter')
+    expect(user.signupMedium).toBe('email')
+  })
+
+  it('creates the account fine when there is no attribution at all', async () => {
+    const { user, created } = await upsertOAuthUser(db, PROFILE, null)
+    expect(created).toBe(true)
+    expect(user.signupSource).toBeNull()
+  })
+})
