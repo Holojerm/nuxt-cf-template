@@ -27,7 +27,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "ci": "bun run lint && bun run design:check && bun run typecheck && bun run test && bun run build",
-    "deploy": "nuxt build && wrangler --cwd .output deploy"
+    "deploy": "nuxt build && wrangler --cwd .output deploy",
+    "mcp:dev": "bun run --cwd mcp dev",
+    "mcp:typecheck": "bun run --cwd mcp typecheck",
+    "mcp:deploy": "bun run --cwd mcp deploy"
   },
   "dependencies": {
     "@nuxt/ui": "^4.7.1",

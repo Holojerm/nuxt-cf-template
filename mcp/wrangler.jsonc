@@ -1,0 +1,36 @@
+// Second worker: the remote MCP server. Deployed separately from the Nuxt app
+// (`bun run mcp:deploy` from the repo root). Rename `my-app-mcp` when you fork
+// (see the README rename list).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "my-app-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  // agents' createMcpHandler needs AsyncLocalStorage (getMcpAuthContext)
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Required by @cloudflare/workers-oauth-provider — stores tokens/grants.
+  // Create with: wrangler kv namespace create my-app-mcp-oauth
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "YOUR_OAUTH_KV_NAMESPACE_ID",
+    },
+  ],
+
+  // The SAME D1 database as the Nuxt app (D1 bindings are shareable across
+  // workers). The Nuxt app owns the schema; migrations_dir points at the app's
+  // migrations ONLY so `bun run db:migrate:local` can hydrate wrangler's local
+  // sandbox — apply remote migrations from the app, never from here. Local dev
+  // caveat: `wrangler dev` uses its own local D1 (.wrangler/), NOT the Nuxt
+  // dev server's NuxtHub DB (.data/) — migrate + seed it separately, or
+  // develop against remote D1.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "my-app-db",
+      "database_id": "YOUR_D1_DATABASE_ID",
+      "migrations_dir": "../server/db/migrations",
+    },
+  ],
+}
