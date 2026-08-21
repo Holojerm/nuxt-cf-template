@@ -16,8 +16,15 @@ import type { Feedback } from '../db/schema'
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type FeedbackDb = ReturnType<typeof drizzle<typeof tables>>
 
-/** Submission types. Kept short on purpose — long taxonomies go untriaged. */
-export const FEEDBACK_KINDS = ['bug', 'idea', 'praise', 'confusion', 'other'] as const
+/**
+ * Submission types. Kept short on purpose — long taxonomies go untriaged.
+ *
+ * `churn` is the exception to "the widget sends everything": it comes from the
+ * cancellation prompt on /account (app/utils/churn.ts), which is the only
+ * chance to ask, because cancelling itself happens on Paddle's hosted portal
+ * where no survey of ours can run.
+ */
+export const FEEDBACK_KINDS = ['bug', 'idea', 'praise', 'confusion', 'churn', 'other'] as const
 export type FeedbackKind = (typeof FEEDBACK_KINDS)[number]
 
 /** Triage lifecycle. `triaged` means a human or routine has acted on it. */
@@ -144,6 +151,60 @@ export async function updateFeedbackStatus(
     .set({
       ...(patch.status ? { status: patch.status } : {}),
       ...(patch.issueUrl !== undefined ? { issueUrl: patch.issueUrl } : {}),
+    })
+    .where(eq(tables.feedback.id, id))
+    .returning()
+  return row ?? null
+}
+
+/** One row by id — the reply endpoint needs the whole thing, not a list slice. */
+export async function findFeedbackById(db: FeedbackDb, id: string): Promise<Feedback | null> {
+  const row = await db.query.feedback.findFirst({ where: eq(tables.feedback.id, id) })
+  return row ?? null
+}
+
+/**
+ * Where a reply to this submission should go.
+ *
+ * Signed-out submitters give a reply-to address explicitly; signed-in ones
+ * never re-type theirs, so it comes off the user row. Returns null when there
+ * is nowhere to write — anonymous feedback with no address is legitimate and
+ * common, and the caller reports that as a 422 rather than an error.
+ */
+export async function feedbackReplyAddress(db: FeedbackDb, row: Feedback): Promise<string | null> {
+  if (row.email) return row.email
+  if (!row.userId) return null
+  const user = await db.query.users.findFirst({
+    where: eq(tables.users.id, row.userId),
+    columns: { email: true },
+  })
+  return user?.email ?? null
+}
+
+/**
+ * Stamp a row as replied. Separate from updateFeedbackStatus because the two
+ * answer different questions — `status` is triage progress, `replied_at` is
+ * whether a human ever wrote back — and conflating them means "closed" starts
+ * silently meaning "we ignored it".
+ *
+ * Also advances `new` → `triaged`: replying to something IS triaging it. An
+ * explicitly closed row stays closed.
+ */
+export async function markFeedbackReplied(
+  db: FeedbackDb,
+  id: string,
+  adminId: string,
+  now = new Date(),
+): Promise<Feedback | null> {
+  const existing = await findFeedbackById(db, id)
+  if (!existing) return null
+
+  const [row] = await db
+    .update(tables.feedback)
+    .set({
+      repliedAt: now,
+      repliedBy: adminId,
+      ...(existing.status === 'new' ? { status: 'triaged' as const } : {}),
     })
     .where(eq(tables.feedback.id, id))
     .returning()

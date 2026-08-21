@@ -37,6 +37,22 @@ export const users = sqliteTable('users', {
   role: text('role').notNull().default('user'),
   provider: text('provider'),
   lastLoginAt: integer('last_login_at', { mode: 'timestamp' }),
+  // ── First-touch attribution ────────────────────────────────────────────────
+  // Written once, at account creation, from the cookie the attribution plugin
+  // set on the visitor's first landing (shared/utils/attribution.ts). Never
+  // updated afterwards — the question these answer is "which channel produced
+  // this customer", and last-touch overwrites destroy that the moment someone
+  // returns via a branded search.
+  //
+  // PostHog already keeps $initial_utm_* on the person, so why duplicate?
+  // Because that record is lossy exactly where it matters: ad blockers drop the
+  // SDK, and the visitors most likely to block are not a random sample. These
+  // columns are first-party, joinable against `entitlements` in one SQL query,
+  // and survive dropping PostHog — the same reasoning as the `feedback` table.
+  signupSource: text('signup_source'),
+  signupMedium: text('signup_medium'),
+  signupCampaign: text('signup_campaign'),
+  signupReferrer: text('signup_referrer'),
   ...timestamps,
 })
 
@@ -112,6 +128,13 @@ export const feedback = sqliteTable(
     status: text('status').notNull().default('new'),
     // Set once the feedback-triage routine (or a human) files it.
     issueUrl: text('issue_url'),
+    // Set when a human replies from /admin/feedback. Feedback with no return
+    // path is extraction, not a loop — and the triage routine is forbidden from
+    // replying on its own (.claude/routines/feedback-triage.md), so this column
+    // only ever moves because a person decided it should.
+    repliedAt: integer('replied_at', { mode: 'timestamp' }),
+    /** The admin user id that sent the reply — support context, not authz. */
+    repliedBy: text('replied_by'),
     ...timestamps,
   },
   (table) => [

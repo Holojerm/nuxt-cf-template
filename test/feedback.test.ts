@@ -12,10 +12,13 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import * as schema from '../server/db/schema'
 import {
   FEEDBACK_RATE_LIMIT,
+  feedbackReplyAddress,
   feedbackSubmissionSchema,
+  findFeedbackById,
   hashIp,
   isRateLimited,
   listFeedback,
+  markFeedbackReplied,
   recordFeedback,
   updateFeedbackStatus,
 } from '../server/utils/feedback'
@@ -169,5 +172,91 @@ describe('triage', () => {
 
   it('returns null for an id that does not exist', async () => {
     expect(await updateFeedbackStatus(db, 'nope', { status: 'closed' })).toBeNull()
+  })
+})
+
+// ── The return path ─────────────────────────────────────────────────────────
+// Feedback with no way to answer it is extraction rather than a loop, so these
+// cover the two things a reply endpoint can get wrong: writing to the wrong
+// address, and claiming a reply that never left.
+
+describe('feedbackReplyAddress', () => {
+  it('uses the address a signed-out submitter typed', async () => {
+    const row = await recordFeedback(db, {
+      kind: 'bug',
+      message: 'The export button does nothing',
+      email: 'anon@example.com',
+    })
+    expect(await feedbackReplyAddress(db, row)).toBe('anon@example.com')
+  })
+
+  it("falls back to the account's address for a signed-in submitter", async () => {
+    const [user] = await db
+      .insert(schema.users)
+      .values({ email: 'ada@example.com', name: 'Ada' })
+      .returning()
+
+    const row = await recordFeedback(
+      db,
+      { kind: 'idea', message: 'Dark mode please' },
+      {
+        userId: user!.id,
+      },
+    )
+    expect(await feedbackReplyAddress(db, row)).toBe('ada@example.com')
+  })
+
+  it('returns null for anonymous feedback, which is a normal state and not an error', async () => {
+    const row = await recordFeedback(db, { kind: 'praise', message: 'Nice work' })
+    expect(await feedbackReplyAddress(db, row)).toBeNull()
+  })
+})
+
+describe('markFeedbackReplied', () => {
+  it('stamps who replied and when', async () => {
+    const row = await recordFeedback(db, { kind: 'bug', message: 'Broken on Safari' })
+    const at = new Date('2026-08-21T10:00:00Z')
+
+    const updated = await markFeedbackReplied(db, row.id, 'admin-1', at)
+
+    expect(updated?.repliedBy).toBe('admin-1')
+    expect(updated?.repliedAt?.getTime()).toBe(at.getTime())
+  })
+
+  it('advances new → triaged, because replying is triaging', async () => {
+    const row = await recordFeedback(db, { kind: 'bug', message: 'Broken on Safari' })
+    expect(row.status).toBe('new')
+
+    const updated = await markFeedbackReplied(db, row.id, 'admin-1')
+    expect(updated?.status).toBe('triaged')
+  })
+
+  it('leaves an explicitly closed row closed', async () => {
+    const row = await recordFeedback(db, { kind: 'bug', message: 'Broken on Safari' })
+    await updateFeedbackStatus(db, row.id, { status: 'closed' })
+
+    const updated = await markFeedbackReplied(db, row.id, 'admin-1')
+    expect(updated?.status).toBe('closed')
+  })
+
+  it('returns null for an id that does not exist', async () => {
+    expect(await markFeedbackReplied(db, 'nope', 'admin-1')).toBeNull()
+  })
+})
+
+describe('findFeedbackById', () => {
+  it('round-trips a row', async () => {
+    const row = await recordFeedback(db, { kind: 'idea', message: 'An idea worth having' })
+    expect((await findFeedbackById(db, row.id))?.message).toBe('An idea worth having')
+  })
+})
+
+describe('churn feedback', () => {
+  it('accepts the kind the cancellation prompt sends', () => {
+    const parsed = feedbackSubmissionSchema.safeParse({
+      kind: 'churn',
+      message: "It's too expensive — I only needed it for one project",
+    })
+    expect(parsed.success).toBe(true)
   })
 })

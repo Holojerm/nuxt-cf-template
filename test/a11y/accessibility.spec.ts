@@ -22,7 +22,13 @@ import { expect, test } from '@playwright/test'
 // `text-dimmed` swatches on their own. Dimmed is the placeholder/disabled token
 // and is legitimately below 4.5:1 — scanning that page would report the design
 // system documenting itself as a violation.
-const ROUTES = ['/', '/pricing', '/login', '/terms', '/privacy']
+//
+// This list is hardcoded because Playwright generates its tests synchronously
+// at module load, before any server is reachable. That makes it exactly the
+// kind of second list `definePageMeta({ publicPage })` exists to abolish — so
+// the `sitemap coverage` test at the bottom of this file fails the build if the
+// two ever disagree. Add a public page, forget this list, and CI tells you.
+const ROUTES = ['/', '/pricing', '/changelog', '/login', '/terms', '/privacy']
 
 const COLOR_MODES = ['light', 'dark'] as const
 
@@ -129,4 +135,34 @@ test.describe('keyboard', () => {
       expect(hasRing, `no focus indicator on "${control.label}"`).toBe(true)
     }
   })
+})
+
+// The guard that keeps ROUTES honest.
+//
+// sitemap.xml is rendered from the `publicPage` declarations on the pages
+// themselves, so it is the authoritative answer to "what is public here". If a
+// page is public enough to hand to Google, it is public enough to scan for
+// contrast and heading order — and the failure this catches is silent: the new
+// page simply never gets tested, and nothing anywhere goes red.
+//
+// /login is in ROUTES but deliberately NOT in the sitemap (it is noindex), so
+// the check runs one way only: everything in the sitemap must be scanned.
+test('sitemap coverage: every public page is in ROUTES', async ({ request }) => {
+  const response = await request.get('/sitemap.xml')
+  expect(response.ok()).toBe(true)
+
+  const xml = await response.text()
+  const paths = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => {
+    const url = new URL(match[1]!)
+    return url.pathname === '/' ? '/' : url.pathname.replace(/\/$/, '')
+  })
+
+  expect(paths.length).toBeGreaterThan(0)
+
+  const missing = paths.filter((path) => !ROUTES.includes(path))
+  expect(
+    missing,
+    `Public pages missing from the a11y sweep: ${missing.join(', ')}. ` +
+      'Add them to ROUTES in this file.',
+  ).toEqual([])
 })

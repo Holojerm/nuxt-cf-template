@@ -131,6 +131,7 @@ watch(
           <p class="text-sm text-muted">© {{ year }} {{ appName }}</p>
           <nav aria-label="Footer" class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
             <ULink to="/pricing" class="text-muted hover:text-default">Pricing</ULink>
+            <ULink to="/changelog" class="text-muted hover:text-default">Changelog</ULink>
             <ULink to="/terms" class="text-muted hover:text-default">Terms</ULink>
             <ULink to="/privacy" class="text-muted hover:text-default">Privacy</ULink>
             <ULink :to="`mailto:${supportEmail}`" class="text-muted hover:text-default">

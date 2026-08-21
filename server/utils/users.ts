@@ -18,6 +18,7 @@
 // that check.
 
 import { eq } from 'drizzle-orm'
+import type { Attribution } from '#shared/utils/attribution'
 import * as tables from '../db/schema'
 import type { User } from '../db/schema'
 import type { EntitlementDb as Db } from './entitlements'
@@ -56,8 +57,17 @@ function displayName(profile: OAuthProfile, email: string): string {
  * Returning users get their name/avatar refreshed from the provider (people
  * change their avatar and expect the app to notice) but never their role —
  * that's ours to set, not the identity provider's.
+ *
+ * `attribution` is written on the INSERT branch only. It is first-touch by
+ * definition (see server/db/schema.ts › users), so a returning user's channel
+ * is already recorded and must not be overwritten by the cookie they happen to
+ * be carrying today.
  */
-export async function upsertOAuthUser(db: Db, profile: OAuthProfile): Promise<SignInResult> {
+export async function upsertOAuthUser(
+  db: Db,
+  profile: OAuthProfile,
+  attribution?: Attribution | null,
+): Promise<SignInResult> {
   const email = normalizeEmail(profile.email)
   const now = new Date()
 
@@ -84,6 +94,10 @@ export async function upsertOAuthUser(db: Db, profile: OAuthProfile): Promise<Si
       avatarUrl: profile.avatarUrl ?? null,
       provider: profile.provider,
       lastLoginAt: now,
+      signupSource: attribution?.source ?? null,
+      signupMedium: attribution?.medium ?? null,
+      signupCampaign: attribution?.campaign ?? null,
+      signupReferrer: attribution?.referrer ?? null,
     })
     .returning()
 
