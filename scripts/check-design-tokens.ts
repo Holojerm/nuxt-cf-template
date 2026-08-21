@@ -22,16 +22,49 @@ const SCAN_EXTENSIONS = ['.vue', '.ts', '.css']
 const EXEMPT_FILES = ['app/assets/css/main.css', 'app/app.config.ts']
 
 const TAILWIND_PALETTES = [
-  'slate', 'gray', 'zinc', 'neutral', 'stone', 'red', 'orange', 'amber',
-  'yellow', 'lime', 'green', 'emerald', 'teal', 'cyan', 'sky', 'blue',
-  'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'rose',
+  'slate',
+  'gray',
+  'zinc',
+  'neutral',
+  'stone',
+  'red',
+  'orange',
+  'amber',
+  'yellow',
+  'lime',
+  'green',
+  'emerald',
+  'teal',
+  'cyan',
+  'sky',
+  'blue',
+  'indigo',
+  'violet',
+  'purple',
+  'fuchsia',
+  'pink',
+  'rose',
   // The app's own custom ramp — reachable only through semantic tokens.
   'clay',
 ].join('|')
 
 const COLOR_UTILITIES = [
-  'text', 'bg', 'border', 'ring', 'divide', 'from', 'via', 'to', 'outline',
-  'decoration', 'accent', 'caret', 'fill', 'stroke', 'placeholder', 'shadow',
+  'text',
+  'bg',
+  'border',
+  'ring',
+  'divide',
+  'from',
+  'via',
+  'to',
+  'outline',
+  'decoration',
+  'accent',
+  'caret',
+  'fill',
+  'stroke',
+  'placeholder',
+  'shadow',
 ].join('|')
 
 interface Rule {

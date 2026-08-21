@@ -59,7 +59,15 @@ const typeScale = [
   { token: 'text-xs', class: 'text-xs' },
 ]
 
-const semanticColors = ['primary', 'secondary', 'success', 'info', 'warning', 'error', 'neutral'] as const
+const semanticColors = [
+  'primary',
+  'secondary',
+  'success',
+  'info',
+  'warning',
+  'error',
+  'neutral',
+] as const
 const buttonVariants = ['solid', 'outline', 'soft', 'subtle', 'ghost', 'link'] as const
 
 useSeoMeta({ title: 'Design system', robots: 'noindex' })
@@ -70,8 +78,8 @@ useSeoMeta({ title: 'Design system', robots: 'noindex' })
     <header class="space-y-2">
       <h1 class="text-4xl text-highlighted">Design system</h1>
       <p class="text-muted">
-        Generated from <code class="text-default">DESIGN.md</code>. Toggle color mode to verify
-        both themes — every token below must remain legible in each.
+        Generated from <code class="text-default">DESIGN.md</code>. Toggle color mode to verify both
+        themes — every token below must remain legible in each.
       </p>
       <UColorModeButton />
     </header>
@@ -111,10 +119,16 @@ useSeoMeta({ title: 'Design system', robots: 'noindex' })
             :class="s.class"
             class="flex items-center justify-between rounded border border-default px-3 py-2"
           >
-            <code class="text-xs" :class="s.token === 'bg-inverted' ? 'text-inverted' : 'text-default'">
+            <code
+              class="text-xs"
+              :class="s.token === 'bg-inverted' ? 'text-inverted' : 'text-default'"
+            >
               {{ s.token }}
             </code>
-            <span class="text-xs" :class="s.token === 'bg-inverted' ? 'text-inverted' : 'text-muted'">
+            <span
+              class="text-xs"
+              :class="s.token === 'bg-inverted' ? 'text-inverted' : 'text-muted'"
+            >
               {{ s.use }}
             </span>
           </div>
@@ -122,7 +136,11 @@ useSeoMeta({ title: 'Design system', robots: 'noindex' })
 
         <div class="space-y-2">
           <h3 class="text-lg text-highlighted">Text</h3>
-          <div v-for="t in textTokens" :key="t.token" class="flex items-baseline justify-between gap-3">
+          <div
+            v-for="t in textTokens"
+            :key="t.token"
+            class="flex items-baseline justify-between gap-3"
+          >
             <span :class="t.class">{{ t.token }}</span>
             <span class="text-xs text-dimmed">{{ t.use }}</span>
           </div>
@@ -191,7 +209,11 @@ useSeoMeta({ title: 'Design system', robots: 'noindex' })
 
       <div class="space-y-3">
         <h3 class="text-lg text-highlighted">Buttons — variant × color</h3>
-        <div v-for="variant in buttonVariants" :key="variant" class="flex flex-wrap items-center gap-2">
+        <div
+          v-for="variant in buttonVariants"
+          :key="variant"
+          class="flex flex-wrap items-center gap-2"
+        >
           <code class="w-16 shrink-0 text-xs text-dimmed">{{ variant }}</code>
           <UButton v-for="color in semanticColors" :key="color" :color="color" :variant="variant">
             {{ color }}
@@ -241,7 +263,7 @@ useSeoMeta({ title: 'Design system', robots: 'noindex' })
             <p class="text-default">Bordered, never shadowed. Body padding p-6.</p>
           </UCard>
           <UAlert
-            v-for="color in (['info', 'success', 'warning', 'error'] as const)"
+            v-for="color in ['info', 'success', 'warning', 'error'] as const"
             :key="color"
             :color="color"
             variant="soft"
@@ -258,8 +280,8 @@ useSeoMeta({ title: 'Design system', robots: 'noindex' })
       <div class="space-y-3">
         <h3 class="text-lg text-highlighted">Focus visibility</h3>
         <p class="text-sm text-muted">
-          Tab through these — every one must show a visible ring. Any element that swallows focus
-          is a bug, not a style choice.
+          Tab through these — every one must show a visible ring. Any element that swallows focus is
+          a bug, not a style choice.
         </p>
         <div class="flex flex-wrap items-center gap-3">
           <UButton variant="outline">Focusable button</UButton>
