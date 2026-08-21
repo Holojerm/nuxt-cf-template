@@ -107,9 +107,21 @@ async function signOut() {
   await navigateTo('/')
 }
 
-const statusColor = computed(() => {
-  if (!billing.value?.active) return 'neutral'
-  return billing.value.status === 'trialing' ? 'info' : 'success'
+// Status is never carried by colour alone (DESIGN.md › Accessibility): every
+// state pairs its hue with an icon and a word. `past_due` is amber — reversible
+// risk — and says "payment failed" rather than repeating Paddle's jargon back
+// at someone who has never read Paddle's docs.
+const statusBadge = computed(() => {
+  switch (billing.value?.state) {
+    case 'past_due':
+      return { color: 'warning' as const, icon: 'i-lucide-credit-card', label: 'payment failed' }
+    case 'trialing':
+      return { color: 'info' as const, icon: 'i-lucide-clock', label: 'trialing' }
+    case 'active':
+      return { color: 'success' as const, icon: 'i-lucide-check', label: 'active' }
+    default:
+      return { color: 'neutral' as const, icon: 'i-lucide-minus', label: 'no active plan' }
+  }
 })
 
 function formatDate(value: string | null) {
@@ -147,16 +159,47 @@ useSeo({
       <template #header>
         <div class="flex items-center justify-between gap-4">
           <h2 class="text-xl text-highlighted">Plan</h2>
-          <UBadge v-if="status !== 'pending'" :color="statusColor" variant="subtle">
-            {{ billing?.active ? (billing.status ?? 'active') : 'no active plan' }}
+          <UBadge
+            v-if="status !== 'pending'"
+            :color="statusBadge.color"
+            :icon="statusBadge.icon"
+            variant="subtle"
+          >
+            {{ statusBadge.label }}
           </UBadge>
         </div>
       </template>
 
+      <!-- The plan card's four states, in priority order: still loading,
+           dunning, holding access, holding nothing.
+
+           Dunning is second, and it is the loudest thing on the page while it's
+           true. It REPLACES the plan detail rather than sitting beside it —
+           during past_due there is nothing honest to say under "Renews",
+           because the renewal is precisely what didn't happen. The one action
+           that fixes it is the only primary button on the page, and the layout
+           banner hides itself on this route so the story is told once.
+
+           Keep comments out of the branches themselves. Vue absorbs a comment
+           sitting between v-if and v-else-if into the following branch, making
+           it a fragment on the client while the SSR compiler drops it — which
+           hydrates as a node mismatch on this exact card. -->
       <div v-if="status === 'pending'" class="flex flex-col gap-3">
         <USkeleton class="h-4 w-48" />
         <USkeleton class="h-4 w-64" />
       </div>
+
+      <BillingPastDueAlert
+        v-else-if="billing?.state === 'past_due'"
+        :portal-available="billing.portalAvailable"
+      >
+        <p>
+          This can clear on its own — but if the card has expired or been replaced, updating it
+          is the only thing that will. Nothing is deleted in the meantime, and access comes back
+          as soon as a payment goes through.
+        </p>
+        <p>Want to stop instead? The same portal cancels the subscription.</p>
+      </BillingPastDueAlert>
 
       <div v-else-if="billing?.active" class="flex flex-col gap-4">
         <p class="text-default">
@@ -226,8 +269,14 @@ useSeo({
           <tbody>
             <tr v-for="item in billing.history" :key="item.ref" class="border-b border-default">
               <td class="py-2 pr-4 font-mono text-default">{{ formatDate(item.purchasedAt) }}</td>
+              <!-- A comped row is a pass nobody paid for. Unlabelled it reads
+                   as a purchase, which starts a support conversation about a
+                   charge that never happened. -->
               <td class="py-2 pr-4 text-default">
                 {{ item.kind === 'pass' ? 'Pass' : 'Subscription' }}
+                <UBadge v-if="item.comped" color="neutral" variant="subtle" size="sm">
+                  comp
+                </UBadge>
               </td>
               <td class="py-2 pr-4 text-muted">{{ item.status }}</td>
               <td class="py-2 text-right font-mono text-default">
@@ -288,7 +337,11 @@ useSeo({
       <p>
         Need your data deleted? Reply to any email from us and we'll remove the account and
         everything attached to it — see the
-        <ULink to="/privacy" class="text-primary">Privacy Policy</ULink>.
+        <!-- Underlined: a prose link distinguished by colour alone is the one
+             thing DESIGN.md › Accessibility rules out, and axe agrees
+             (link-in-text-block). It went unseen because /account redirects
+             when signed out, so the a11y suite never scans it. -->
+        <ULink to="/privacy" class="text-primary underline underline-offset-2">Privacy Policy</ULink>.
       </p>
     </div>
 

@@ -114,15 +114,59 @@ async function loadViewAs() {
   }
 }
 
+// Switched on `state`, the same field /account branches on — not on
+// `active`/`status`, which cannot tell a lapsed customer from one whose card
+// just failed. Reading "no access" here while the customer reads "payment
+// failed" on their own screen is the precise drift entitlement-view.ts exists
+// to prevent, and it costs a support person the first five minutes of the call.
 const accessBadge = computed(() => {
-  const billing = data.value?.billing
-  if (!billing?.active) {
-    return { label: 'no access', icon: 'i-lucide-circle-x', color: 'neutral' as const }
+  switch (data.value?.billing.state) {
+    case 'past_due':
+      return {
+        label: 'payment failed',
+        icon: 'i-lucide-credit-card',
+        color: 'warning' as const,
+      }
+    case 'trialing':
+      return { label: 'trialing', icon: 'i-lucide-circle-dashed', color: 'info' as const }
+    case 'active':
+      return { label: 'active', icon: 'i-lucide-circle-check', color: 'success' as const }
+    default:
+      return { label: 'no access', icon: 'i-lucide-circle-x', color: 'neutral' as const }
   }
-  if (billing.status === 'trialing') {
-    return { label: 'trialing', icon: 'i-lucide-circle-dashed', color: 'info' as const }
+})
+
+/**
+ * The sentence the customer's own /account renders right now. A support person
+ * reads this line out loud, so it has to be the customer's wording rather than
+ * a near-copy — see app/pages/account.vue and app/components/Billing/.
+ */
+const planReadsAs = computed(() => {
+  const entitlement = viewAs.value?.entitlement
+  if (!entitlement) return ''
+  if (entitlement.state === 'past_due') {
+    return 'Their last payment did not go through. The subscription is paused while Paddle retries the card.'
   }
-  return { label: billing.status ?? 'active', icon: 'i-lucide-circle-check', color: 'success' as const }
+  if (!entitlement.active) return "You don't have an active plan."
+  return entitlement.kind === 'pass'
+    ? 'A one-time pass. It will not renew.'
+    : 'A subscription that renews automatically.'
+})
+
+/**
+ * Why the subscription gate resolves the way it does — the entire question this
+ * panel gets opened to answer. `active` alone says whether they get in; it does
+ * not say whether anyone can do anything about it, and "payment failed, Paddle
+ * is retrying" is a different support conversation from "they never subscribed".
+ */
+const subscriptionGate = computed(() => {
+  const entitlement = viewAs.value?.entitlement
+  if (!entitlement) return null
+  if (entitlement.active) return 'subscription gate: passes'
+  if (entitlement.state === 'past_due') {
+    return 'subscription gate: fails — payment failed, Paddle is retrying'
+  }
+  return 'subscription gate: fails — no active plan'
 })
 
 /** Attribution columns, rendered only where there is something to render. */
@@ -401,15 +445,7 @@ useSeo({
               <dl class="grid gap-4 border border-default p-4 sm:grid-cols-2">
                 <div>
                   <dt class="text-sm text-muted">Their plan reads as</dt>
-                  <dd class="text-default">
-                    {{
-                      viewAs.entitlement.active
-                        ? viewAs.entitlement.kind === 'pass'
-                          ? 'A one-time pass. It will not renew.'
-                          : 'A subscription that renews automatically.'
-                        : "You don't have an active plan."
-                    }}
-                  </dd>
+                  <dd class="text-default">{{ planReadsAs }}</dd>
                 </div>
                 <div>
                   <dt class="text-sm text-muted">
@@ -429,6 +465,9 @@ useSeo({
                     >
                       {{ viewAs.dashboardReachable ? 'yes' : 'no — sent to /pricing' }}
                     </UBadge>
+                    <p v-if="subscriptionGate" class="mt-2 text-sm text-muted">
+                      {{ subscriptionGate }}
+                    </p>
                   </dd>
                 </div>
                 <div>

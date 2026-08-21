@@ -122,6 +122,12 @@ watch(
          ever focused programmatically by the skip link, and a ring around the whole
          page region reads as a rendering bug. design-check-ignore -->
     <UContainer id="main" as="main" tabindex="-1" class="flex-1 py-8 focus:outline-none">
+      <!-- Dunning notice. Inside `main` rather than between the landmarks, so
+           it sits in a landmark (axe's `region` rule) and lines up with the
+           page content instead of floating over it. Renders nothing unless a
+           signed-in user's subscription is actually past_due — and costs a
+           signed-out visitor nothing at all, because it never mounts. -->
+      <BillingPastDueBanner v-if="loggedIn" />
       <slot />
     </UContainer>
 

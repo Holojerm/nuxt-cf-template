@@ -11,6 +11,8 @@
 
 import { isPass } from './billing'
 import { isCompRef } from './admin-grants'
+import { deriveBillingState } from './billing-state'
+import type { BillingState } from './billing-state'
 import { getBillingOverview } from './entitlements'
 import type { EntitlementDb } from './entitlements'
 
@@ -26,6 +28,16 @@ export interface EntitlementHistoryView {
 
 export interface EntitlementView {
   active: boolean
+  /**
+   * The one word every surface branches on — customer and admin console alike.
+   *
+   * `active: false` is three situations wearing one face: never subscribed,
+   * ended, and a payment that failed and is being retried. Only the last has an
+   * action attached, and describing it lives here rather than in a caller
+   * precisely so /account and the support console cannot tell a customer two
+   * different stories about the same failed card.
+   */
+  state: BillingState
   status: string | null
   currentPeriodEnd: string | null
   /** 'pass' = one-time, nothing to cancel; 'subscription' = renewing. */
@@ -54,6 +66,7 @@ export async function buildEntitlementView(
 
   return {
     active: Boolean(active),
+    state: deriveBillingState(active, overview.history),
     status: active?.status ?? null,
     currentPeriodEnd: active?.currentPeriodEnd?.toISOString() ?? null,
     kind: active ? (isPass(active.paddleSubscriptionId) ? 'pass' : 'subscription') : null,
