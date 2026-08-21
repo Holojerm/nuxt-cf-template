@@ -41,6 +41,16 @@ export default defineEventHandler(async (event) => {
 
   const outcome = await applyPaddleEvent(db, paddleEvent)
 
+  // At most one email, only on a real transition — see
+  // server/utils/billing-notifications.ts for the decision table. Awaited so it
+  // survives the isolate being torn down, and never throwing so a mail outage
+  // can't make Paddle replay a money event.
+  await notifyBillingOutcome(db, outcome, {
+    currentPeriodEnd: paddleEvent.data.current_billing_period
+      ? new Date(paddleEvent.data.current_billing_period.ends_at)
+      : null,
+  })
+
   if (outcome.kind === 'subscription') {
     await captureServerEvent({
       distinctId: outcome.userId,

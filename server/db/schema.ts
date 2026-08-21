@@ -21,7 +21,12 @@ const timestamps = {
     .notNull(),
 }
 
-// Users — baseline table, extend with your own columns
+// Users — baseline table, extend with your own columns.
+//
+// `email` is the account key: sign-in links providers by verified email rather
+// than minting a row per provider (see server/utils/users.ts for why).
+// `provider` records which one created the account — support context only,
+// never an authorization input.
 export const users = sqliteTable('users', {
   id: text('id')
     .primaryKey()
@@ -30,6 +35,8 @@ export const users = sqliteTable('users', {
   name: text('name').notNull(),
   avatarUrl: text('avatar_url'),
   role: text('role').notNull().default('user'),
+  provider: text('provider'),
+  lastLoginAt: integer('last_login_at', { mode: 'timestamp' }),
   ...timestamps,
 })
 

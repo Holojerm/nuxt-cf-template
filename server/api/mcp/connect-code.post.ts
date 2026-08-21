@@ -25,6 +25,16 @@ export async function hashConnectCode(code: string): Promise<string> {
 export default defineEventHandler(async (event) => {
   const { user } = await requireUserSession(event)
 
+  // Keyed by user, not IP: a signed-in account minting codes in a loop is the
+  // realistic abuse here (each one is a row and a live credential), and users
+  // behind one corporate NAT shouldn't rate-limit each other.
+  await rateLimit(event, {
+    name: 'mcp-connect-code',
+    identifier: user.id,
+    limit: 10,
+    windowSeconds: 300,
+  })
+
   const code = generateCode()
   const expiresAt = new Date(Date.now() + CODE_TTL_SECONDS * 1000)
   await db.insert(schema.mcpConnectCodes).values({

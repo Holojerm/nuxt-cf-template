@@ -6,9 +6,9 @@
 # which requires `wrangler login` OR CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars.
 #
 # ─── PROJECT NAME ────────────────────────────────────────────────────────────
-# Update `name`, `database_name`, `bucket_name`, and `NUXT_PUBLIC_APP_NAME` to
-# match your project. Also update the `db:migrate*` scripts in package.json,
-# which hardcode the database name (wrangler's migrations subcommand requires it).
+# Run `bun run rename <your-name>` — it updates `name`, `database_name`,
+# `bucket_name`, and `NUXT_PUBLIC_APP_NAME` here plus the other five places
+# `my-app` appears (package.json scripts + portless.name, .mcp.json, mcp/).
 # ─────────────────────────────────────────────────────────────────────────────
 
 name = "my-app"
@@ -31,6 +31,24 @@ bucket_name = "my-app-blob"
 
 [vars]
 NUXT_PUBLIC_APP_NAME = "My App"
+# Canonical public origin, no trailing slash. Emails, sitemap.xml, robots.txt
+# and og: tags build absolute links from this — a webhook has no request to
+# infer it from. Set it to your real domain before the first production deploy.
+NUXT_PUBLIC_APP_URL = "https://my-app.workers.dev"
+# Named on /terms and /privacy, and used as Reply-To on transactional email.
+NUXT_PUBLIC_SUPPORT_EMAIL = "support@example.com"
+NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
+# Paddle price IDs for /pricing. Sandbox and production have DIFFERENT ids —
+# override these per environment rather than hardcoding them in app code.
+# NUXT_PUBLIC_PADDLE_PRICE_MONTHLY = "pri_..."
+# NUXT_PUBLIC_PADDLE_PRICE_YEARLY = "pri_..."
+# NUXT_PUBLIC_PADDLE_PRICE_PASS = "pri_..."
 
-# Secrets (set via: wrangler secret put NUXT_SESSION_PASSWORD)
-# NUXT_SESSION_PASSWORD — 32+ char random string for sealed sessions
+# Secrets — set via `wrangler secret put <NAME>`, never in this file:
+#   NUXT_SESSION_PASSWORD        32+ char random string for sealed sessions (required)
+#   NUXT_OAUTH_GITHUB_CLIENT_ID / _SECRET    GitHub sign-in
+#   NUXT_OAUTH_GOOGLE_CLIENT_ID / _SECRET    Google sign-in
+#   NUXT_PADDLE_WEBHOOK_SECRET   Paddle → Developer tools → Notifications
+#   NUXT_PADDLE_API_KEY          only needed for the customer-portal link
+#   NUXT_RESEND_API_KEY          transactional email; unset = emails no-op
+#   NUXT_RESEND_FROM             e.g. "My App <hello@myapp.com>" (verified domain)
