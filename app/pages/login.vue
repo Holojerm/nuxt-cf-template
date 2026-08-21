@@ -156,9 +156,9 @@ useSeoMeta({
 
     <p class="text-center text-sm text-muted">
       By signing in you agree to our
-      <ULink to="/terms" class="text-primary">Terms</ULink>
+      <ULink to="/terms" class="text-primary underline underline-offset-2">Terms</ULink>
       and
-      <ULink to="/privacy" class="text-primary">Privacy Policy</ULink>.
+      <ULink to="/privacy" class="text-primary underline underline-offset-2">Privacy Policy</ULink>.
     </p>
   </div>
 </template>

@@ -154,7 +154,9 @@ useSeoMeta({
         <p>
           You can ask for a copy of your data, correction of anything wrong, or deletion of your
           account and its contents. Email
-          <ULink :to="`mailto:${support}`" class="text-primary">{{ support }}</ULink>
+          <ULink :to="`mailto:${support}`" class="text-primary underline underline-offset-2">{{
+            support
+          }}</ULink>
           and we'll action it within 30 days. If you're in the UK, EU, or a similar jurisdiction,
           you also have the right to complain to your data protection authority.
         </p>
@@ -173,7 +175,9 @@ useSeoMeta({
         <h2 class="text-2xl text-highlighted">Contact</h2>
         <p>
           {{ entity }} —
-          <ULink :to="`mailto:${support}`" class="text-primary">{{ support }}</ULink>
+          <ULink :to="`mailto:${support}`" class="text-primary underline underline-offset-2">{{
+            support
+          }}</ULink>
         </p>
       </section>
     </div>

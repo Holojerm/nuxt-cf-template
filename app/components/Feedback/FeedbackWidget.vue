@@ -89,11 +89,12 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
     description="Bugs, ideas, or anything that felt wrong — it goes straight to the team."
   >
     <UButton
+      class="min-touch"
       :icon="position === 'floating' ? 'i-lucide-message-square' : undefined"
       :label="props.label"
       :color="position === 'floating' ? 'neutral' : 'primary'"
       :variant="position === 'floating' ? 'outline' : 'solid'"
-      :class="position === 'floating' ? 'fixed bottom-4 right-4 z-50 shadow-sm' : undefined"
+      :class="position === 'floating' ? 'fixed bottom-safe right-safe z-50 shadow-sm' : undefined"
     />
 
     <template #body>

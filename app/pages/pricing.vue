@@ -100,9 +100,7 @@ useSeoMeta({
           <div>
             <div class="flex items-center gap-2">
               <h2 class="text-xl text-highlighted">{{ plan.name }}</h2>
-              <UBadge v-if="plan.featured" color="primary" variant="subtle" size="sm">
-                Best value
-              </UBadge>
+              <UBadge v-if="plan.featured" color="primary" variant="solid"> Best value </UBadge>
             </div>
             <p class="mt-3 flex items-baseline gap-2">
               <span class="font-display text-3xl text-highlighted">{{ plan.price }}</span>
@@ -130,14 +128,14 @@ useSeoMeta({
             >
               {{ loggedIn ? `Get ${plan.name}` : 'Sign in to continue' }}
             </UButton>
-            <p v-if="!plan.purchasable" class="text-xs text-dimmed">
+            <p v-if="!plan.purchasable" class="text-xs text-muted">
               {{
                 paddleReady
                   ? 'No price ID configured for this plan yet.'
                   : 'Set NUXT_PUBLIC_PADDLE_CLIENT_TOKEN to enable checkout.'
               }}
             </p>
-            <p v-else-if="!plan.recurring" class="text-xs text-dimmed">
+            <p v-else-if="!plan.recurring" class="text-xs text-muted">
               One-time charge. Never renews.
             </p>
           </div>
@@ -150,7 +148,8 @@ useSeoMeta({
         Payments and invoicing are handled by Paddle, our merchant of record — your receipt comes
         from them. Subscriptions can be cancelled from your account page at any time, and access
         runs to the end of the period you've paid for. Refunds end access immediately; see the
-        <ULink to="/terms" class="text-primary">Terms</ULink> for the full policy.
+        <ULink to="/terms" class="text-primary underline underline-offset-2">Terms</ULink> for the
+        full policy.
       </p>
     </div>
   </div>

@@ -5,6 +5,19 @@ export default defineNuxtConfig({
     compatibilityVersion: 4,
   },
 
+  // DESIGN.md › Accessibility. Neither of these is expressible as a design token,
+  // so /design-sync doesn't own them — they live here.
+  //   lang:        without it a screen reader guesses the document language (WCAG 3.1.1).
+  //   viewport-fit: what makes env(safe-area-inset-*) resolve to anything but 0 on
+  //                iOS. The `bottom-safe` / `right-safe` utilities in main.css are
+  //                inert without it.
+  app: {
+    head: {
+      htmlAttrs: { lang: 'en' },
+      viewport: 'width=device-width, initial-scale=1, viewport-fit=cover',
+    },
+  },
+
   modules: ['@nuxt/ui', '@nuxthub/core', 'nuxt-auth-utils', 'nuxt-mcp'],
 
   // NuxtUI v4 requires this CSS entry — without it, Tailwind utilities and
@@ -40,8 +53,10 @@ export default defineNuxtConfig({
     clientBundle: { scan: true },
   },
 
-  // DevTools
-  devtools: { enabled: true },
+  // DevTools. Disabled when NUXT_DEVTOOLS=false, which the a11y suite sets:
+  // the devtools panel injects its own markup into every page, and axe would
+  // scan it and report violations that aren't in this app's code.
+  devtools: { enabled: process.env.NUXT_DEVTOOLS !== 'false' },
 
   hooks: {
     // /design-system is the dev-only style guide (app/pages/design-system.vue)

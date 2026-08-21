@@ -71,7 +71,7 @@ useSeoMeta({
           <ULink
             to="https://www.paddle.com/legal/checkout-buyer-terms"
             target="_blank"
-            class="text-primary"
+            class="text-primary underline underline-offset-2"
           >
             buyer terms
           </ULink>
@@ -149,7 +149,9 @@ useSeoMeta({
         <h2 class="text-2xl text-highlighted">10. Contact</h2>
         <p>
           Questions about these terms:
-          <ULink :to="`mailto:${support}`" class="text-primary">{{ support }}</ULink
+          <ULink :to="`mailto:${support}`" class="text-primary underline underline-offset-2">{{
+            support
+          }}</ULink
           >.
         </p>
       </section>

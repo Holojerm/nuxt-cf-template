@@ -116,7 +116,7 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
 1. Select (or create) the Worker — its name **must match** `name` in `wrangler.toml`.
 2. Go to **Settings → Build → Connect** and pick this repository.
 3. Configure the build:
-   - **Build command**: `bun run ci` (lint → typecheck → test → build)
+   - **Build command**: `bun run ci` (lint → design:check → typecheck → test → a11y → build)
    - **Deploy command**: `bunx wrangler --cwd .output deploy`
    - **Preview deploy command**: `bunx wrangler --cwd .output versions upload`
 4. Under **Build Variables and Secrets**, add `NUXT_SESSION_PASSWORD` (mark it secret).
@@ -152,7 +152,7 @@ bun lint              # Run oxlint
 bun lint:fix          # Auto-fix lint issues
 bun format            # Format with oxfmt
 bun typecheck         # TypeScript type checking
-bun run ci            # Lint + typecheck + test + build — what Workers Builds runs on every push
+bun run ci            # Lint + design:check + typecheck + test + test:a11y + build — what Workers Builds runs
 bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1 (via wrangler)
 bun db:migrate:remote # Apply migrations to remote/prod D1
@@ -241,7 +241,7 @@ See [`test/example.test.ts`](./test/example.test.ts) for the starter pattern. Co
 
 The Cloudflare preset has to be pinned in `nuxt.config.ts`; the `@nuxthub/core` module does **not** auto-detect it for `nuxt build` (it only auto-detected in the legacy `nuxthub deploy` command, which Cloudflare sunset Feb 2026).
 
-Workers Builds runs the same two steps in CI — `bun run ci` covers the build (plus lint, typecheck, and tests), and the deploy command is the same `wrangler --cwd .output deploy`. Builds run inside your Cloudflare account, so CI needs no API token.
+Workers Builds runs the same two steps in CI — `bun run ci` covers the build (plus lint, the design-token gate, typecheck, unit tests, and the axe accessibility suite), and the deploy command is the same `wrangler --cwd .output deploy`. Builds run inside your Cloudflare account, so CI needs no API token.
 
 ---
 
