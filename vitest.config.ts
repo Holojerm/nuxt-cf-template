@@ -10,14 +10,22 @@
 
 import { fileURLToPath } from 'node:url'
 
-import { cloudflareTest } from '@cloudflare/vitest-pool-workers'
+import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-pool-workers'
 import { defineConfig } from 'vitest/config'
+
+const migrationsPath = fileURLToPath(new URL('./server/db/migrations', import.meta.url))
 
 export default defineConfig({
   plugins: [
-    cloudflareTest({
+    cloudflareTest(async () => ({
       wrangler: { configPath: './wrangler.toml' },
-    }),
+      miniflare: {
+        // The real migrations, handed to test/setup.ts (which applies them to
+        // each test file's isolated D1) — so tests exercise the real tables
+        // rather than a hand-written copy that drifts.
+        bindings: { TEST_MIGRATIONS: await readD1Migrations(migrationsPath) },
+      },
+    })),
   ],
   resolve: {
     alias: {
@@ -29,5 +37,6 @@ export default defineConfig({
   },
   test: {
     include: ['test/**/*.test.ts', 'server/**/*.test.ts'],
+    setupFiles: ['./test/setup.ts'],
   },
 })

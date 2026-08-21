@@ -2,28 +2,17 @@
 //
 // Lives under server/routes/ (not /api/) so the global auth middleware never
 // touches it: the HMAC signature IS the authentication. Configure the URL in
-// Paddle → Developer tools → Notifications, subscribe to subscription.* and
-// transaction.completed, and put the endpoint's secret in
-// NUXT_PADDLE_WEBHOOK_SECRET.
+// Paddle → Developer tools → Notifications, subscribe to subscription.*,
+// transaction.completed, adjustment.created and adjustment.updated, and put
+// the endpoint's secret in NUXT_PADDLE_WEBHOOK_SECRET.
 //
-// Subscriptions must be created with custom_data.userId (usePaddle() does this
-// at checkout) so events can be mapped back to a user.
-
-import { z } from 'zod'
-
-const eventSchema = z.object({
-  event_id: z.string(),
-  event_type: z.string(),
-  data: z.object({
-    id: z.string(),
-    status: z.string().optional(),
-    customer_id: z.string().nullish(),
-    custom_data: z
-      .object({ userId: z.string().optional(), productKey: z.string().optional() })
-      .nullish(),
-    current_billing_period: z.object({ ends_at: z.string() }).nullish(),
-  }),
-})
+// Checkouts must carry custom_data.userId (usePaddle() does this) so purchases
+// map back to a user. Refunds can't: adjustment events have no custom_data, so
+// they're matched through the transaction/subscription id already on the row.
+//
+// This handler only authenticates, parses, and reports. What the event DOES to
+// entitlements lives in server/utils/entitlements.ts (applyPaddleEvent), which
+// the workerd test suite drives directly.
 
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
@@ -42,58 +31,64 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 401, message: 'Invalid signature' })
   }
 
-  const parsed = eventSchema.safeParse(JSON.parse(rawBody ?? '{}'))
+  const parsed = paddleEventSchema.safeParse(JSON.parse(rawBody ?? '{}'))
   if (!parsed.success) {
     console.warn(JSON.stringify({ kind: 'paddle_webhook_unparseable' }))
     throw createError({ statusCode: 400, message: 'Unrecognized payload' })
   }
-  const { event_type: eventType, data } = parsed.data
+  const paddleEvent = parsed.data
+  const eventType = paddleEvent.event_type
 
-  // All subscription.* lifecycle events carry the full subscription entity —
-  // one upsert keyed on the subscription id keeps the entitlement current.
-  if (eventType.startsWith('subscription.')) {
-    const userId = data.custom_data?.userId
-    if (!userId) {
-      // Not fatal: a subscription created outside the app (e.g. dashboard test)
-      console.warn(JSON.stringify({ kind: 'paddle_webhook_no_user', subscriptionId: data.id }))
-      return { received: true }
-    }
-    const entitlement = {
-      userId,
-      paddleCustomerId: data.customer_id ?? null,
-      paddleSubscriptionId: data.id,
-      productKey: data.custom_data?.productKey ?? 'default',
-      status: data.status ?? 'unknown',
-      currentPeriodEnd: data.current_billing_period
-        ? new Date(data.current_billing_period.ends_at)
-        : null,
-    }
-    await db
-      .insert(schema.entitlements)
-      .values(entitlement)
-      .onConflictDoUpdate({
-        target: schema.entitlements.paddleSubscriptionId,
-        set: {
-          status: entitlement.status,
-          currentPeriodEnd: entitlement.currentPeriodEnd,
-          paddleCustomerId: entitlement.paddleCustomerId,
-          updatedAt: new Date(),
+  const outcome = await applyPaddleEvent(db, paddleEvent)
+
+  if (outcome.kind === 'subscription') {
+    await captureServerEvent({
+      distinctId: outcome.userId,
+      event: `paddle_${eventType.replace('.', '_')}`,
+      properties: { subscriptionId: paddleEvent.data.id, status: outcome.status },
+    })
+  } else if (outcome.kind === 'pass') {
+    await captureServerEvent({
+      distinctId: outcome.userId,
+      event: 'paddle_transaction_completed',
+      properties: {
+        transactionId: paddleEvent.data.id,
+        pass: true,
+        granted: outcome.granted,
+        stacked: Boolean(outcome.stackedOn),
+        endsAt: outcome.endsAt.toISOString(),
+      },
+    })
+  } else if (outcome.kind === 'adjustment') {
+    // Money going back out is worth a log line even when nothing matched —
+    // "refund arrived for an entitlement we don't have" is exactly the kind of
+    // silent drift that turns into a support email.
+    console.warn(
+      JSON.stringify({
+        kind: 'paddle_adjustment',
+        eventType,
+        action: outcome.action,
+        adjustmentType: paddleEvent.data.type,
+        status: paddleEvent.data.status,
+        transactionId: paddleEvent.data.transaction_id,
+        outcome: outcome.result.outcome,
+      }),
+    )
+    if (outcome.result.userId) {
+      await captureServerEvent({
+        distinctId: outcome.result.userId,
+        event: 'paddle_access_revoked',
+        properties: {
+          reason: outcome.action,
+          paddleRef: outcome.result.paddleRef,
+          adjustmentType: paddleEvent.data.type,
         },
       })
-    await captureServerEvent({
-      distinctId: userId,
-      event: `paddle_${eventType.replace('.', '_')}`,
-      properties: { subscriptionId: data.id, status: entitlement.status },
-    })
-  } else if (eventType === 'transaction.completed') {
-    const userId = data.custom_data?.userId
-    if (userId) {
-      await captureServerEvent({
-        distinctId: userId,
-        event: 'paddle_transaction_completed',
-        properties: { transactionId: data.id },
-      })
     }
+  } else if (outcome.reason === 'no_user') {
+    console.warn(
+      JSON.stringify({ kind: 'paddle_webhook_no_user', eventType, id: paddleEvent.data.id }),
+    )
   }
   // Unhandled event types are acknowledged so Paddle doesn't retry them.
 

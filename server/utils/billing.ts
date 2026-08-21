@@ -1,26 +1,24 @@
 // Subscription gating built on the entitlements table (populated by the Paddle
 // webhook). Auto-imported Nitro-wide like every server util.
+//
+// This file is the H3-facing half: "does the caller get in?". The writes and
+// the entitlement query itself live in server/utils/entitlements.ts, which
+// takes the db explicitly so it can be tested.
 
-import { and, eq, inArray } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import type { Entitlement } from '../db/schema'
 
-/** Statuses that grant access. `past_due` is grace-period territory — excluded by default. */
-const ACTIVE_STATUSES = ['active', 'trialing']
-
-/** The user's granting entitlement for a product, or null. */
+/**
+ * The user's granting entitlement for a product, or null.
+ *
+ * `sub_…` rows are status-driven (Paddle flips the status when they end);
+ * `txn_…` passes expire by timestamp because no lifecycle event ever fires.
+ */
 export async function getEntitlement(
   userId: string,
   productKey = 'default',
 ): Promise<Entitlement | null> {
-  const row = await db.query.entitlements.findFirst({
-    where: and(
-      eq(schema.entitlements.userId, userId),
-      eq(schema.entitlements.productKey, productKey),
-      inArray(schema.entitlements.status, ACTIVE_STATUSES),
-    ),
-  })
-  return row ?? null
+  return findActiveEntitlement(db, userId, productKey)
 }
 
 /**
@@ -41,4 +39,9 @@ export async function requireSubscription(event: H3Event, productKey = 'default'
     })
   }
   return { user, entitlement }
+}
+
+/** Is this Paddle ref a one-time pass (`txn_…`) rather than a subscription? */
+export function isPass(paddleRef: string): boolean {
+  return paddleRef.startsWith('txn_')
 }
