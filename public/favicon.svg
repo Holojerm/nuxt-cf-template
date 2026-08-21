@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="App icon">
+  <!-- Placeholder mark. Deliberately abstract rather than a letterform: `bun run
+       rename` cannot rewrite an image, so a lettered icon would still say the
+       template's name long after the app stopped being called that. -->
+  <rect width="64" height="64" rx="14" fill="#c74f2f"/>
+  <path d="M20 24h24a4 4 0 0 1 0 8H20a4 4 0 0 1 0-8Z" fill="#fdf5f3"/>
+  <path d="M20 38h14a4 4 0 0 1 0 8H20a4 4 0 0 1 0-8Z" fill="#fdf5f3" opacity=".62"/>
+</svg>

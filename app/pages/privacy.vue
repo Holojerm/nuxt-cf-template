@@ -9,6 +9,16 @@
 // If you remove PostHog or swap Paddle, fix the table below. A privacy policy
 // that lists a processor you don't use is as wrong as one that omits one.
 
+definePageMeta({
+  publicPage: {
+    changefreq: 'yearly',
+    priority: '0.3',
+    title: 'Privacy Policy',
+    summary:
+      'What personal data is collected, why, which third-party processors receive it, and how to request access or deletion.',
+  },
+})
+
 const config = useRuntimeConfig()
 
 const LAST_UPDATED = '2026-08-21'
@@ -40,9 +50,10 @@ const processors = [
   },
 ]
 
-useSeoMeta({
-  title: `Privacy Policy · ${config.public.appName}`,
-  description: `What ${config.public.appName} collects, why, and what you can ask us to do about it.`,
+useSeo({
+  title: 'Privacy Policy',
+  description: `What ${config.public.appName} collects, why, which processors it is shared with, and what you can ask us to do about it.`,
+  breadcrumb: [{ name: 'Privacy Policy', path: '/privacy' }],
 })
 </script>
 

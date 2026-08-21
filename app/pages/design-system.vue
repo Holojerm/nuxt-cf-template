@@ -70,7 +70,11 @@ const semanticColors = [
 ] as const
 const buttonVariants = ['solid', 'outline', 'soft', 'subtle', 'ghost', 'link'] as const
 
-useSeoMeta({ title: 'Design system', robots: 'noindex' })
+useSeo({
+  title: 'Design system',
+  description: 'Every design token and component state, in both color modes.',
+  noindex: true,
+})
 </script>
 
 <template>

@@ -78,10 +78,12 @@ async function signInAsDev() {
   }
 }
 
-useSeoMeta({
-  title: `Sign in · ${config.public.appName}`,
+useSeo({
+  title: 'Sign in',
   description: `Sign in to ${config.public.appName}.`,
-  robots: 'noindex',
+  // Nothing here is useful in an index, and an indexed login page competes with
+  // the landing page for brand queries.
+  noindex: true,
 })
 </script>
 
