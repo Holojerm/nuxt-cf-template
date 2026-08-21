@@ -10,7 +10,7 @@
 // This is a PII read and is audited as one. `withAudit` writes the row first,
 // so the needle is recorded even if the query itself then fails.
 
-import { asc, sql } from 'drizzle-orm'
+import { asc } from 'drizzle-orm'
 import { z } from 'zod'
 
 const querySchema = z.object({
@@ -18,17 +18,6 @@ const querySchema = z.object({
   q: z.string().trim().min(2).max(320),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })
-
-/**
- * Prefix pattern with the LIKE wildcards neutralised.
- *
- * Without this, `q=%` matches every user in the database — a one-character
- * directory dump. Escaping (rather than stripping) keeps `_`, which is a legal
- * character in an email local part, meaning itself instead of "any character".
- */
-function likePrefix(value: string): string {
-  return `${value.replace(/[\\%_]/g, (char) => `\\${char}`)}%`
-}
 
 export default defineEventHandler(async (event) => {
   const admin = await requireAdmin(event)
@@ -62,9 +51,11 @@ export default defineEventHandler(async (event) => {
         })
         .from(schema.users)
         // An exact address is just the degenerate prefix, so one clause covers
-        // both. `escape '\'` is what makes likePrefix() above mean anything —
-        // SQLite ignores backslashes in LIKE patterns unless you ask.
-        .where(sql`${schema.users.email} like ${likePrefix(needle)} escape '\\'`)
+        // both. likePrefix() neutralises the LIKE wildcards — without it `q=%`
+        // is a one-character dump of every address in the table. It lives in
+        // server/utils/sql.ts because the money code needs the same escaping
+        // (see findActiveEntitlement) and a second copy is how the two drift.
+        .where(likePrefix(schema.users.email, needle))
         .orderBy(asc(schema.users.email))
         .limit(query.limit)
 

@@ -37,6 +37,16 @@
 // upgrade is a signed, short-lived, single-user read token that a server
 // middleware rejects on every non-GET request, started and stopped with its own
 // audit rows. Build that when a bug actually demands it; do not start there.
+//
+// ── Read-only is structural, not enforced ────────────────────────────────────
+// The `.get.ts` suffix is the whole mechanism: Nitro registers this path for
+// GET only, so there is no write handler to reach. Measured on Nitro 2.13.4 /
+// h3 v1, POST, PUT, PATCH, and DELETE to this path all return **404** (the
+// router finds no route for that method), not 405. Either way nothing here
+// writes — but the number is worth stating correctly, because "405" is the
+// intuitive guess and this repo's own notes had it wrong. If a future h3 starts
+// answering 405 preemptively, that is a nicer answer to the same question and
+// changes nothing about the design.
 
 import { eq } from 'drizzle-orm'
 
@@ -59,7 +69,7 @@ export default defineEventHandler(async (event) => {
       action: 'admin.user_viewed_as',
       targetType: 'user',
       targetId: user.id,
-      metadata: { email: user.email },
+      // No email in metadata — see server/utils/audit.ts.
       ipHash: await auditIpHash(event),
     },
     async () => {

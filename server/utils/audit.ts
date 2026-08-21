@@ -41,6 +41,25 @@
 // a row that could be corrected after the fact is a row that can be corrected
 // after the fact. The resulting state lives in the table the action wrote to;
 // this one answers "who decided, and what did they decide".
+//
+// ── What does NOT go in metadata ─────────────────────────────────────────────
+// Personal data that `target_id` already points at — an email address above all.
+// This table is append-only and has no retention job, so anything written here
+// outlives the account it describes. /account promises we will "remove the
+// account and everything attached to it", and an email frozen into an
+// undeletable row makes that promise false in a way nobody would notice.
+//
+// The id is the durable identifier and the email is a *display* concern, so it
+// is resolved at read time by joining `users` (see server/api/admin/audit.get.ts).
+// The join returns null once the account is gone, which is the correct answer
+// rather than a stale one. Storing it would also have meant the console relying
+// on client-side filtering to keep it off the screen — a display detail standing
+// in for a storage decision.
+//
+// The one deliberate exception is `admin.user_searched`, whose metadata keeps
+// the search needle. That is not incidental PII: "who did this admin go looking
+// for" is the entire reason to audit a search, and it is a record of the
+// admin's action rather than of the subject's data.
 
 import { and, desc, eq } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
@@ -72,6 +91,17 @@ export const AUDIT_ACTIONS = [
   'admin.user_viewed_as',
   /** An admin granted comp access (the apology grant). */
   'admin.pass_granted',
+  /** An admin took comp access back. The inverse of the line above. */
+  'admin.pass_revoked',
+  /** An admin moved a feedback row through triage. */
+  'feedback.status_changed',
+  /**
+   * An admin sent a customer an email. The most consequential thing in this
+   * list: it leaves the building under the company's name and cannot be
+   * recalled, so it was the conspicuous gap while merely *reading* a customer's
+   * record was already audited.
+   */
+  'feedback.replied',
 ] as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]

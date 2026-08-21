@@ -84,6 +84,72 @@ async function submitGrant() {
   }
 }
 
+// ── Revoke a comp ───────────────────────────────────────────────────────────
+// The inverse of the grant above, and the reason the grant is safe to offer at
+// all: before this existed, twelve passes granted by mistake could only be
+// undone with hand-written SQL against production.
+//
+// Behind a confirmation with a mandatory reason, for the same reason the grant
+// is: access vanishing from an account is exactly what generates a support call
+// months later, and the answer needs to be written down before it happens.
+type BillingHistoryRow = NonNullable<typeof data.value>['billing']['history'][number]
+
+/** Statuses still granting — mirrors ACTIVE_STATUSES on the server. */
+function isRevocable(status: string): boolean {
+  return status === 'active' || status === 'trialing'
+}
+
+const revokeOpen = ref(false)
+const revokeTarget = ref<BillingHistoryRow | null>(null)
+const revokeSchema = z.object({
+  reason: z.string().trim().min(3, 'Say why — this is what the audit trail records').max(500),
+})
+const revokeState = reactive({ reason: '' })
+const revoking = ref(false)
+
+function openRevoke(row: BillingHistoryRow) {
+  revokeTarget.value = row
+  revokeState.reason = ''
+  revokeOpen.value = true
+}
+
+async function submitRevoke() {
+  const target = revokeTarget.value
+  if (!target) return
+
+  revoking.value = true
+  try {
+    const result = await $fetch(`/api/admin/users/${userId.value}/revoke`, {
+      method: 'POST',
+      body: { ref: target.ref, reason: revokeState.reason },
+    })
+    revokeOpen.value = false
+    toast.add({
+      title: result.outcome === 'already_revoked' ? 'Already revoked' : 'Comp revoked',
+      // What the customer has LEFT is the line support reads out loud, and it
+      // is not derivable from the row that was just revoked.
+      description: result.remainingEndsAt
+        ? `They still have access until ${formatDay(result.remainingEndsAt)}.`
+        : 'They now have no active access.',
+      color: 'success',
+      icon: 'i-lucide-circle-check',
+    })
+    await refresh()
+  } catch (caught) {
+    const code = (caught as { data?: { data?: { code?: string } } }).data?.data?.code
+    toast.add({
+      title: 'Could not revoke that',
+      description:
+        code === 'not_comp'
+          ? 'Only comped access can be revoked here. Refunds and cancellations go through Paddle.'
+          : 'Nothing changed on this account. Try again.',
+      color: 'error',
+    })
+  } finally {
+    revoking.value = false
+  }
+}
+
 // ── View as (read-only) ─────────────────────────────────────────────────────
 // Not an impersonated session — see the long note at the top of
 // server/api/admin/users/[id]/view-as.get.ts. This asks the server what the
@@ -196,6 +262,46 @@ useSeo({
       Back to search
     </ULink>
 
+    <!-- Identity, and the page's only level-1 heading.
+         Hoisted above every conditional below on purpose: when it lived inside
+         the `data` branch, the 403, 404, and loading states rendered a page
+         with no level-1 heading at all — an axe `page-has-heading-one` failure
+         and, more to the point, a screen reader landing on a document that
+         never says what it is. The subject's address is the heading once it
+         loads; before that the heading still exists and names the page.
+         (Keep the tag name out of this comment — seo:check counts heading tags
+         in raw template text, HTML comments included.) -->
+    <div class="flex flex-wrap items-center gap-4">
+      <UAvatar
+        v-if="data"
+        :src="data.user.avatarUrl ?? undefined"
+        :alt="`${data.user.name}'s avatar`"
+        size="lg"
+      />
+      <div class="min-w-0">
+        <h1
+          class="truncate text-2xl text-highlighted"
+          :class="{ 'font-mono': data }"
+        >
+          {{ data?.user.email ?? 'Customer record' }}
+        </h1>
+        <p v-if="data" class="mt-1 text-muted">{{ data.user.name }}</p>
+      </div>
+      <div v-if="data" class="ml-auto flex flex-wrap gap-2">
+        <UBadge
+          v-if="data.user.role === 'admin'"
+          color="warning"
+          variant="subtle"
+          icon="i-lucide-shield"
+        >
+          admin
+        </UBadge>
+        <UBadge :color="accessBadge.color" variant="subtle" :icon="accessBadge.icon">
+          {{ accessBadge.label }}
+        </UBadge>
+      </div>
+    </div>
+
     <UAlert
       v-if="forbidden"
       color="error"
@@ -216,32 +322,11 @@ useSeo({
 
     <template v-else>
       <div v-if="status === 'pending'" class="flex flex-col gap-3">
-        <USkeleton class="h-8 w-72" />
+        <USkeleton class="h-4 w-64" />
         <USkeleton class="h-4 w-48" />
       </div>
 
       <template v-else-if="data">
-        <!-- Identity -->
-        <div class="flex flex-wrap items-center gap-4">
-          <UAvatar
-            :src="data.user.avatarUrl ?? undefined"
-            :alt="`${data.user.name}'s avatar`"
-            size="lg"
-          />
-          <div class="min-w-0">
-            <h1 class="truncate font-mono text-2xl text-highlighted">{{ data.user.email }}</h1>
-            <p class="mt-1 text-muted">{{ data.user.name }}</p>
-          </div>
-          <div class="ml-auto flex flex-wrap gap-2">
-            <UBadge v-if="data.user.role === 'admin'" color="warning" variant="subtle" icon="i-lucide-shield">
-              admin
-            </UBadge>
-            <UBadge :color="accessBadge.color" variant="subtle" :icon="accessBadge.icon">
-              {{ accessBadge.label }}
-            </UBadge>
-          </div>
-        </div>
-
         <UCard>
           <template #header>
             <h2 class="text-xl text-highlighted">Account</h2>
@@ -325,7 +410,12 @@ useSeo({
               <h3 class="text-lg text-highlighted">Grant comp access</h3>
               <p class="text-sm text-muted">
                 Days stack on whatever this customer already has — nobody loses time they paid for.
-                Each pass becomes its own line in their billing history, marked as a comp.
+                Each pass becomes its own line in their billing history, marked as a comp, and can
+                be revoked there individually.
+              </p>
+              <p class="text-sm text-muted">
+                The cap below applies to one grant, not to the account: repeat grants keep stacking.
+                Every one is on the audit trail with the reason you give.
               </p>
 
               <UFormField label="How much" name="passes">
@@ -369,7 +459,10 @@ useSeo({
                   <th scope="col" class="py-2 pr-4 font-medium">Type</th>
                   <th scope="col" class="py-2 pr-4 font-medium">Status</th>
                   <th scope="col" class="py-2 pr-4 font-medium">Ref</th>
-                  <th scope="col" class="py-2 text-right font-medium">Ends</th>
+                  <th scope="col" class="py-2 pr-4 text-right font-medium">Ends</th>
+                  <th scope="col" class="py-2 text-right font-medium">
+                    <span class="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -389,13 +482,37 @@ useSeo({
                   </td>
                   <td class="py-2 pr-4 text-muted">{{ row.status }}</td>
                   <td class="py-2 pr-4 font-mono text-xs text-dimmed">{{ row.ref }}</td>
-                  <td class="py-2 text-right font-mono text-default">
+                  <td class="py-2 pr-4 text-right font-mono text-default">
                     {{ formatDay(row.currentPeriodEnd) }}
+                  </td>
+                  <td class="py-2 text-right">
+                    <!-- Comps only. A `sub_` or `txn_` row is money Paddle owns:
+                         revoking it locally would either be overwritten by the
+                         next webhook or take away something the customer paid
+                         for with no refund attached. The server refuses those
+                         too (422) — this just never offers it. -->
+                    <UButton
+                      v-if="row.comped && isRevocable(row.status)"
+                      color="error"
+                      variant="ghost"
+                      size="xs"
+                      @click="openRevoke(row)"
+                    >
+                      Revoke
+                    </UButton>
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
+
+          <template #footer>
+            <p class="text-sm text-muted">
+              Revoking ends a comp immediately and leaves the row here, marked revoked — it is a
+              record of something that happened, not a mistake to erase. Refunds and cancellations
+              go through Paddle.
+            </p>
+          </template>
         </UCard>
 
         <!-- View as -->
@@ -555,7 +672,7 @@ useSeo({
                 <p class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted">
                   <span class="font-mono">{{ formatDateTime(entry.createdAt) }}</span>
                   <span
-                    v-for="pair in metadataPairs(entry.metadata).filter((p) => p.key !== 'email')"
+                    v-for="pair in metadataPairs(entry.metadata)"
                     :key="pair.key"
                     class="font-mono"
                   >
@@ -575,5 +692,65 @@ useSeo({
         </UCard>
       </template>
     </template>
+
+    <!-- Revoke confirmation. Destructive, so it is solid `error` per DESIGN.md
+         rather than the page's primary — and it asks for a reason rather than
+         just a yes, because "why did my access disappear" is the question this
+         answers months from now. -->
+    <UModal v-model:open="revokeOpen" title="Revoke this comp?">
+      <template #body>
+        <UForm
+          id="revoke-comp"
+          :schema="revokeSchema"
+          :state="revokeState"
+          class="flex flex-col gap-5"
+          @submit="submitRevoke"
+        >
+          <p class="text-muted">
+            Access from this grant ends immediately. Anything else the customer has — a paid pass,
+            a subscription, another comp — is untouched.
+          </p>
+
+          <dl v-if="revokeTarget" class="grid gap-3 border border-default p-4 text-sm sm:grid-cols-2">
+            <div>
+              <dt class="text-muted">Granted</dt>
+              <dd class="font-mono text-default">{{ formatDay(revokeTarget.purchasedAt) }}</dd>
+            </div>
+            <div>
+              <dt class="text-muted">Would have ended</dt>
+              <dd class="font-mono text-default">
+                {{ formatDay(revokeTarget.currentPeriodEnd) }}
+              </dd>
+            </div>
+            <div class="sm:col-span-2">
+              <dt class="text-muted">Ref</dt>
+              <dd class="truncate font-mono text-xs text-dimmed">{{ revokeTarget.ref }}</dd>
+            </div>
+          </dl>
+
+          <UFormField
+            label="Reason"
+            name="reason"
+            help="Recorded in the audit trail, alongside your account and the access being removed."
+          >
+            <UTextarea
+              v-model="revokeState.reason"
+              :rows="2"
+              class="w-full"
+              placeholder="Granted twice by mistake."
+            />
+          </UFormField>
+        </UForm>
+      </template>
+
+      <template #footer>
+        <div class="flex flex-wrap gap-3">
+          <UButton type="submit" form="revoke-comp" color="error" :loading="revoking">
+            Revoke access
+          </UButton>
+          <UButton color="neutral" variant="ghost" @click="revokeOpen = false">Cancel</UButton>
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>

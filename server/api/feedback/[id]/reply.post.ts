@@ -47,6 +47,33 @@ export default defineEventHandler(async (event) => {
     })
   }
 
+  // ── Audited before the mail leaves ──────────────────────────────────────────
+  // This is the one action in the app that speaks to a customer under the
+  // company's name, and an email cannot be recalled — so the record goes down
+  // first, exactly like a comp grant (server/utils/audit.ts).
+  //
+  // If the send then fails, the row stands and the feedback is NOT stamped
+  // replied. That reads correctly: an attempt was made, and nothing claims a
+  // reply the customer never got.
+  //
+  // What is deliberately absent: the recipient address and the reply text. The
+  // address is PII that `target_id` already leads to, and the body is free text
+  // that would sit undeletable in an append-only table — the same reasoning that
+  // keeps emails out of every other audit row here. The mail provider holds the
+  // content; this holds who decided to send it, about what, and when.
+  await writeAudit(db, {
+    actorUserId: admin.id,
+    action: 'feedback.replied',
+    targetType: 'feedback',
+    targetId: row.id,
+    metadata: {
+      feedbackKind: row.kind,
+      previousStatus: row.status,
+      replyLength: body.message.length,
+    },
+    ipHash: await auditIpHash(event),
+  })
+
   const config = useRuntimeConfig()
   const result = await sendEmail({
     to,

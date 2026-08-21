@@ -21,6 +21,8 @@ You can expect an acknowledgment within 72 hours of reporting.
 
 This file ships with the template. **Before launching your fork as a public product, replace the reporting channel above with your own contact method or responsible disclosure program.** A forked repo with no security contact is a liability.
 
+Replace the response commitment along with it. The 72-hour acknowledgment above is a promise attached to *that* channel and the people watching it — it does not transfer to your inbox just because the sentence did. Either commit to a window you will actually meet, or state none: a published SLA you miss is worse than no SLA, because the reporter who waited on it is the one most likely to disclose publicly instead.
+
 ## Leaked secrets
 
 If you find a leaked secret (API key, token, credential) in the repository history, report it privately the same way — via GitHub's private vulnerability reporting.

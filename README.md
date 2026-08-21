@@ -178,7 +178,7 @@ bun format            # Format with oxfmt
 bun typecheck         # TypeScript type checking
 bun run brand:generate # Rebuild favicon, app icon, and og.png from the brand mark
 bun run brand:check   # Fail if those files no longer match the mark (part of ci)
-bun run ci            # Lint + design/brand/seo gates + typecheck + test + test:a11y + build — Workers Builds runs this
+bun run ci            # Lint + design/brand/seo gates + typecheck + test + browser suites (a11y + CSP) + build — Workers Builds runs this
 bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1 (via wrangler)
 bun db:migrate:remote # Apply migrations to remote/prod D1
@@ -433,6 +433,8 @@ correct assets and tells you it fell back.
 Two gates keep app code inside the system: `bun run design:check` fails on anything that
 bypasses the token layer (a numbered colour scale, a raw hex, a suppressed focus ring), and
 `bun run test:a11y` runs axe in a real browser over every public route in both colour modes.
+That script also runs the Content-Security-Policy spec (`test/csp/`) in the same browser — it
+is the browser gate, not only the accessibility one.
 The dev-only `/design-system` route renders every token, component state, and generated brand
 asset on one page — that is where you verify a change actually landed.
 

@@ -55,7 +55,7 @@ export default defineEventHandler(async (event) => {
       targetType: 'user',
       targetId: user.id,
       metadata: {
-        email: user.email,
+        // No email — `targetId` identifies the account. See server/utils/audit.ts.
         passes: body.passes,
         days: body.passes * PASS_DAYS,
         reason: body.reason,

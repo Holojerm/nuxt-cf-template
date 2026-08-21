@@ -11,19 +11,23 @@
 //      getBillingOverview().history — labelled as access that ends by date.
 
 import { env } from 'cloudflare:test'
+import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
 import {
   COMP_REF_PREFIX,
+  COMP_REVOKED_STATUS,
   MAX_COMP_PASSES,
   compRef,
   grantCompPasses,
   isCompRef,
+  revokeCompPass,
 } from '../server/utils/admin-grants'
 import { PASS_DAYS, findActiveEntitlement, getBillingOverview } from '../server/utils/entitlements'
 import { isPass } from '../server/utils/billing'
+import { deriveBillingState } from '../server/utils/billing-state'
 
 const db = drizzle(env.DB, { schema })
 
@@ -188,5 +192,191 @@ describe('how a comp reads back', () => {
     // A `sub_` ref would still be granting here on status alone. This is the
     // behavioural half of the prefix rule asserted at the top of this file.
     expect(await findActiveEntitlement(db, USER)).toBeNull()
+  })
+})
+
+describe('the sub_ fast path is not reachable by a lookalike ref', () => {
+  it('does not treat `subs_fake` as a subscription', async () => {
+    // `like(col, 'sub_%')` — the obvious spelling — reads `_` as "any single
+    // character", so this ref lands on the branch that grants access WITHOUT
+    // checking the expiry. Expired a year ago and still granting, forever.
+    await db.insert(schema.entitlements).values({
+      userId: USER,
+      paddleSubscriptionId: 'subs_fake',
+      status: 'active',
+      currentPeriodEnd: new Date(NOW.getTime() - 365 * DAY_MS),
+    })
+
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+  })
+
+  it('still lets a real subscription through on status alone', async () => {
+    // The other half: escaping must not break the case it exists to protect.
+    // A live `sub_` row has no meaningful date here and must still grant.
+    await db.insert(schema.entitlements).values({
+      userId: USER,
+      paddleSubscriptionId: 'sub_real',
+      status: 'active',
+      currentPeriodEnd: new Date(NOW.getTime() - 5 * DAY_MS),
+    })
+
+    const active = await findActiveEntitlement(db, USER)
+    expect(active?.paddleSubscriptionId).toBe('sub_real')
+  })
+})
+
+describe('revoking a comp', () => {
+  /** The row as the table holds it, for asserting what a revoke did to it. */
+  async function rowFor(ref: string) {
+    return db.query.entitlements.findFirst({
+      where: eq(schema.entitlements.paddleSubscriptionId, ref),
+    })
+  }
+
+  it('ends access and expires the window, not just the status', async () => {
+    const { refs } = await grantCompPasses(db, { userId: USER, now: NOW })
+    const ref = refs[0]!
+
+    const result = await revokeCompPass(db, { userId: USER, ref, now: NOW })
+
+    expect(result.outcome).toBe('revoked')
+    expect(result.revokedEndsAt?.getTime()).toBe(daysFrom(NOW, PASS_DAYS))
+    expect(result.remainingEndsAt).toBeNull()
+
+    const row = await rowFor(ref)
+    expect(row?.status).toBe(COMP_REVOKED_STATUS)
+    // Both halves, deliberately. The status is what the app's allowlist reads;
+    // the date is what anything checking only the window reads (the MCP
+    // worker's raw SQL). If they disagreed, one surface would still grant.
+    expect(row?.currentPeriodEnd?.getTime()).toBeLessThanOrEqual(NOW.getTime())
+
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+  })
+
+  it('leaves the customer another comp and a paid pass untouched', async () => {
+    // The regression that matters most: a revoke aimed at one row must not be
+    // a revoke of everything the account has.
+    await db.insert(schema.entitlements).values({
+      userId: USER,
+      paddleSubscriptionId: 'txn_paid',
+      status: 'active',
+      currentPeriodEnd: new Date(daysFrom(NOW, 10)),
+    })
+    const first = await grantCompPasses(db, { userId: USER, now: NOW })
+    const second = await grantCompPasses(db, { userId: USER, now: NOW })
+    const keep = first.refs[0]!
+    const drop = second.refs[0]!
+
+    await revokeCompPass(db, { userId: USER, ref: drop, now: NOW })
+
+    expect((await rowFor(drop))?.status).toBe(COMP_REVOKED_STATUS)
+    expect((await rowFor(keep))?.status).toBe('active')
+    expect((await rowFor('txn_paid'))?.status).toBe('active')
+
+    // Access survives, from the rows that were not targeted.
+    const active = await findActiveEntitlement(db, USER)
+    expect(active).not.toBeNull()
+    expect(active?.paddleSubscriptionId).toBe(keep)
+  })
+
+  it('refuses a subscription or a paid pass — Paddle owns those', async () => {
+    for (const ref of ['sub_live', 'txn_paid']) {
+      await db.insert(schema.entitlements).values({
+        userId: USER,
+        paddleSubscriptionId: ref,
+        status: 'active',
+        currentPeriodEnd: new Date(daysFrom(NOW, 10)),
+      })
+
+      const result = await revokeCompPass(db, { userId: USER, ref, now: NOW })
+
+      expect(result.outcome).toBe('not_comp')
+      // Untouched: revoking money-backed access locally would either be
+      // overwritten by the next Paddle event or take away something the
+      // customer actually bought, with no refund attached.
+      expect((await rowFor(ref))?.status).toBe('active')
+    }
+  })
+
+  it('will not revoke across accounts', async () => {
+    await db
+      .insert(schema.users)
+      .values({ id: 'user-2', email: 'user-2@example.com', name: 'user-2' })
+      .onConflictDoNothing()
+    const { refs } = await grantCompPasses(db, { userId: USER, now: NOW })
+    const ref = refs[0]!
+
+    // The ref is real, but it is not this user's — `user_id` is part of the
+    // WHERE precisely so a leaked ref cannot reach another account.
+    const result = await revokeCompPass(db, { userId: 'user-2', ref, now: NOW })
+
+    expect(result.outcome).toBe('not_found')
+    expect((await rowFor(ref))?.status).toBe('active')
+  })
+
+  it('reports an unknown ref rather than pretending it worked', async () => {
+    const result = await revokeCompPass(db, { userId: USER, ref: compRef(), now: NOW })
+    expect(result.outcome).toBe('not_found')
+  })
+
+  it('is idempotent — a second revoke is a no-op, not a re-dated one', async () => {
+    const { refs } = await grantCompPasses(db, { userId: USER, now: NOW })
+    const ref = refs[0]!
+
+    await revokeCompPass(db, { userId: USER, ref, now: NOW })
+    const firstEnd = (await rowFor(ref))?.currentPeriodEnd?.getTime()
+
+    const again = await revokeCompPass(db, {
+      userId: USER,
+      ref,
+      now: new Date(NOW.getTime() + DAY_MS),
+    })
+
+    expect(again.outcome).toBe('already_revoked')
+    // A second write would push current_period_end a day into the future —
+    // briefly re-granting the access the first revoke removed.
+    expect((await rowFor(ref))?.currentPeriodEnd?.getTime()).toBe(firstEnd)
+  })
+
+  it('reports what access is left when other rows survive', async () => {
+    const paidUntil = new Date(daysFrom(NOW, 10))
+    await db.insert(schema.entitlements).values({
+      userId: USER,
+      paddleSubscriptionId: 'txn_paid',
+      status: 'active',
+      currentPeriodEnd: paidUntil,
+    })
+    const { refs } = await grantCompPasses(db, { userId: USER, now: NOW })
+
+    const result = await revokeCompPass(db, { userId: USER, ref: refs[0]!, now: NOW })
+
+    // Support reads this line out loud: "you still have until the 14th."
+    expect(result.remainingEndsAt?.getTime()).toBe(paidUntil.getTime())
+  })
+
+  it('keeps the revoked row in billing history rather than deleting it', async () => {
+    const { refs } = await grantCompPasses(db, { userId: USER, now: NOW })
+    const ref = refs[0]!
+    await revokeCompPass(db, { userId: USER, ref, now: NOW })
+
+    const { history, active } = await getBillingOverview(db, USER)
+
+    // It happened, so it stays visible — as a comp that was granted and
+    // withdrawn, which is what the customer's history should show.
+    expect(history.map((row) => row.paddleSubscriptionId)).toContain(ref)
+    expect(active).toBeNull()
+  })
+
+  it('leaves the account reading as inactive, not as a payment problem', async () => {
+    const { refs } = await grantCompPasses(db, { userId: USER, now: NOW })
+    await revokeCompPass(db, { userId: USER, ref: refs[0]!, now: NOW })
+
+    const { history, active } = await getBillingOverview(db, USER)
+
+    // A revoked comp must not be mistaken for dunning: there was never a card
+    // behind it, so telling this customer to update a payment method would be
+    // an invented problem. deriveBillingState only reads past_due off a
+    // subscription, and this asserts the comp path agrees.
+    expect(deriveBillingState(active, history)).toBe('inactive')
   })
 })

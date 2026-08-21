@@ -30,7 +30,9 @@ export default defineEventHandler(async (event) => {
       action: 'admin.user_viewed',
       targetType: 'user',
       targetId: user.id,
-      metadata: { email: user.email },
+      // No email in metadata — `targetId` already identifies the account, and
+      // audit rows are append-only and never deleted. See server/utils/audit.ts
+      // › "What does NOT go in metadata".
       ipHash: await auditIpHash(event),
     },
     async () => {

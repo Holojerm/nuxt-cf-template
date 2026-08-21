@@ -13,11 +13,14 @@
 //   - `txn_…` — one-time 30-day pass; no lifecycle events ever fire for it, so
 //     it grants access only while current_period_end is in the future.
 
-import { and, desc, eq, gt, inArray, like, or } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, or } from 'drizzle-orm'
 import { z } from 'zod'
 import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
 import type { Entitlement } from '../db/schema'
+// Explicit, not the Nitro auto-import: the workerd vitest suite loads this file
+// directly and nothing is injected there.
+import { likePrefix } from './sql'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type EntitlementDb = ReturnType<typeof drizzle<typeof tables>>
@@ -50,7 +53,10 @@ export async function findActiveEntitlement(
       eq(tables.entitlements.productKey, productKey),
       inArray(tables.entitlements.status, ACTIVE_STATUSES),
       or(
-        like(tables.entitlements.paddleSubscriptionId, 'sub_%'),
+        // Escaped, because `_` is a LIKE wildcard: the obvious
+        // `like(col, 'sub_%')` also matches `subs_fake`, and the `sub_` branch
+        // is the one that grants access WITHOUT checking the expiry date.
+        likePrefix(tables.entitlements.paddleSubscriptionId, 'sub_'),
         gt(tables.entitlements.currentPeriodEnd, new Date()),
       ),
     ),

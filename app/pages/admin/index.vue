@@ -263,10 +263,13 @@ useSeo({
                   :to="`/admin/users/${entry.targetId}`"
                   class="font-mono text-primary underline underline-offset-2"
                 >
-                  {{ entry.metadata?.email ?? entry.targetId }}
+                  <!-- Resolved live by the endpoint, not read off the audit
+                       row — the address is never stored there. Falls back to
+                       the id once the account is deleted. -->
+                  {{ entry.targetEmail ?? entry.targetId }}
                 </ULink>
                 <span
-                  v-for="pair in metadataPairs(entry.metadata).filter((p) => p.key !== 'email')"
+                  v-for="pair in metadataPairs(entry.metadata)"
                   :key="pair.key"
                   class="font-mono"
                 >

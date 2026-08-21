@@ -46,34 +46,29 @@ declare global {
 }
 
 /**
- * `eval` refusals are reported but not failed, and that is a decision rather
- * than a shrug.
+ * ── `eval` refusals are fatal, and used not to be ────────────────────────────
  *
- * Zod v4 feature-probes for its JIT compiler by calling `new Function("")`
- * inside a try/catch. This policy refuses it, zod catches the throw and falls
- * back to its interpreter, and validation is correct either way. Zod's own
- * source says exactly this — node_modules/zod/v4/core/util.js:
+ * Zod v4 feature-probed for its JIT compiler by calling `new Function("")`
+ * inside a try/catch. This policy refuses it; zod caught the throw and fell
+ * back to its interpreter, so validation was correct either way — but the
+ * refusal was still *reported*, as a securitypolicyviolation and a console
+ * error, on every page load for every visitor. This file used to filter those
+ * out so CI stayed green.
  *
- *     // Skip the probe under `jitless`: strict CSPs report the caught
- *     // `new Function` as a `securitypolicyviolation` even though the
- *     // throw is swallowed.
+ * Tolerating it was the wrong end to fix. The noise landed in every PostHog
+ * session replay, where a benign refusal is indistinguishable from a real one —
+ * so the first genuine CSP failure this app ever had would be the one nobody
+ * looked at. app/plugins/zod-jitless.client.ts now sets `z.config({ jitless:
+ * true })`, which is zod's own switch for exactly this case, and the probe no
+ * longer happens.
  *
- * (Our server never hits it at all: zod disables the JIT on Cloudflare Workers
- * unprompted, because workerd has no eval either. This is the browser bundle.)
- *
- * The alternative is `'unsafe-eval'` in script-src — re-opening the single most
- * valuable thing the policy closes in order to quiet a probe that is *designed*
- * to be refused. So the refusal stands. Note what this predicate does and does
- * not do: the browser still blocks the eval regardless, so this only decides
- * whether CI goes red, never what the page is permitted to run. The
- * "no 'unsafe-eval'" assertion at the bottom of this file is what keeps that
- * distinction honest.
- *
- * Anything that is *not* an eval refusal is still fatal.
+ * With the source of the only known-benign eval refusal gone, the tolerance
+ * goes too: an eval violation is now a genuine regression — something new is
+ * calling `eval`/`new Function`, or the plugin stopped running — and it fails
+ * like any other violation. That is the point of removing it. If this starts
+ * failing, find what is evaluating code; do NOT add `'unsafe-eval'`, which the
+ * assertion at the bottom of this file exists to prevent.
  */
-function isEvalProbe(violation: CspViolation): boolean {
-  return violation.blockedURI === 'eval'
-}
 
 /**
  * Installs a violation recorder at document_start.
@@ -106,13 +101,9 @@ for (const route of ROUTES) {
     const cspConsoleErrors: string[] = []
     page.on('console', (message) => {
       const text = message.text()
-      // `unsafe-eval` messages are the same swallowed zod probe seen from the
-      // other channel — see isEvalProbe.
-      if (
-        message.type() === 'error' &&
-        /content security policy/i.test(text) &&
-        !/unsafe-eval/i.test(text)
-      ) {
+      // No exception for `unsafe-eval` messages any more — the zod probe that
+      // produced the only benign ones is disabled at source. See the note above.
+      if (message.type() === 'error' && /content security policy/i.test(text)) {
         cspConsoleErrors.push(text)
       }
     })
@@ -122,8 +113,8 @@ for (const route of ROUTES) {
     // is exactly the kind of thing a wrong `script-src` refuses.
     await page.waitForLoadState('networkidle')
 
-    const violations = await page.evaluate(() => window.__cspViolations ?? [])
-    const blocking = violations.filter((violation) => !isEvalProbe(violation))
+    // Every violation counts, eval included — nothing is filtered out here.
+    const blocking = await page.evaluate(() => window.__cspViolations ?? [])
 
     expect(
       blocking.map((v) => `${v.directive} blocked ${v.blockedURI} (${v.sourceFile})`),

@@ -222,7 +222,9 @@ and every standalone file is cut from it by `bun run brand:generate` — `public
   anything pinned to a viewport edge. `bun run design:check` fails the build on the
   machine-checkable half, and `bun run test:a11y` runs axe in a real browser over every
   public route in both color modes — that one owns contrast ratios, landmark uniqueness,
-  and heading order.
+  and heading order. Despite the name it now runs **two** Playwright projects: the axe
+  sweep and `test/csp/` (see Security headers), so it is the browser gate rather than
+  just the a11y one.
 
 ### Dark Mode
 
@@ -366,7 +368,8 @@ bun run design:check  # Fail on UI code that bypasses the DESIGN.md token layer
 bun run brand:generate # Rebuild favicon.svg, apple-touch-icon.png and og.png from the brand mark
 bun run brand:check   # Fail when those generated files no longer match the mark
 bun run seo:check     # Fail on pages that bypass useSeo() or aren't declared public/noindex
-bun run test:a11y     # axe (Playwright/Chromium) over every public route, light + dark
+bun run test:a11y     # Playwright/Chromium browser suites: axe over every public route
+                      # (light + dark) AND the Content-Security-Policy spec (test/csp/)
 bun typecheck         # TypeScript type checking
 bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1
@@ -374,7 +377,7 @@ bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db)
 bun run rename <name> # Rewrite the `my-app` placeholder across wrangler.toml, package.json,
                       # .mcp.json and mcp/ — all six occurrences, in one go
-bun run ci            # Lint + design/brand/seo gates + typecheck + test + test:a11y + build — Workers Builds runs this
+bun run ci            # Lint + design/brand/seo gates + typecheck + test + browser suites (a11y + CSP) + build — Workers Builds runs this
 bun run deploy        # Manual deploy to Cloudflare via wrangler (normally unnecessary —
                       # Workers Builds deploys automatically on push to main).
                       # Requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars
@@ -610,7 +613,10 @@ Two things to know when it breaks:
   friends. Most Ubuntu-based images have them; if the build fails with a linker error, the
   fix is `playwright install --with-deps chromium`, which needs root and may not be
   available on Workers Builds. The fallback is to drop `test:a11y` from `ci` and run it in a
-  GitHub Action instead — the suite doesn't care what runs it.
+  GitHub Action instead — the suite doesn't care what runs it. **Note what else that drops:**
+  `test:a11y` runs the CSP spec (`test/csp/`) as well as the axe sweep, so removing it takes
+  the security-header gate with it — and a broken CSP fails silently in exactly the way that
+  gate exists to catch. Move both to the Action, not just the one you were thinking about.
 - **The suite starts its own dev server** (`playwright.config.ts` → `webServer`) with
   `reuseExistingServer: false`. That is deliberate: it only produces valid results against a
   server started with `NUXT_DEVTOOLS=false`, and reusing a dev server you already had running

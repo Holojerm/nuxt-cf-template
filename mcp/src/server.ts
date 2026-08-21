@@ -43,11 +43,35 @@ export function createServer(env: Env): McpServer {
     async ({ productKey }) => {
       const userId = authedUserId()
       if (!userId) return text('Not authenticated.')
+      // This has to mean exactly what findActiveEntitlement() means in the app
+      // (server/utils/entitlements.ts), because it is the same gate written
+      // twice — the worker has no Drizzle schema, so it cannot call it.
+      //
+      // Three clauses, and only the first is obvious:
+      //   1. status IN ('active','trialing') — ACTIVE_STATUSES. `past_due` is
+      //      deliberately absent: access is paused for the whole of dunning.
+      //   2. `sub_` rows pass on status ALONE. Paddle owns their lifecycle and
+      //      flips the status when they end, so their date is not a gate.
+      //   3. EVERYTHING ELSE must still be in its window. `txn_` passes and
+      //      `comp_` grants never receive a lifecycle event, so status stays
+      //      'active' forever and the date is the only thing that ends them.
+      //      Without this clause an expired pass granted MCP access for good.
+      //
+      // `\_` is escaped because `_` is a LIKE wildcard — unescaped, `sub_%`
+      // also matches `subs_fake`, which would put an arbitrary ref onto the
+      // never-expires branch. Same reasoning as server/utils/sql.ts.
+      //
+      // current_period_end is epoch SECONDS (note the *1000 below), so the
+      // comparison is against seconds, not Date.now().
+      const nowSeconds = Math.floor(Date.now() / 1000)
       const entitlement = await env.DB.prepare(
         `SELECT status, product_key, current_period_end FROM entitlements
-         WHERE user_id = ?1 AND product_key = ?2 AND status IN ('active', 'trialing')`,
+         WHERE user_id = ?1 AND product_key = ?2 AND status IN ('active', 'trialing')
+           AND (paddle_subscription_id LIKE 'sub\\_%' ESCAPE '\\'
+                OR current_period_end > ?3)
+         ORDER BY current_period_end DESC`,
       )
-        .bind(userId, productKey)
+        .bind(userId, productKey, nowSeconds)
         .first<{ status: string; product_key: string; current_period_end: number | null }>()
       if (!entitlement) {
         // The gate: tools behind a paywall should return this and stop.
