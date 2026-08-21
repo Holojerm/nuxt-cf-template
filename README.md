@@ -21,6 +21,14 @@ A production-ready template for full-stack apps on **Nuxt 4 + Cloudflare Workers
 
 ---
 
+## Product decisions
+
+**Single-user by design.** This template is a consumer product: one person, one account, one subscription. There are no teams, seats, workspaces, or org switchers, and `entitlements.userId` is the correct shape — not a placeholder for a `team_id`. If you are building B2B, that is a different data model; retrofitting teams onto this one costs more than starting from a B2B starter.
+
+**English-only, deliberately.** The template ships without an i18n layer on purpose: for a consumer SaaS the cost of maintaining translations before you have users in a market is pure overhead, and half-translated UI is worse than honest English. Revisit when a real market signal exists — meaningful non-English traffic in analytics, or a paid-user request pattern — and add `@nuxtjs/i18n` at that point, not speculatively.
+
+---
+
 ## Fork & deploy in 5 steps
 
 ### 1. Rename the project
