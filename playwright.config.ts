@@ -1,11 +1,22 @@
-// Playwright config — exists solely to run the axe accessibility suite in
-// `test/a11y/`. Application logic is tested by Vitest in the `workerd` pool
-// (see vitest.config.ts); those two runners don't overlap, which is why the
-// specs here are named *.spec.ts while Vitest owns *.test.ts.
+// Playwright config — the suites that need a real browser. Application logic is
+// tested by Vitest in the `workerd` pool (see vitest.config.ts); those two
+// runners don't overlap, which is why the specs here are named *.spec.ts while
+// Vitest owns *.test.ts (its `include` globs only `*.test.ts`).
 //
-// axe needs a real browser, not jsdom: the rules that matter most here —
-// color-contrast above all — are computed from resolved styles and actual
-// layout, and jsdom reports them as "incomplete" rather than pass or fail.
+// Two suites live here, and both are here for the same reason — the thing they
+// check does not exist until a browser renders the page:
+//
+//   test/a11y/  axe. The rules that matter most — color-contrast above all —
+//               are computed from resolved styles and actual layout, and jsdom
+//               reports them as "incomplete" rather than pass or fail.
+//   test/csp/   the Content-Security-Policy in nuxt.config.ts. A CSP only
+//               exists as browser behaviour; nothing short of a real engine can
+//               tell you whether the policy you shipped blocks your own app.
+//
+// They are separate `projects` rather than one directory so each keeps its own
+// scope and shows up under its own name in the report — but they deliberately
+// share the single `webServer` below, because booting one dev server twice is
+// the slowest thing in `bun run ci`.
 
 import { defineConfig, devices } from '@playwright/test'
 
@@ -21,10 +32,10 @@ const HOST = `http://localhost:${PORT}`
 // way to open the app while a run is in flight is to recompute the hash.
 // Playwright re-imports this config in every worker process, so print only from
 // the runner — otherwise the line repeats once per worker in the CI log.
-if (process.env.TEST_WORKER_INDEX === undefined) console.info(`a11y suite → ${HOST}`)
+if (process.env.TEST_WORKER_INDEX === undefined) console.info(`browser suites → ${HOST}`)
 
 export default defineConfig({
-  testDir: './test/a11y',
+  testDir: './test',
   testMatch: '**/*.spec.ts',
   // A failing contrast ratio is deterministic — a retry only hides flake in the
   // harness, and there is nothing here worth retrying.
@@ -40,7 +51,10 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
 
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'a11y', testDir: './test/a11y', use: { ...devices['Desktop Chrome'] } },
+    { name: 'csp', testDir: './test/csp', use: { ...devices['Desktop Chrome'] } },
+  ],
 
   webServer: {
     // The dev server rather than the built Worker: `wrangler dev` on .output
