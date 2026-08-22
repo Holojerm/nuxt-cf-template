@@ -67,7 +67,7 @@ const pending = ref<string | null>(null)
 // 'control' | 'pass-first'. Resolves in onMounted, so it is 'control' during
 // SSR and for the first client frame — which is why the variant may only
 // change `order` classes and copy, never structure.
-const pricingLayout = useFlagVariant('pricing-layout', 'control')
+const { variant: pricingLayout } = useFlagVariant('pricing-layout', 'control')
 const passFirst = computed(() => pricingLayout.value === 'pass-first')
 
 /** The control's promoted plan comes from the data, not from a second literal. */

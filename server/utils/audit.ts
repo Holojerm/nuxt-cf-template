@@ -119,10 +119,13 @@ export const AUDIT_ACTIONS = [
    * same as `account.deleted` — this is a person's own activity, not an
    * admin acting on them. This row is not really "evidence" the way the
    * rest of the table is; it's the idempotency guard for the one-time
-   * `user_activated` PostHog event: GET /api/onboarding checks for an
-   * existing row with this action before firing the event, so refreshing
-   * the dashboard after finishing onboarding doesn't refire it. See
-   * server/utils/onboarding.ts › recordActivationOnce for the full reasoning.
+   * `user_activated` PostHog event: POST /api/onboarding/activated checks
+   * for an existing row with this action (server/utils/onboarding.ts ›
+   * hasActivated) before firing the event, so refreshing the dashboard
+   * after finishing onboarding doesn't refire it. GET /api/onboarding
+   * checks the same guard too, but only to report `activated` in its
+   * response — it never writes. See server/utils/onboarding.ts ›
+   * recordActivationOnce for the full reasoning.
    */
   'onboarding.activated',
   /**

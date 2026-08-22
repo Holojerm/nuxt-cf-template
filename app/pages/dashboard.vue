@@ -26,8 +26,16 @@ const { user } = useUserSession()
 const toast = useToast()
 
 // 'onboarding-layout' — see app/components/Onboarding/Checklist.vue for what
-// the two arms look like and why they share one card.
-const variant = useFlagVariant('onboarding-layout', 'control')
+// the two arms look like and why they share one card. `ONBOARDING_LAYOUT_VARIANTS`
+// (shared/utils/onboarding.ts) is the one list both this clamp and
+// POST /api/onboarding/activated's Zod body validate against — see that
+// file for why an unrecognized arm has to degrade to the fallback here
+// rather than being passed through.
+const { variant, settled } = useFlagVariant(
+  'onboarding-layout',
+  'control',
+  ONBOARDING_LAYOUT_VARIANTS,
+)
 
 // Read-only, fetched exactly once. `watch: false` is the load-bearing part:
 // without it, any reactive value this call happened to reference would make
@@ -38,7 +46,12 @@ const variant = useFlagVariant('onboarding-layout', 'control')
 // server/utils/onboarding.ts for why), so there's nothing left to react to,
 // but `watch: false` stays as the explicit guarantee rather than an
 // accident of there being no reactive params left to trip over.
-const { data: progress } = await useFetch('/api/onboarding', { watch: false })
+//
+// `refresh` IS used, deliberately not left destructured-away: see
+// handleFeedbackSubmitted below.
+const { data: progress, refresh: refreshProgress } = await useFetch('/api/onboarding', {
+  watch: false,
+})
 
 // ── Dismissal ────────────────────────────────────────────────────────────
 // Client-side only (localStorage), for the same hydration reason the flag
@@ -73,34 +86,55 @@ function dismissChecklist(): void {
 // explicitly.
 const checklistVisible = computed(() => !dismissed.value && progress.value?.complete !== true)
 
+// The embedded FeedbackWidget on the "send feedback" step is the one way to
+// finish the checklist without navigating anywhere — every other step's
+// action is a real link to /pricing or /account. Without this, completing
+// via that widget would only ever show up after a reload: `progress` isn't
+// otherwise reactive once fetched.
+function handleFeedbackSubmitted(): void {
+  void refreshProgress()
+}
+
 // ── Activation ───────────────────────────────────────────────────────────
-// POST /api/onboarding/activated once this page has BOTH facts an
-// activation record needs: the checklist is complete (known as soon as the
-// GET above resolves — server-verified, not assumed) and the A/B variant
-// has resolved past its fallback (only true from onMounted onward). Firing
-// this from the GET itself, tagged with whatever `variant` held at the
-// time, used to mean almost every real activation was mistagged with the
-// fallback arm — see server/utils/onboarding.ts › recordActivationOnce for
-// the full story. The server re-verifies completion and owns the
-// idempotency guard; this is just "tell it once, with the right tag".
+// POST /api/onboarding/activated once this page has established BOTH facts
+// an activation record needs: `useFlagVariant`'s flag has actually settled
+// (not merely changed — see app/composables/useFlag.ts for why those are
+// different questions, and why "changed" is the wrong one) and the
+// checklist is complete (server-verified on arrival, not assumed — see
+// server/utils/onboarding.ts › activateIfComplete). `progress.value.activated`
+// is the third gate: GET /api/onboarding already reports whether this
+// account has been recorded before, so a returning visitor who activated
+// last week never even attempts the call.
 //
-// Two triggers, not one, because `variant` can settle at two different
-// points depending on whether PostHog already had flags cached: onMounted
-// covers both "PostHog isn't configured, so `variant` never changes past
-// its fallback" (the guard below still only lets this run once) and "flags
-// were already cached, so `variant` is correct by the time onMounted
-// fires" (useFlagVariant's own onMounted runs first, having been set up
-// earlier in this file — Vue invokes onMounted callbacks in registration
-// order). The `watch` covers the remaining case: flags resolving
-// asynchronously a moment after mount.
+// A `watch` over `[settled, complete]` with `immediate: true`, not an
+// `onMounted` callback plus a separate `watch(variant, …)`. The two used to
+// be needed because firing straight from `onMounted` fires before
+// `useFlagVariant` has necessarily resolved anything — but that is exactly
+// the bug: for a cold-cache visitor (no PostHog decision cached in this
+// browser yet), `settled` is what actually tells us the flag has reported
+// something, and `variant` merely CHANGING is not a reliable proxy for
+// that — posthog-js returns `undefined` from `getFeatureFlag`
+// deterministically, not intermittently, until its `/flags` request
+// resolves, so there may be no "change" to observe within the window an
+// `onMounted`-fired attempt would see. One watcher over the two real
+// preconditions, evaluated with `immediate: true` (a no-op the first time,
+// since `settled` starts false — see below), replaces both former triggers
+// and is also what re-evaluates correctly after handleFeedbackSubmitted's
+// refresh flips `progress.value.complete` live.
 let activationAttempted = false
 
 async function tryRecordActivation(): Promise<void> {
-  if (activationAttempted || !progress.value?.complete) return
-  // Set before the await, not after: this function can be re-entered from
-  // either trigger, and setting the guard synchronously — before yielding
-  // to the network round trip below — is what stops both triggers firing
-  // at once from ever being in flight together.
+  const shouldAttempt = shouldAttemptActivation({
+    settled: settled.value,
+    complete: progress.value?.complete ?? false,
+    activated: progress.value?.activated ?? false,
+  })
+  if (activationAttempted || !shouldAttempt) return
+  // Set before the await, not after: this function can be re-entered by the
+  // same watcher firing again (settled and complete can each trigger it),
+  // and setting the guard synchronously — before yielding to the network
+  // round trip below — is what stops two attempts from ever being in
+  // flight together.
   activationAttempted = true
   try {
     const result = await $fetch('/api/onboarding/activated', {
@@ -122,13 +156,18 @@ async function tryRecordActivation(): Promise<void> {
   }
 }
 
-onMounted(() => {
-  void tryRecordActivation()
-})
-
-watch(variant, () => {
-  void tryRecordActivation()
-})
+// `immediate: true` fires this synchronously during setup — including
+// during SSR — but `settled` starts `false` there and stays `false` through
+// hydration (app/composables/useFlag.ts), so that first firing is always a
+// no-op. The real firing happens once `settled` (or `progress.complete`,
+// via handleFeedbackSubmitted) actually changes.
+watch(
+  [settled, () => progress.value?.complete],
+  () => {
+    void tryRecordActivation()
+  },
+  { immediate: true },
+)
 
 useSeo({ title: 'Dashboard', description: 'The gated example page.', noindex: true })
 </script>
@@ -156,6 +195,7 @@ useSeo({ title: 'Dashboard', description: 'The gated example page.', noindex: tr
         :progress="progress"
         :variant="variant"
         @dismiss="dismissChecklist"
+        @submitted="handleFeedbackSubmitted"
       />
 
       <!-- The one real empty state in this template — see DESIGN.md ›
