@@ -12,7 +12,13 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import { listAudit, toAuditView, withAudit, writeAudit } from '../server/utils/audit'
+import {
+  listAudit,
+  resolveAuditSubjectEmails,
+  toAuditView,
+  withAudit,
+  writeAudit,
+} from '../server/utils/audit'
 import type { AuditDb } from '../server/utils/audit'
 
 const db = drizzle(env.DB, { schema })
@@ -196,6 +202,65 @@ describe('listAudit', () => {
   it('caps the limit even when asked for more', async () => {
     const rows = await listAudit(db, { limit: 5000 })
     expect(rows.length).toBeLessThanOrEqual(200)
+  })
+})
+
+describe('resolveAuditSubjectEmails', () => {
+  it('resolves more subjects than D1 allows bound parameters in one statement', async () => {
+    // `inArray` expands to one bound parameter per id and D1 caps a statement
+    // at 100. listAudit returns up to 200 rows, so a real page of audit entries
+    // touching mostly distinct users overflowed it — a runtime failure on the
+    // console's busiest screen that no small fixture would ever reach.
+    const SUBJECTS = 250
+    const ids = Array.from({ length: SUBJECTS }, (_, index) => `subject-${index}`)
+
+    // The fixture itself has to be chunked, which is the cap proving it is
+    // real: a users row binds six parameters, so a single 250-row insert asks
+    // for 1500 and D1 refuses the statement outright.
+    for (let index = 0; index < ids.length; index += 15) {
+      await db
+        .insert(schema.users)
+        .values(ids.slice(index, index + 15).map((id) => ({ id, email: `${id}@example.com`, name: id })))
+        .onConflictDoNothing()
+    }
+
+    const rows = []
+    for (const id of ids) {
+      rows.push(
+        await writeAudit(db, {
+          actorUserId: ADMIN,
+          action: 'admin.user_viewed',
+          targetType: 'user',
+          targetId: id,
+        }),
+      )
+    }
+
+    const emailById = await resolveAuditSubjectEmails(db, rows)
+
+    expect(emailById.size).toBe(SUBJECTS)
+    expect(emailById.get('subject-0')).toBe('subject-0@example.com')
+    expect(emailById.get(`subject-${SUBJECTS - 1}`)).toBe(`subject-${SUBJECTS - 1}@example.com`)
+  })
+
+  it('leaves a deleted account unresolved rather than guessing', async () => {
+    const row = await writeAudit(db, {
+      actorUserId: ADMIN,
+      action: 'admin.user_viewed',
+      targetType: 'user',
+      targetId: 'deleted-user',
+    })
+
+    const emailById = await resolveAuditSubjectEmails(db, [row])
+
+    // The console falls back to the id, which is the honest answer — and the
+    // reason no address is stored on the row in the first place.
+    expect(emailById.has('deleted-user')).toBe(false)
+  })
+
+  it('ignores rows that do not target a user', async () => {
+    const row = await writeAudit(db, { actorUserId: ADMIN, action: 'admin.user_searched' })
+    expect((await resolveAuditSubjectEmails(db, [row])).size).toBe(0)
   })
 })
 

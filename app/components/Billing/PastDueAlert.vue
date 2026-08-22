@@ -99,9 +99,19 @@ async function updatePaymentMethod(): Promise<void> {
         <!-- Longer explanation on /account, where there's room for it. -->
         <slot />
 
+        <!-- Both ways out, not just the one that keeps us paid.
+             With NUXT_PADDLE_API_KEY unset there is no button on this alert at
+             all, so this paragraph IS the entire set of available actions — and
+             it used to name only "update the card". Someone who wanted to stop
+             paying was left with no route at all on the one screen that exists
+             because their payment failed, which is precisely the dark pattern
+             the header of app/pages/account.vue commits against. Naming the
+             cancellation path costs nothing and is the difference between a
+             fallback and a trap. -->
         <p v-if="!portalAvailable" class="text-sm">
           The self-serve billing portal isn't configured on this deployment. Reply to your Paddle
-          receipt email and we'll update the card with you.
+          receipt email and we'll do it with you — either update the card to restore access, or
+          cancel the subscription. Whichever you ask for, we action it the same day.
         </p>
       </div>
     </template>

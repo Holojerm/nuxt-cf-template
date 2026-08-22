@@ -157,12 +157,17 @@ export function paymentFailedEmail(brand: Branding, opts: { name: string }): Ema
 /** Access ended — cancellation, refund, or chargeback. Never argumentative. */
 export function accessEndedEmail(
   brand: Branding,
-  opts: { name: string; reason: 'canceled' | 'refunded' | 'chargeback' },
+  opts: { name: string; reason: 'canceled' | 'refunded' | 'chargeback' | 'comp_revoked' },
 ): EmailContent {
   const reasonLine = {
     canceled: `Your subscription has been canceled and your access has ended.`,
     refunded: `Your payment was refunded, so the access it paid for has ended.`,
     chargeback: `A chargeback was filed on this payment, so access has been suspended while it's resolved.`,
+    // No money was involved, so this says nothing about a payment. It also does
+    // not say "an admin removed it" — the customer did nothing wrong, the grant
+    // was ours to give and ours to correct, and an accusatory sentence about
+    // free access is the worst possible trade of goodwill for precision.
+    comp_revoked: `The complimentary access on your account has ended.`,
   }[opts.reason]
 
   const body = layout(brand.appName, brand.appUrl, {

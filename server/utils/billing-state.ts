@@ -21,14 +21,40 @@
 // Imported explicitly rather than through the Nitro auto-import: this file is
 // pulled in by entitlement-view.ts, which the workerd vitest suite loads
 // directly, and nothing is injected there.
-import { isPass } from './billing'
+import { isPass } from './paddle-refs'
 
 /** The fields of an entitlement row this derivation reads. */
 export interface BillingStateRow {
   /** The Paddle ref held in `paddle_subscription_id`: `sub_…`, `txn_…`, `comp_…`. */
   paddleSubscriptionId: string
   status: string
+  /** Needed to tell live dunning from a `past_due` row nothing will ever clear. */
+  currentPeriodEnd: Date | null
 }
+
+/**
+ * How long after its period ended a `past_due` row still counts as dunning.
+ *
+ * ── Why a bound is necessary at all ──────────────────────────────────────────
+ * A `sub_` row leaves `past_due` exactly one way: a delivered Paddle webhook.
+ * There is no replay job and no reconciliation sweep in this template, so a
+ * single dropped `subscription.updated` or `subscription.canceled` freezes the
+ * row forever. Unbounded, `history.some(past_due)` then pins the account to a
+ * state whose entire UI is "update your card to restore access" — for a
+ * subscription Paddle cancelled months ago, that nothing the customer does can
+ * clear, and which suppresses the re-subscribe path they actually need.
+ *
+ * ── Why 30 days ──────────────────────────────────────────────────────────────
+ * Paddle's dunning schedule is configured in Paddle, not here, but the standard
+ * retry sequence runs a few weeks before it gives up and cancels. 30 days is
+ * comfortably past the far end of that, so a genuinely dunning subscription is
+ * never cut short by this — the window only catches rows that stopped being
+ * true and were never told. It is deliberately generous: showing "payment
+ * failed" a week too long is a much smaller error than showing it forever.
+ */
+export const PAST_DUE_STALE_AFTER_DAYS = 30
+
+const DAY_MS = 24 * 60 * 60 * 1000
 
 /**
  * - `active`   — a subscription or an unexpired pass is granting access.
@@ -45,6 +71,7 @@ export type BillingState = 'active' | 'trialing' | 'past_due' | 'inactive'
 export function deriveBillingState(
   granting: BillingStateRow | null,
   history: readonly BillingStateRow[],
+  now: Date = new Date(),
 ): BillingState {
   // Whatever grants access wins, even over a past_due row sitting beside it. A
   // customer holding a live pass has NOT lost access, and telling them it's
@@ -61,8 +88,22 @@ export function deriveBillingState(
   // Asked through isPass() rather than a `sub_` prefix check of our own. That
   // rule already existed twice and had already drifted once (see billing.ts);
   // a third copy is how it drifts again the next time a ref shape is added.
+  //
+  // Bounded by PAST_DUE_STALE_AFTER_DAYS — see the constant for why an
+  // unbounded scan is a trap. A row whose period ended long enough ago that
+  // Paddle's dunning must have finished is reporting a retry that is not
+  // happening, so it reads as `inactive` and the customer gets the
+  // re-subscribe path instead of a card-update prompt for a dead subscription.
+  //
+  // A null period end cannot be judged stale, so it stays dunning: subscription
+  // rows always carry a billing period, and guessing "expired" on a missing
+  // date would suppress a real payment problem to tidy up an edge case.
+  const staleBefore = new Date(now.getTime() - PAST_DUE_STALE_AFTER_DAYS * DAY_MS)
   const dunning = history.some(
-    (row) => !isPass(row.paddleSubscriptionId) && row.status === 'past_due',
+    (row) =>
+      !isPass(row.paddleSubscriptionId) &&
+      row.status === 'past_due' &&
+      (row.currentPeriodEnd === null || row.currentPeriodEnd > staleBefore),
   )
   return dunning ? 'past_due' : 'inactive'
 }

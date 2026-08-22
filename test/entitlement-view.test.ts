@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
 import { buildEntitlementView } from '../server/utils/entitlement-view'
-import { compRef } from '../server/utils/admin-grants'
+import { compRef } from '../server/utils/paddle-refs'
 
 const db = drizzle(env.DB, { schema })
 
@@ -102,5 +102,64 @@ describe('buildEntitlementView — state reaches the wire', () => {
     expect(view.active).toBe(true)
     expect(view.state).toBe('active')
     expect(view.comped).toBe(true)
+  })
+})
+
+describe('buildEntitlementView — a live subscription describes the account', () => {
+  // The bug: findActiveEntitlement orders by `current_period_end DESC`, so a
+  // comp stacked past a subscription's renewal outranked it — and /account told
+  // a paying monthly customer "You have a one-time pass. It will not renew."
+  // beside a working "Manage or cancel" button for the subscription the same
+  // page had just decided did not exist.
+  //
+  // grantCompPasses now refuses that combination outright, but the pair can
+  // still arrive the other way round (comp first, subscribe second), so the
+  // description has to be right independently of how the rows got there.
+
+  it('calls a subscriber a subscriber even when a comp ends later', async () => {
+    await insert('sub_1', 'active', 20)
+    await insert(compRef(), 'active', 400)
+
+    const view = await buildEntitlementView(db, USER, { portalConfigured: true })
+
+    expect(view.kind).toBe('subscription')
+    expect(view.comped).toBe(false)
+    expect(view.cancellable).toBe(1)
+    expect(view.active).toBe(true)
+    expect(view.state).toBe('active')
+    // The renewal date, not the comp's far-future expiry: /account labels this
+    // field "Renews", and pointing it at the comp promises a renewal on a date
+    // nothing renews.
+    const days = (new Date(view.currentPeriodEnd!).getTime() - Date.now()) / DAY_MS
+    expect(Math.round(days)).toBe(20)
+  })
+
+  it('still describes the comp when the only subscription is past_due', async () => {
+    // Dunning puts the subscription outside ACTIVE_STATUSES, so the comp really
+    // is what grants access here and should say so.
+    await insert('sub_1', 'past_due', -1)
+    await insert(compRef(), 'active', 14)
+
+    const view = await buildEntitlementView(db, USER, { portalConfigured: true })
+
+    expect(view.kind).toBe('pass')
+    expect(view.comped).toBe(true)
+  })
+
+  it('describes the comp when there is no subscription at all', async () => {
+    await insert(compRef(), 'active', 14)
+
+    const view = await buildEntitlementView(db, USER, { portalConfigured: true })
+
+    expect(view.kind).toBe('pass')
+    expect(view.comped).toBe(true)
+  })
+
+  it('hides the portal when the API key is unset, whatever the customer holds', async () => {
+    await insert('sub_1', 'active', 20)
+
+    const view = await buildEntitlementView(db, USER, { portalConfigured: false })
+
+    expect(view.portalAvailable).toBe(false)
   })
 })

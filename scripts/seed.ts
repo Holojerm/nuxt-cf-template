@@ -13,6 +13,7 @@ import { resolve } from 'node:path'
 import { existsSync } from 'node:fs'
 
 import * as schema from '../server/db/schema'
+import { generateReferralCode } from '../server/utils/users'
 
 const DB_PATH = resolve(import.meta.dir, '../.data/db/sqlite.db')
 
@@ -36,7 +37,11 @@ for (const user of seedUsers) {
     console.info(`= ${user.email} already exists, skipping`)
     continue
   }
-  await db.insert(schema.users).values(user)
+  // Minted with the real generator, not left null. Seeded accounts otherwise
+  // skip the one code path that gives every user a referral code, so anything
+  // built on `referral_code` looks broken in dev for exactly the two accounts a
+  // developer actually signs in as.
+  await db.insert(schema.users).values({ ...user, referralCode: generateReferralCode() })
   console.info(`+ ${user.email}`)
 }
 

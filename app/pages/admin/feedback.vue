@@ -36,7 +36,7 @@ const { data, error, status: listStatus, refresh } = await useFetch('/api/feedba
   })),
 })
 
-const forbidden = computed(() => error.value?.statusCode === 403)
+const forbidden = computed(() => isForbidden(error.value))
 
 type FeedbackItem = NonNullable<typeof data.value>['items'][number]
 
@@ -143,8 +143,8 @@ useSeo({
       color="error"
       variant="subtle"
       icon="i-lucide-lock"
-      title="You don't have access to the feedback queue"
-      description="This area is limited to accounts with the admin role."
+      :title="ADMIN_FORBIDDEN.title"
+      :description="ADMIN_FORBIDDEN.description"
     />
 
     <template v-else>

@@ -209,3 +209,69 @@ describe('upsertOAuthUser attribution', () => {
     expect(user.signupSource).toBeNull()
   })
 })
+
+describe('referral code collisions', () => {
+  // The retry in upsertOAuthUser is the kind of code that is written once,
+  // never executed, and quietly wrong. A genuine collision is a 1-in-6.6e11
+  // event, so nothing would ever have run this branch — and the branch turns on
+  // isReferralCodeCollision() matching an error STRING that D1 produces. That
+  // match cannot be verified by reading it; it has to meet the real driver.
+  //
+  // The `mintCode` seam exists for exactly this and nothing else.
+
+  it('retries onto a fresh code and still creates the account', async () => {
+    const taken = 'TAKEN123'
+    await db
+      .insert(schema.users)
+      .values({ id: 'holder', email: 'holder@example.com', name: 'holder', referralCode: taken })
+
+    // First mint collides with the row above; the second must be allowed
+    // through. If the retry did not exist, or the error string stopped
+    // matching, this rejects instead.
+    const codes = [taken, 'FRESH456']
+    let calls = 0
+    const mintCode = () => codes[calls++] ?? generateReferralCode()
+
+    const { user, created } = await upsertOAuthUser(
+      db,
+      { provider: 'github', email: 'ada@example.com' },
+      null,
+      { mintCode },
+    )
+
+    expect(calls).toBe(2)
+    expect(created).toBe(true)
+    expect(user.referralCode).toBe('FRESH456')
+  })
+
+  it('gives up rather than looping forever when every code collides', async () => {
+    const taken = 'ALWAYS12'
+    await db
+      .insert(schema.users)
+      .values({ id: 'holder', email: 'holder@example.com', name: 'holder', referralCode: taken })
+
+    let calls = 0
+    const mintCode = () => {
+      calls++
+      return taken
+    }
+
+    // Bounded on purpose: an unbounded retry turns a broken generator into a
+    // hung sign-in, and five collisions means the randomness is broken and
+    // deserves to be thrown rather than papered over.
+    let caught: unknown
+    try {
+      await upsertOAuthUser(db, { provider: 'github', email: 'ada@example.com' }, null, { mintCode })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(calls).toBe(5)
+    // Asserted on the CAUSE, not the message. Drizzle wraps D1's error, so the
+    // constraint text is one level down — the exact detail that made
+    // isReferralCodeCollision silently match nothing.
+    const cause = (caught as Error | undefined)?.cause as Error | undefined
+    expect(cause?.message).toMatch(/UNIQUE constraint failed: users\.referral_code/)
+  })
+
+})

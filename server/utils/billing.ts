@@ -41,21 +41,8 @@ export async function requireSubscription(event: H3Event, productKey = 'default'
   return { user, entitlement }
 }
 
-/**
- * Is this ref time-limited access rather than an auto-renewing subscription?
- *
- * Keyed on the ABSENCE of `sub_` rather than the presence of `txn_`, so it
- * agrees with findActiveEntitlement() — the query that decides whether a ref
- * grants access at all, and which treats `sub_` as the special case and every
- * other prefix as date-expiring.
- *
- * The two used to disagree, harmlessly, while `txn_` was the only other shape
- * in the table. It stopped being harmless when the admin console started
- * writing `comp_` refs (server/utils/admin-grants.ts): under the old rule a
- * comped month read as a *subscription*, so /account told the customer it
- * "renews automatically" and offered to cancel something that does not exist.
- * Any future ref shape would have inherited the same bug.
- */
-export function isPass(paddleRef: string): boolean {
-  return !paddleRef.startsWith('sub_')
-}
+// `isPass` used to live here. It moved to server/utils/paddle-refs.ts, along
+// with every other rule about what a ref prefix means, because four files were
+// reading that rule and this one is not a leaf — it reaches back into
+// entitlements.ts, which also needs the predicate. Nitro auto-imports the new
+// home Nitro-wide, so call sites are unchanged.

@@ -31,6 +31,9 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'admin.user_viewed': 'Opened a customer record',
   'admin.user_viewed_as': 'Viewed as customer (read-only)',
   'admin.pass_granted': 'Granted comp access',
+  'admin.pass_revoked': 'Revoked comp access',
+  'feedback.status_changed': 'Moved feedback through triage',
+  'feedback.replied': 'Emailed a customer a reply',
 }
 
 /** Falls back to the raw action so a new one is legible before it's mapped. */
@@ -44,15 +47,66 @@ export function auditActionLabel(action: string): string {
  * before "someone looked at something".
  */
 const AUDIT_ACTION_ICONS: Record<string, string> = {
+  // Reads — quieter marks.
   'admin.user_searched': 'i-lucide-search',
   'admin.user_viewed': 'i-lucide-user',
   'admin.user_viewed_as': 'i-lucide-eye',
+  // Mutations. Every one of these changed something for a customer, so none of
+  // them may fall through to the generic read-tier dot: skimming the trail has
+  // to surface "someone did something" before "someone looked at something",
+  // and three unmapped actions rendering as raw strings with the same icon as a
+  // page view defeated exactly that.
   'admin.pass_granted': 'i-lucide-gift',
+  'admin.pass_revoked': 'i-lucide-circle-minus',
+  'feedback.status_changed': 'i-lucide-circle-check',
+  'feedback.replied': 'i-lucide-send',
 }
 
 export function auditActionIcon(action: string): string {
   return AUDIT_ACTION_ICONS[action] ?? 'i-lucide-circle-dot'
 }
+
+/**
+ * The plan badge, for BOTH /account and the admin console.
+ *
+ * One function because the two had already drifted: different icons for
+ * `trialing` and for the no-plan state, on screens whose entire purpose is that
+ * a support person and a customer are looking at the same thing. A support
+ * person reading "no access" while the customer reads "no active plan" spends
+ * the first minute of the call establishing they are talking about one account.
+ *
+ * The label is deliberately the customer's wording on both. The console is a
+ * mirror of what the customer sees; where it needs operator detail it has the
+ * billing table underneath.
+ */
+const BILLING_STATE_META: Record<string, BadgeMeta> = {
+  past_due: { label: 'payment failed', icon: 'i-lucide-credit-card', color: 'warning' },
+  trialing: { label: 'trialing', icon: 'i-lucide-clock', color: 'info' },
+  active: { label: 'active', icon: 'i-lucide-circle-check', color: 'success' },
+  inactive: { label: 'no active plan', icon: 'i-lucide-circle-x', color: 'neutral' },
+}
+
+export function billingStateMeta(state: string | null | undefined): BadgeMeta {
+  return (state && BILLING_STATE_META[state]) || BILLING_STATE_META.inactive!
+}
+
+/**
+ * Did this request come back 403?
+ *
+ * Every admin page asks, and each had its own copy of
+ * `error.value?.statusCode === 403` plus its own wording for the answer. Three
+ * spellings of one rule is three places to forget it.
+ */
+export function isForbidden(error: { statusCode?: number } | null | undefined): boolean {
+  return error?.statusCode === 403
+}
+
+/** The single 403 message. Unified — the three pages had drifted apart. */
+export const ADMIN_FORBIDDEN = {
+  title: "You don't have access to the admin console",
+  description:
+    "This area is limited to accounts with the admin role. If you think that's wrong, ask whoever runs this deployment to grant it.",
+} as const
 
 const FEEDBACK_STATUS_META: Record<string, BadgeMeta> = {
   new: { label: 'new', icon: 'i-lucide-circle-dot', color: 'info' },

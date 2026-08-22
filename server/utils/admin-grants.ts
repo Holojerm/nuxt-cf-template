@@ -37,29 +37,23 @@
 // Imported explicitly rather than leaning on the Nitro auto-import: this file
 // is loaded directly by the workerd vitest suite, where nothing is injected.
 import { and, eq, inArray } from 'drizzle-orm'
+import { MAX_COMP_PASSES } from '#shared/utils/comps'
 import * as tables from '../db/schema'
-import { ACTIVE_STATUSES, PASS_DAYS, findActiveEntitlement, grantPass } from './entitlements'
+import {
+  ACTIVE_STATUSES,
+  PASS_DAYS,
+  findActiveEntitlement,
+  getBillingOverview,
+  passEndDates,
+} from './entitlements'
 import type { EntitlementDb } from './entitlements'
+import { COMP_REF_PREFIX, compRef, isCompRef } from './paddle-refs'
 import type { Entitlement } from '../db/schema'
 
-/** Prefix on every comped entitlement ref. Never `sub_` — see above. */
-export const COMP_REF_PREFIX = 'comp_'
-
-/**
- * Ceiling on ONE grant — nothing more.
- *
- * Worth being precise, because the obvious reading is wrong: this does not
- * bound how much comp access an account can accumulate. Grants stack, so twice
- * this is two clicks away and there is no cumulative limit anywhere. What the
- * bound actually buys is that a slip of the finger cannot hand out a year, and
- * that anything larger has to be a deliberate, repeated, individually-audited
- * act rather than one absent-minded selection.
- *
- * The cumulative case is handled by the other two halves of this file's
- * contract, not by a number: every grant is on the audit trail with a stated
- * reason, and revokeCompPass() below can take any of them back.
- */
-export const MAX_COMP_PASSES = 12
+// COMP_REF_PREFIX / compRef / isCompRef moved to ./paddle-refs — every rule
+// about what a ref prefix means now lives in one leaf. MAX_COMP_PASSES moved to
+// #shared/utils/comps, because the admin page builds its selector from the same
+// ceiling this file validates against and the two had already been typed twice.
 
 /**
  * Status written when an admin takes a comp back.
@@ -78,15 +72,6 @@ export const MAX_COMP_PASSES = 12
  */
 export const COMP_REVOKED_STATUS = 'revoked'
 
-/** A fresh, unique comp ref. UUID because the unique index is the only guard. */
-export function compRef(): string {
-  return `${COMP_REF_PREFIX}${crypto.randomUUID()}`
-}
-
-/** Is this entitlement comped rather than paid? Used to label billing history. */
-export function isCompRef(ref: string): boolean {
-  return ref.startsWith(COMP_REF_PREFIX)
-}
 
 export interface GrantCompPassesParams {
   userId: string
@@ -104,14 +89,21 @@ export interface GrantCompPassesParams {
   now?: Date
 }
 
+export type GrantCompOutcome =
+  /** Passes written. */
+  | 'granted'
+  /** Refused: the customer has a live subscription. See the note below. */
+  | 'active_subscription'
+
 export interface GrantCompPassesResult {
-  /** One ref per pass granted, in the order they were applied. */
+  outcome: GrantCompOutcome
+  /** One ref per pass granted, in the order applied. Empty when refused. */
   refs: string[]
   passes: number
-  /** Whole days of access added — passes × PASS_DAYS. */
+  /** Whole days of access added — passes × PASS_DAYS. Zero when refused. */
   days: number
-  /** When the user's access now ends. */
-  endsAt: Date
+  /** When the user's access now ends. Null when refused. */
+  endsAt: Date | null
   /**
    * The expiry the grant stacked on top of, or null if access started today.
    * Worth returning rather than recomputing: it is the difference between
@@ -119,6 +111,8 @@ export interface GrantCompPassesResult {
    * telling a customer the wrong one costs a second support round trip.
    */
   stackedOn: Date | null
+  /** The subscription ref that caused a refusal, for the operator's message. */
+  blockedBy?: string
 }
 
 /**
@@ -134,6 +128,35 @@ export interface GrantCompPassesResult {
  *
  * Each pass is its own row, exactly as a purchased one is: refunding or
  * reversing one leaves the others alone.
+ *
+ * ── Why a live subscriber is REFUSED, not served ─────────────────────────────
+ * Comping an active monthly subscriber delivers nothing and says three false
+ * things while doing it.
+ *
+ * Nothing, because the days stack from the subscription's renewal date — and
+ * that window is exactly what the customer's next payment buys. They gain zero
+ * days unless the subscription ends first, which is not what "here's a free
+ * month for the outage" means to anybody.
+ *
+ * False, because the comp row then outranks the subscription in
+ * findActiveEntitlement's `ORDER BY current_period_end DESC`, and /account told
+ * a paying customer "You have a one-time pass. It will not renew." beside a
+ * working "Manage or cancel" button for the subscription it had just denied
+ * existed. (entitlement-view.ts now pins the description to the live
+ * subscription, so that half is fixed independently — this refusal is about the
+ * days, not the label.)
+ *
+ * The alternative was to allow it with accurate copy — "these days apply only
+ * after the subscription ends". Rejected: it is a control whose honest
+ * description is a reason not to use it, offered to someone under time pressure
+ * who will read "grant" and tell the customer they've been given a free month.
+ * A refusal that names the right instrument is better support than a grant that
+ * quietly does nothing. The right instrument is a Paddle credit or discount
+ * against the next invoice, which is money back rather than time forward.
+ *
+ * `past_due` subscriptions are deliberately NOT blocked: access is already
+ * paused there, so comp days are real days, and "here's a week while you sort
+ * the card out" is a legitimate thing to do.
  */
 export async function grantCompPasses(
   db: EntitlementDb,
@@ -156,27 +179,78 @@ export async function grantCompPasses(
   const bad = refs.find((ref) => !isCompRef(ref))
   if (bad) throw new Error(`comp refs must start with ${COMP_REF_PREFIX}: ${bad}`)
 
+  // One read for both questions: is there a live subscription (refuse), and
+  // what is currently granting access (the stacking base). `subscriptionIds` is
+  // already "live auto-renewing subscriptions" and it scans the whole history,
+  // which matters — findActiveEntitlement returns a single row ordered by end
+  // date, so an earlier comp stacked past the renewal would hide the very
+  // subscription this check exists to find.
+  const overview = await getBillingOverview(db, params.userId, productKey)
+
+  const blockedBy = overview.subscriptionIds[0]
+  if (blockedBy) {
+    return {
+      outcome: 'active_subscription',
+      refs: [],
+      passes,
+      days: 0,
+      endsAt: null,
+      stackedOn: null,
+      blockedBy,
+    }
+  }
+
   // What they had before the first pass landed. Read up front because every
-  // grant after the first stacks on the one before it, and by the end the
-  // original expiry is no longer recoverable from the table.
-  const before = await findActiveEntitlement(db, params.userId, productKey)
+  // pass stacks on the one before it, and by the end the original expiry is no
+  // longer recoverable from the table.
+  const before = overview.active
   const stackedOn =
     before?.currentPeriodEnd && before.currentPeriodEnd > now ? before.currentPeriodEnd : null
 
-  // Sequential, not batched: each grantPass() has to see the row the previous
-  // one wrote, or they all stack on the same base and N passes buy 30 days.
-  let endsAt = stackedOn ?? now
-  for (const ref of refs) {
-    const result = await grantPass(db, {
-      userId: params.userId,
-      transactionId: ref,
-      productKey,
-      billedAt: now,
-    })
-    endsAt = result.endsAt
-  }
+  // ── One batch, not N sequential inserts ────────────────────────────────────
+  // The loop this replaces called grantPass() per pass, each re-reading the row
+  // the last one wrote. With no transaction around it, a failure at pass 3 of 5
+  // left two passes granted and threw — and the handler's catch told the
+  // operator "Nothing changed on this account", which was simply untrue.
+  //
+  // Precomputing the dates makes the whole grant one atomic D1 batch: it either
+  // all lands or none of it does, so the failure message can be honest. The
+  // arithmetic is passEndDates() in entitlements.ts — the same function
+  // grantPass uses for its single pass, so the stacking rule still exists once.
+  const ends = passEndDates(stackedOn ?? now, passes)
 
-  return { refs, passes, days: passes * PASS_DAYS, endsAt, stackedOn }
+  const statements = refs.map((ref, index) =>
+    db
+      .insert(tables.entitlements)
+      .values({
+        userId: params.userId,
+        paddleSubscriptionId: ref,
+        productKey,
+        status: 'active',
+        currentPeriodEnd: ends[index]!,
+      })
+      // Same idempotency as a purchased pass: the unique ref means a replay
+      // touches updated_at and nothing else. Comp refs are freshly minted UUIDs
+      // so this should never fire — it is here so a retried request cannot
+      // double-grant.
+      .onConflictDoUpdate({
+        target: tables.entitlements.paddleSubscriptionId,
+        set: { updatedAt: new Date() },
+      }),
+  )
+
+  // drizzle types batch as a non-empty tuple; `passes >= 1` is enforced above,
+  // so the array is never empty and the assertion is safe.
+  await db.batch(statements as [(typeof statements)[number], ...(typeof statements)[number][]])
+
+  return {
+    outcome: 'granted',
+    refs,
+    passes,
+    days: passes * PASS_DAYS,
+    endsAt: ends[ends.length - 1]!,
+    stackedOn,
+  }
 }
 
 // ─── Taking it back ─────────────────────────────────────────────────────────
@@ -190,6 +264,12 @@ export type RevokeCompOutcome =
   | 'not_comp'
   /** Already ended (revoked earlier, refunded, charged back). A no-op. */
   | 'already_revoked'
+  /**
+   * The comp's window closed on its own. Nothing to revoke, and nothing is
+   * written — see the note in revokeCompPass about why this is not "revoke it
+   * anyway".
+   */
+  | 'already_expired'
 
 export interface RevokeCompParams {
   /** The owner. Part of the WHERE, so a ref alone cannot reach another account. */
@@ -197,6 +277,13 @@ export interface RevokeCompParams {
   /** The `comp_…` ref to take back. */
   ref: string
   now?: Date
+  /**
+   * The row, when the caller has already fetched it (the endpoint does, to
+   * build its audit metadata). Saves a second identical read; the guarded
+   * UPDATE below still re-asserts every condition, so passing a stale row
+   * cannot revoke something it shouldn't.
+   */
+  row?: Pick<Entitlement, 'currentPeriodEnd' | 'status' | 'productKey'>
 }
 
 export interface RevokeCompResult {
@@ -243,6 +330,15 @@ export interface RevokeCompResult {
  *
  * The row is never deleted. It stays in billing history as a comp that was
  * granted and withdrawn, because that is what happened.
+ *
+ * ── An already-expired comp is left completely alone ────────────────────────
+ * Nothing flips a comp's status when its window closes — it simply stops
+ * matching the date half of findActiveEntitlement, so an expired comp still
+ * reads `status: 'active'`. Revoking one used to set `current_period_end = now`
+ * unconditionally, which moved a date that was months in the PAST forward to
+ * today. That is backwards in the only direction that matters: it rewrites
+ * history to say the customer had access for longer than they did, and on a row
+ * that was granting nothing to begin with. `already_expired` writes nothing.
  */
 export async function revokeCompPass(
   db: EntitlementDb,
@@ -255,14 +351,29 @@ export async function revokeCompPass(
   // never reach the UPDATE below, even if the row lookup were wrong.
   if (!isCompRef(ref)) return { outcome: 'not_comp', ref }
 
-  const row: Entitlement | undefined = await db.query.entitlements.findFirst({
-    where: and(
-      eq(tables.entitlements.paddleSubscriptionId, ref),
-      // Scoped to the owner, so a ref from one account cannot revoke on another.
-      eq(tables.entitlements.userId, userId),
-    ),
-  })
+  const row =
+    params.row ??
+    (await db.query.entitlements.findFirst({
+      where: and(
+        eq(tables.entitlements.paddleSubscriptionId, ref),
+        // Scoped to the owner, so a ref from one account cannot revoke on another.
+        eq(tables.entitlements.userId, userId),
+      ),
+    }))
   if (!row) return { outcome: 'not_found', ref }
+
+  // Status first, then the window — a revoke sets BOTH, so a second call would
+  // otherwise report the more misleading of two true things ("it expired on its
+  // own" for a row a person deliberately ended).
+  if (!ACTIVE_STATUSES.includes(row.status)) {
+    return { outcome: 'already_revoked', ref }
+  }
+
+  // Its window already closed, so there is no access to take away — and writing
+  // `current_period_end = now` here would drag a past date forward. See above.
+  if (row.currentPeriodEnd && row.currentPeriodEnd <= now) {
+    return { outcome: 'already_expired', ref, revokedEndsAt: row.currentPeriodEnd }
+  }
 
   const revoked = await db
     .update(tables.entitlements)

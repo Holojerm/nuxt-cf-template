@@ -59,6 +59,17 @@ export default defineEventHandler(async (event) => {
   })
   if (!target) throw createError({ statusCode: 404, message: 'No such entitlement for this user' })
 
+  // Its window already closed, so there is nothing to take away. Refused before
+  // the audit row for the same reason the 404 is: no access changed hands, and
+  // revoking it would only drag a past date forward (see revokeCompPass).
+  if (target.currentPeriodEnd && target.currentPeriodEnd <= new Date()) {
+    throw createError({
+      statusCode: 409,
+      message: 'That comp already expired on its own — there is nothing left to revoke',
+      data: { code: 'already_expired' },
+    })
+  }
+
   return withAudit(
     db,
     {
@@ -80,7 +91,11 @@ export default defineEventHandler(async (event) => {
       ipHash: await auditIpHash(event),
     },
     async () => {
-      const result = await revokeCompPass(db, { userId: user.id, ref: body.ref })
+      // The row is handed through rather than re-read: the pre-flight above
+      // already fetched it for the audit metadata. The guarded UPDATE inside
+      // still re-asserts every condition, so this is a saved query, not a
+      // weakened check.
+      const result = await revokeCompPass(db, { userId: user.id, ref: body.ref, row: target })
 
       // `already_revoked` is a success, not an error: a double-click, or two
       // admins on the same ticket, should not produce a red toast for a row
@@ -91,6 +106,13 @@ export default defineEventHandler(async (event) => {
           message: 'That entitlement could not be revoked',
           data: { code: result.outcome },
         })
+      }
+
+      // Only tell the customer when access actually changed. `already_revoked`
+      // and `already_expired` are no-ops, and mailing "your access has ended"
+      // for the second time is how a support tool becomes a spam source.
+      if (result.outcome === 'revoked') {
+        await notifyCompRevoked(db, { userId: user.id })
       }
 
       return {

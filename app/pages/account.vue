@@ -111,18 +111,11 @@ async function signOut() {
 // state pairs its hue with an icon and a word. `past_due` is amber — reversible
 // risk — and says "payment failed" rather than repeating Paddle's jargon back
 // at someone who has never read Paddle's docs.
-const statusBadge = computed(() => {
-  switch (billing.value?.state) {
-    case 'past_due':
-      return { color: 'warning' as const, icon: 'i-lucide-credit-card', label: 'payment failed' }
-    case 'trialing':
-      return { color: 'info' as const, icon: 'i-lucide-clock', label: 'trialing' }
-    case 'active':
-      return { color: 'success' as const, icon: 'i-lucide-check', label: 'active' }
-    default:
-      return { color: 'neutral' as const, icon: 'i-lucide-minus', label: 'no active plan' }
-  }
-})
+// Shared with the admin console's badge (app/utils/admin.ts › billingStateMeta).
+// The two were hand-maintained copies and had already drifted on two of the
+// four states — on screens whose whole point is that support and customer see
+// the same thing.
+const statusBadge = computed(() => billingStateMeta(billing.value?.state))
 
 function formatDate(value: string | null) {
   if (!value) return '—'
@@ -198,7 +191,13 @@ useSeo({
           is the only thing that will. Nothing is deleted in the meantime, and access comes back
           as soon as a payment goes through.
         </p>
-        <p>Want to stop instead? The same portal cancels the subscription.</p>
+        <p v-if="billing?.portalAvailable">
+          Want to stop instead? The same portal cancels the subscription.
+        </p>
+
+        <div class="flex flex-wrap gap-3">
+          <UButton to="/pricing" color="neutral" variant="outline">See plans</UButton>
+        </div>
       </BillingPastDueAlert>
 
       <div v-else-if="billing?.active" class="flex flex-col gap-4">
@@ -278,7 +277,25 @@ useSeo({
                   comp
                 </UBadge>
               </td>
-              <td class="py-2 pr-4 text-muted">{{ item.status }}</td>
+              <!-- A withdrawn comp gets a badge rather than a bare status word.
+                   It is the one row here whose change the customer was never
+                   part of — nobody paid, nobody cancelled, access simply
+                   stopped — so this table is the only place the product ever
+                   explains it. Neutral, with the word spelled out: nothing went
+                   wrong and nothing is owed (DESIGN.md › never state by colour
+                   alone). -->
+              <td class="py-2 pr-4 text-muted">
+                <UBadge
+                  v-if="item.status === 'revoked'"
+                  color="neutral"
+                  variant="subtle"
+                  size="sm"
+                  icon="i-lucide-circle-minus"
+                >
+                  revoked
+                </UBadge>
+                <template v-else>{{ item.status }}</template>
+              </td>
               <td class="py-2 text-right font-mono text-default">
                 {{ formatDate(item.currentPeriodEnd) }}
               </td>

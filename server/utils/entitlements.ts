@@ -21,6 +21,7 @@ import type { Entitlement } from '../db/schema'
 // Explicit, not the Nitro auto-import: the workerd vitest suite loads this file
 // directly and nothing is injected there.
 import { likePrefix } from './sql'
+import { SUBSCRIPTION_REF_PREFIX, isSubscriptionRef } from './paddle-refs'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type EntitlementDb = ReturnType<typeof drizzle<typeof tables>>
@@ -36,6 +37,29 @@ const DAY_MS = 24 * 60 * 60 * 1000
 /** D1 timestamp columns hold epoch SECONDS — round-trips lose sub-second precision. */
 function toSeconds(date: Date): Date {
   return new Date(Math.floor(date.getTime() / 1000) * 1000)
+}
+
+/**
+ * The stacking rule, as pure arithmetic: the end date of each of `passes`
+ * consecutive passes laid end-to-end from `base`.
+ *
+ * Exported so admin-grants.ts can precompute a whole multi-pass comp and write
+ * it in ONE atomic D1 batch, instead of looping N sequential inserts where a
+ * failure at pass 3 of 5 leaves the account in a state no caller can describe.
+ * Precomputing means the arithmetic exists outside grantPass — so it lives
+ * here, once, and grantPass uses it too. A second copy of "how days stack"
+ * would diverge from this one the first time PASS_DAYS moved, and the symptom
+ * would be customers with the wrong expiry and no way to tell which path wrote
+ * it.
+ *
+ * Whole seconds, because that is D1's resolution for a timestamp column: an
+ * untruncated value never equals what was stored, which makes the redelivery
+ * check in grantPass read every insert as a conflict.
+ */
+export function passEndDates(base: Date, passes: number): Date[] {
+  return Array.from({ length: passes }, (_, index) =>
+    toSeconds(new Date(base.getTime() + (index + 1) * PASS_DAYS * DAY_MS)),
+  )
 }
 
 /** Statuses we write when access is taken away for a money reason. */
@@ -56,7 +80,7 @@ export async function findActiveEntitlement(
         // Escaped, because `_` is a LIKE wildcard: the obvious
         // `like(col, 'sub_%')` also matches `subs_fake`, and the `sub_` branch
         // is the one that grants access WITHOUT checking the expiry date.
-        likePrefix(tables.entitlements.paddleSubscriptionId, 'sub_'),
+        likePrefix(tables.entitlements.paddleSubscriptionId, SUBSCRIPTION_REF_PREFIX),
         gt(tables.entitlements.currentPeriodEnd, new Date()),
       ),
     ),
@@ -108,10 +132,9 @@ export async function grantPass(
     existing?.currentPeriodEnd && existing.currentPeriodEnd > billedAt
       ? existing.currentPeriodEnd
       : null
-  // Truncated to whole seconds because that's D1's resolution for a timestamp
-  // column — otherwise the value we return never equals the value we stored,
-  // and the redelivery check below reads every insert as a conflict.
-  const endsAt = toSeconds(new Date((runningUntil ?? billedAt).getTime() + PASS_DAYS * DAY_MS))
+  // One pass laid on the running expiry — the same arithmetic a multi-pass comp
+  // grant uses, so the two can never disagree about a stacking date.
+  const endsAt = passEndDates(runningUntil ?? billedAt, 1)[0]!
 
   const inserted = await db
     .insert(tables.entitlements)
@@ -405,9 +428,8 @@ export async function getBillingOverview(
   return {
     active,
     subscriptionIds: history
-      .filter(
-        (e) => e.paddleSubscriptionId.startsWith('sub_') && ACTIVE_STATUSES.includes(e.status),
-      )
+      // Through the predicate, not a fourth hand-rolled `startsWith('sub_')`.
+      .filter((e) => isSubscriptionRef(e.paddleSubscriptionId) && ACTIVE_STATUSES.includes(e.status))
       .map((e) => e.paddleSubscriptionId),
     // Prefer the customer behind the LIVE entitlement — that's whose portal a
     // cancel link has to open. Fall back to any customer id we've ever seen so

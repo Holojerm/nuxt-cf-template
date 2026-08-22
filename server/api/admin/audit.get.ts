@@ -13,14 +13,13 @@
 //
 // What it would cost is the one property that makes this table usable: signal.
 // Every console page load would append a row, the trail would fill with admins
-// looking at the trail, and the four actions that actually matter would be
-// buried under them. An audit log nobody can skim at 2am is not an audit log.
+// looking at the trail, and the actions that actually matter would be buried
+// under them. An audit log nobody can skim at 2am is not an audit log.
 //
 // The same reasoning does NOT extend to the user search or the detail page,
 // which read another person's email, billing, and support history — those are
 // privileged reads of customer data and are audited.
 
-import { inArray } from 'drizzle-orm'
 import { z } from 'zod'
 
 const querySchema = z.object({
@@ -41,26 +40,9 @@ export default defineEventHandler(async (event) => {
   // Emails are resolved here rather than stored on the row — the audit table is
   // append-only and never pruned, so an address written into it would outlive
   // the account and quietly break the deletion promise on /account. See
-  // server/utils/audit.ts › "What does NOT go in metadata".
-  //
-  // One extra query for the whole page, not one per row. A deleted account
-  // simply has no entry, and the console falls back to showing the id — which
-  // is the honest answer, not a stale one.
-  const subjectIds = [
-    ...new Set(
-      rows
-        .filter((row) => row.targetType === 'user' && row.targetId)
-        .map((row) => row.targetId as string),
-    ),
-  ]
-
-  const subjects = subjectIds.length
-    ? await db
-        .select({ id: schema.users.id, email: schema.users.email })
-        .from(schema.users)
-        .where(inArray(schema.users.id, subjectIds))
-    : []
-  const emailById = new Map(subjects.map((subject) => [subject.id, subject.email]))
+  // server/utils/audit.ts › "What does NOT go in metadata", and
+  // resolveAuditSubjectEmails for why the lookup is chunked.
+  const emailById = await resolveAuditSubjectEmails(db, rows)
 
   return {
     items: rows.map((row) => ({

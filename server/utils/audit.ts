@@ -56,12 +56,14 @@
 // on client-side filtering to keep it off the screen — a display detail standing
 // in for a storage decision.
 //
-// The one deliberate exception is `admin.user_searched`, whose metadata keeps
-// the search needle. That is not incidental PII: "who did this admin go looking
-// for" is the entire reason to audit a search, and it is a record of the
-// admin's action rather than of the subject's data.
+// `admin.user_searched` looks like an exception and is not one. Its metadata
+// keeps the search needle — because "who did this admin go looking for" is the
+// entire reason to audit a search — but as a SALTED HASH, never the address
+// itself. An investigator who suspects a value can hash it and compare; nobody
+// can read an email back out of the table. Same discipline, applied to a field
+// that genuinely has to survive.
 
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
 import type { H3Event } from 'h3'
 import * as tables from '../db/schema'
@@ -203,6 +205,45 @@ export async function listAudit(
     .where(filters.length ? and(...filters) : undefined)
     .orderBy(desc(tables.auditLog.createdAt))
     .limit(Math.min(options.limit ?? 50, 200))
+}
+
+/**
+ * Resolve the email address behind each `user` target, for display only.
+ *
+ * Lives here rather than in the endpoint so it can be tested: the chunking
+ * below is the kind of thing that works on every fixture anyone writes by hand
+ * and fails on a real page of audit rows.
+ *
+ * `inArray` expands to one bound parameter per id, and D1 caps a statement at
+ * 100 bound parameters. `listAudit` returns up to 200 rows, so a page touching
+ * mostly distinct users would exceed that — a runtime error on the console's
+ * busiest screen, invisible to the type checker.
+ *
+ * A missing id simply has no entry: the account was deleted, and falling back
+ * to the raw id is the honest answer rather than a stale one.
+ */
+export async function resolveAuditSubjectEmails(
+  db: AuditDb,
+  rows: readonly AuditLogEntry[],
+): Promise<Map<string, string>> {
+  const subjectIds = [
+    ...new Set(
+      rows
+        .filter((row) => row.targetType === 'user' && row.targetId)
+        .map((row) => row.targetId as string),
+    ),
+  ]
+
+  const CHUNK = 100
+  const emailById = new Map<string, string>()
+  for (let index = 0; index < subjectIds.length; index += CHUNK) {
+    const found = await db
+      .select({ id: tables.users.id, email: tables.users.email })
+      .from(tables.users)
+      .where(inArray(tables.users.id, subjectIds.slice(index, index + CHUNK)))
+    for (const subject of found) emailById.set(subject.id, subject.email)
+  }
+  return emailById
 }
 
 /** The wire shape of an audit row — dates as ISO strings, for the console. */

@@ -12,6 +12,7 @@ import { z } from 'zod'
 import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
 import type { Feedback } from '../db/schema'
+import { saltedHash } from './hash'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type FeedbackDb = ReturnType<typeof drizzle<typeof tables>>
@@ -68,11 +69,10 @@ export interface FeedbackContext {
  * per source in an hour, nothing else.
  */
 export async function hashIp(ip: string | undefined, salt: string): Promise<string | null> {
-  if (!ip) return null
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${salt}:${ip}`))
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
+  // Delegates to the one implementation (server/utils/hash.ts) so this digest
+  // and the audit trail's stay comparable — two copies of a salted hash is two
+  // ways for the construction to drift apart.
+  return saltedHash(ip, salt)
 }
 
 /** True when this source has already used up its hourly submission budget. */

@@ -94,8 +94,23 @@ export function generateReferralCode(length: number = REFERRAL_CODE_LENGTH): str
  * immediately.
  */
 function isReferralCodeCollision(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return message.includes('UNIQUE constraint failed: users.referral_code')
+  // Walks the cause chain, and that is the whole point. Drizzle does not
+  // rethrow D1's error — it wraps it, so `error.message` is
+  // "Failed query: insert into \"users\" …" and the actual
+  // "D1_ERROR: UNIQUE constraint failed: users.referral_code" sits on
+  // `error.cause`. Matching only the top-level message therefore matched
+  // NOTHING: the retry below existed, looked correct, and had never once run.
+  // A real collision would have thrown straight out of sign-in.
+  //
+  // Caught by test/users.test.ts, which forces a genuine violation through the
+  // real driver rather than asserting against a hand-written error — the only
+  // way this class of bug is findable, since the string comes from D1.
+  for (let current: unknown = error, depth = 0; current && depth < 5; depth++) {
+    const message = current instanceof Error ? current.message : String(current)
+    if (message.includes('UNIQUE constraint failed: users.referral_code')) return true
+    current = current instanceof Error ? current.cause : undefined
+  }
+  return false
 }
 
 /**
@@ -110,11 +125,28 @@ function isReferralCodeCollision(error: unknown): boolean {
  * is already recorded and must not be overwritten by the cookie they happen to
  * be carrying today.
  */
+export interface UpsertOAuthUserOptions {
+  /**
+   * Override for the code generator. Production never passes this.
+   *
+   * It exists because the retry below is the kind of code that is written once,
+   * never executed, and quietly wrong — the collision it catches is a 1-in-10^11
+   * event, so nothing would ever have exercised the branch OR the error-string
+   * match inside isReferralCodeCollision(). That match is against a message D1
+   * produces, so it cannot be verified by reasoning; it has to be run against a
+   * real driver. This seam lets test/users.test.ts force a genuine unique-index
+   * violation and prove the retry recovers.
+   */
+  mintCode?: () => string
+}
+
 export async function upsertOAuthUser(
   db: Db,
   profile: OAuthProfile,
   attribution?: Attribution | null,
+  options: UpsertOAuthUserOptions = {},
 ): Promise<SignInResult> {
+  const mintCode = options.mintCode ?? generateReferralCode
   const email = normalizeEmail(profile.email)
   const now = new Date()
 
@@ -159,7 +191,7 @@ export async function upsertOAuthUser(
     try {
       const [created] = await db
         .insert(tables.users)
-        .values({ ...values, referralCode: generateReferralCode() })
+        .values({ ...values, referralCode: mintCode() })
         .returning()
 
       if (!created) {

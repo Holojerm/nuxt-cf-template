@@ -27,7 +27,7 @@ const {
   refresh: refreshAudit,
 } = await useFetch('/api/admin/audit', { query: { limit: 20 } })
 
-const forbidden = computed(() => auditError.value?.statusCode === 403)
+const forbidden = computed(() => isForbidden(auditError.value))
 
 // ── Search ──────────────────────────────────────────────────────────────────
 // Email only — see the note in server/api/admin/users.get.ts. Two characters
@@ -85,8 +85,8 @@ useSeo({
       color="error"
       variant="subtle"
       icon="i-lucide-lock"
-      title="You don't have access to the admin console"
-      description="This area is limited to accounts with the admin role. If you think that's wrong, ask whoever runs this deployment to grant it."
+      :title="ADMIN_FORBIDDEN.title"
+      :description="ADMIN_FORBIDDEN.description"
     />
 
     <template v-else>

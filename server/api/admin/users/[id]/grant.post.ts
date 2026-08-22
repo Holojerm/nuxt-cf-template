@@ -45,7 +45,27 @@ export default defineEventHandler(async (event) => {
   if (!user) throw createError({ statusCode: 404, message: 'User not found' })
 
   const refs = Array.from({ length: body.passes }, () => compRef())
-  const before = await findActiveEntitlement(db, user.id, body.productKey)
+
+  // Refused BEFORE the audit row: a comp to a live subscriber delivers no days
+  // at all (the window is what their next payment already buys), so this is a
+  // rejected request rather than a privileged action, and it belongs in the
+  // operator's face rather than in the trail. The console hides the form in
+  // this state too — reaching here means a hand-made call or a race with a
+  // subscription that started mid-session. grantCompPasses re-checks anyway.
+  const overview = await getBillingOverview(db, user.id, body.productKey)
+  const liveSubscription = overview.subscriptionIds[0]
+  if (liveSubscription) {
+    throw createError({
+      statusCode: 409,
+      message:
+        'This customer has an active subscription. Comp days would stack past its renewal ' +
+        'date, so the paid period consumes them and they gain nothing. Issue a Paddle ' +
+        'credit or discount against the next invoice instead.',
+      data: { code: 'active_subscription', subscriptionId: liveSubscription },
+    })
+  }
+
+  const before = overview.active
 
   return withAudit(
     db,
@@ -78,12 +98,26 @@ export default defineEventHandler(async (event) => {
         refs,
       })
 
+      // The util re-checks the subscription rule for callers that skip the
+      // pre-flight above. Both paths report the same thing.
+      if (result.outcome === 'active_subscription') {
+        throw createError({
+          statusCode: 409,
+          message: 'This customer has an active subscription — issue a Paddle credit instead.',
+          data: { code: 'active_subscription', subscriptionId: result.blockedBy ?? null },
+        })
+      }
+
+      // After the write and awaited, so nobody is told about access that did
+      // not land. sendEmail never throws, so a mail outage cannot undo a grant.
+      await notifyCompGranted(db, { userId: user.id, endsAt: result.endsAt })
+
       return {
         userId: user.id,
         refs: result.refs,
         passes: result.passes,
         days: result.days,
-        endsAt: result.endsAt.toISOString(),
+        endsAt: result.endsAt?.toISOString() ?? null,
         stackedOn: result.stackedOn?.toISOString() ?? null,
       }
     },

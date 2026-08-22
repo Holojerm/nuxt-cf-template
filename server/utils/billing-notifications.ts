@@ -21,6 +21,7 @@
 
 import type { EntitlementDb as Db } from './entitlements'
 import type { PaddleEventOutcome } from './entitlements'
+import type { EmailContent } from './email-templates'
 
 /** Statuses that mean "the customer has access right now". */
 const GRANTING = new Set(['active', 'trialing'])
@@ -67,6 +68,66 @@ export function decideNotification(
   }
 
   return { email: 'none', reason: 'no_email_for_outcome' }
+}
+
+// ─── Comp grants and revokes ────────────────────────────────────────────────
+// The admin console writes entitlements without a Paddle event, so it cannot go
+// through decideNotification() above — there is no transition table entry for
+// "a human decided". It still has to send, and for the same reason everything
+// else here does: an entitlement changed under the customer.
+//
+// Silence was the old behaviour and it was worse than it sounds. A revoked comp
+// derives to `inactive`, which renders the never-subscribed copy on /account —
+// so a customer who had access yesterday saw a page implying they never had
+// any, while the paid routes 402'd mid-session with no explanation anywhere.
+//
+// Both are best-effort, exactly like the webhook path: sendEmail never throws,
+// and a mail outage must not fail the grant. The email is sent AFTER the write
+// and awaited, so a customer is never told about access that did not land.
+
+/** Shared plumbing: resolve the user, build, send. Never throws. */
+async function sendToUser(
+  db: Db,
+  userId: string,
+  build: (user: { name: string }) => EmailContent,
+  kind: string,
+): Promise<void> {
+  try {
+    const user = await findUserById(db, userId)
+    if (!user) {
+      console.warn(JSON.stringify({ kind: 'billing_email_no_user', userId, email: kind }))
+      return
+    }
+    await sendEmail({ to: user.email, ...build(user) })
+  } catch (error) {
+    console.error(
+      JSON.stringify({ kind: 'billing_email_failed', userId, email: kind, error: String(error) }),
+    )
+  }
+}
+
+/** An admin granted comp access. Same email a purchased pass sends. */
+export async function notifyCompGranted(
+  db: Db,
+  opts: { userId: string; endsAt: Date | null },
+): Promise<void> {
+  await sendToUser(
+    db,
+    opts.userId,
+    (user) =>
+      purchaseEmail(emailBranding(), { name: user.name, kind: 'pass', endsAt: opts.endsAt }),
+    'comp_granted',
+  )
+}
+
+/** An admin took comp access back. */
+export async function notifyCompRevoked(db: Db, opts: { userId: string }): Promise<void> {
+  await sendToUser(
+    db,
+    opts.userId,
+    (user) => accessEndedEmail(emailBranding(), { name: user.name, reason: 'comp_revoked' }),
+    'comp_revoked',
+  )
 }
 
 /** Resolve the decision against a real user and actually send. Never throws. */

@@ -22,7 +22,7 @@ const { data, error, status, refresh } = await useFetch(
   { key: `admin-user-${route.params.id}` },
 )
 
-const forbidden = computed(() => error.value?.statusCode === 403)
+const forbidden = computed(() => isForbidden(error.value))
 const missing = computed(() => error.value?.statusCode === 404)
 
 // ── Grant comp access ───────────────────────────────────────────────────────
@@ -31,11 +31,14 @@ const missing = computed(() => error.value?.statusCode === 404)
 // in the label comes from the plan we actually advertise on /pricing rather
 // than a second copy of the number; the server's response reports the days it
 // really granted, which is what the confirmation shows.
-const MAX_PASSES = 12
+// MAX_COMP_PASSES comes from #shared/utils/comps — the same constant the
+// endpoint validates against. It used to be re-typed here as `MAX_PASSES = 12`,
+// which fails silently in both directions: raise one and the form offers an
+// option the API rejects, lower one and an option vanishes with no error.
 const passPlan = PLANS.find((plan) => plan.id === 'pass')
 const passDays = passPlan?.unit.code === 'DAY' ? passPlan.unit.value : null
 
-const passOptions = Array.from({ length: MAX_PASSES }, (_, index) => {
+const passOptions = Array.from({ length: MAX_COMP_PASSES }, (_, index) => {
   const passes = index + 1
   const noun = passes === 1 ? 'pass' : 'passes'
   return {
@@ -45,13 +48,21 @@ const passOptions = Array.from({ length: MAX_PASSES }, (_, index) => {
 })
 
 const grantSchema = z.object({
-  passes: z.number().int().min(1).max(MAX_PASSES),
+  passes: z.number().int().min(1).max(MAX_COMP_PASSES),
   // Required, and required for a reason: an entitlement with no explanation is
   // a row nobody can defend six months later.
   reason: z.string().trim().min(3, 'Say why — this is what the audit trail records').max(500),
 })
 const grant = reactive({ passes: 1, reason: '' })
 const granting = ref(false)
+
+/**
+ * A comp to a live subscriber delivers no days at all — the stacked window is
+ * exactly what their next payment buys. The server refuses it (409); the form
+ * is hidden so nobody composes a reason for an action that cannot happen.
+ * `cancellable` is the count of live auto-renewing subscriptions.
+ */
+const hasLiveSubscription = computed(() => (data.value?.billing.cancellable ?? 0) > 0)
 
 async function submitGrant() {
   granting.value = true
@@ -73,12 +84,22 @@ async function submitGrant() {
     // Re-reads the record, which writes its own `admin.user_viewed` row. That
     // is accurate rather than noisy: the console did read it again.
     await refresh()
-  } catch {
+  } catch (caught) {
+    const code = (caught as { data?: { data?: { code?: string } } }).data?.data?.code
     toast.add({
-      title: 'Could not grant access',
-      description: 'Nothing changed on this account. Try again.',
-      color: 'error',
+      title: code === 'active_subscription' ? 'Not the right tool here' : 'Could not grant access',
+      description:
+        code === 'active_subscription'
+          ? 'This customer has an active subscription, so comp days would be swallowed by the paid period. Issue a Paddle credit against their next invoice instead.'
+          : 'The grant did not complete. Check the billing history below before retrying.',
+      color: code === 'active_subscription' ? 'warning' : 'error',
     })
+    // Refresh even on failure. The old copy asserted "Nothing changed on this
+    // account" from a bare catch, which it could not know — and while the grant
+    // looped N un-batched inserts it was routinely false. The write is atomic
+    // now, but a stale screen after an error is still how an operator retries
+    // something that already landed.
+    await refresh()
   } finally {
     granting.value = false
   }
@@ -94,9 +115,19 @@ async function submitGrant() {
 // months later, and the answer needs to be written down before it happens.
 type BillingHistoryRow = NonNullable<typeof data.value>['billing']['history'][number]
 
-/** Statuses still granting — mirrors ACTIVE_STATUSES on the server. */
-function isRevocable(status: string): boolean {
-  return status === 'active' || status === 'trialing'
+/**
+ * Is there anything left to take back?
+ *
+ * Status AND window. Nothing flips a comp's status when its period closes, so
+ * an expired comp still reads `status: 'active'` — a status-only check rendered
+ * a Revoke button on grants that ran out months ago, and clicking it dragged a
+ * long-past end date forward to today. The server refuses that too (409
+ * `already_expired`); this keeps the button from appearing at all.
+ */
+function isRevocable(row: BillingHistoryRow): boolean {
+  const granting = row.status === 'active' || row.status === 'trialing'
+  if (!granting) return false
+  return row.currentPeriodEnd !== null && new Date(row.currentPeriodEnd) > new Date()
 }
 
 const revokeOpen = ref(false)
@@ -142,9 +173,14 @@ async function submitRevoke() {
       description:
         code === 'not_comp'
           ? 'Only comped access can be revoked here. Refunds and cancellations go through Paddle.'
-          : 'Nothing changed on this account. Try again.',
+          : code === 'already_expired'
+            ? 'That comp had already run out on its own, so there was nothing left to revoke.'
+            : 'The revoke did not complete. Check the billing history below before retrying.',
       color: 'error',
     })
+    // Refresh on failure too — never leave the operator looking at a stale
+    // table after an error, which is how the same action gets retried twice.
+    await refresh()
   } finally {
     revoking.value = false
   }
@@ -185,22 +221,10 @@ async function loadViewAs() {
 // just failed. Reading "no access" here while the customer reads "payment
 // failed" on their own screen is the precise drift entitlement-view.ts exists
 // to prevent, and it costs a support person the first five minutes of the call.
-const accessBadge = computed(() => {
-  switch (data.value?.billing.state) {
-    case 'past_due':
-      return {
-        label: 'payment failed',
-        icon: 'i-lucide-credit-card',
-        color: 'warning' as const,
-      }
-    case 'trialing':
-      return { label: 'trialing', icon: 'i-lucide-circle-dashed', color: 'info' as const }
-    case 'active':
-      return { label: 'active', icon: 'i-lucide-circle-check', color: 'success' as const }
-    default:
-      return { label: 'no access', icon: 'i-lucide-circle-x', color: 'neutral' as const }
-  }
-})
+// Shared with /account's own badge (app/utils/admin.ts › billingStateMeta), so
+// a support person and the customer cannot be looking at two different words
+// for one state — which they were, on two of the four states.
+const accessBadge = computed(() => billingStateMeta(data.value?.billing.state))
 
 /**
  * The sentence the customer's own /account renders right now. A support person
@@ -307,8 +331,8 @@ useSeo({
       color="error"
       variant="subtle"
       icon="i-lucide-lock"
-      title="You don't have access to the admin console"
-      description="This area is limited to accounts with the admin role."
+      :title="ADMIN_FORBIDDEN.title"
+      :description="ADMIN_FORBIDDEN.description"
     />
 
     <UAlert
@@ -401,7 +425,19 @@ useSeo({
               </div>
             </dl>
 
+            <div v-if="hasLiveSubscription" class="flex flex-col gap-3 border-t border-default pt-6">
+              <h3 class="text-lg text-highlighted">Grant comp access</h3>
+              <UAlert
+                color="info"
+                variant="subtle"
+                icon="i-lucide-circle-alert"
+                title="Not available for an active subscriber"
+                description="Comp days stack from the renewal date, so the customer's next payment covers the same window and they gain nothing. To compensate a subscriber, issue a credit or discount against their next invoice in Paddle — that gives money back rather than time they already have."
+              />
+            </div>
+
             <UForm
+              v-else
               :schema="grantSchema"
               :state="grant"
               class="flex flex-col gap-4 border-t border-default pt-6"
@@ -492,7 +528,7 @@ useSeo({
                          for with no refund attached. The server refuses those
                          too (422) — this just never offers it. -->
                     <UButton
-                      v-if="row.comped && isRevocable(row.status)"
+                      v-if="row.comped && isRevocable(row)"
                       color="error"
                       variant="ghost"
                       size="xs"

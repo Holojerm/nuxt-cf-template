@@ -16,17 +16,14 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
+import { MAX_COMP_PASSES } from '../shared/utils/comps'
 import {
-  COMP_REF_PREFIX,
   COMP_REVOKED_STATUS,
-  MAX_COMP_PASSES,
-  compRef,
   grantCompPasses,
-  isCompRef,
   revokeCompPass,
 } from '../server/utils/admin-grants'
 import { PASS_DAYS, findActiveEntitlement, getBillingOverview } from '../server/utils/entitlements'
-import { isPass } from '../server/utils/billing'
+import { COMP_REF_PREFIX, compRef, isCompRef, isPass } from '../server/utils/paddle-refs'
 import { deriveBillingState } from '../server/utils/billing-state'
 
 const db = drizzle(env.DB, { schema })
@@ -96,7 +93,7 @@ describe('granting', () => {
     expect(result.passes).toBe(1)
     expect(result.days).toBe(PASS_DAYS)
     expect(result.stackedOn).toBeNull()
-    expect(result.endsAt.getTime()).toBe(daysFrom(NOW, PASS_DAYS))
+    expect(result.endsAt!.getTime()).toBe(daysFrom(NOW, PASS_DAYS))
 
     const active = await findActiveEntitlement(db, USER)
     expect(active?.paddleSubscriptionId).toBe(result.refs[0])
@@ -108,7 +105,7 @@ describe('granting', () => {
 
     expect(result.refs).toHaveLength(3)
     expect(result.days).toBe(3 * PASS_DAYS)
-    expect(result.endsAt.getTime()).toBe(daysFrom(NOW, 3 * PASS_DAYS))
+    expect(result.endsAt!.getTime()).toBe(daysFrom(NOW, 3 * PASS_DAYS))
 
     // Each pass is its own row, exactly like a purchased one — so reversing a
     // single comp later leaves the others alone.
@@ -122,8 +119,8 @@ describe('granting', () => {
 
     // Nobody loses days they already had — the same rule a second purchased
     // pass follows (server/utils/entitlements.ts › grantPass).
-    expect(second.stackedOn?.getTime()).toBe(first.endsAt.getTime())
-    expect(second.endsAt.getTime()).toBe(daysFrom(NOW, 2 * PASS_DAYS))
+    expect(second.stackedOn?.getTime()).toBe(first.endsAt!.getTime())
+    expect(second.endsAt!.getTime()).toBe(daysFrom(NOW, 2 * PASS_DAYS))
   })
 
   it('stacks on top of a still-running purchased pass', async () => {
@@ -138,7 +135,7 @@ describe('granting', () => {
     const result = await grantCompPasses(db, { userId: USER, now: NOW })
 
     expect(result.stackedOn?.getTime()).toBe(paidUntil.getTime())
-    expect(result.endsAt.getTime()).toBe(daysFrom(paidUntil, PASS_DAYS))
+    expect(result.endsAt!.getTime()).toBe(daysFrom(paidUntil, PASS_DAYS))
   })
 
   it('starts from today when the previous access has already lapsed', async () => {
@@ -152,7 +149,7 @@ describe('granting', () => {
     const result = await grantCompPasses(db, { userId: USER, now: NOW })
 
     expect(result.stackedOn).toBeNull()
-    expect(result.endsAt.getTime()).toBe(daysFrom(NOW, PASS_DAYS))
+    expect(result.endsAt!.getTime()).toBe(daysFrom(NOW, PASS_DAYS))
   })
 
   it('refuses a pass count outside the bound', async () => {
@@ -192,6 +189,107 @@ describe('how a comp reads back', () => {
     // A `sub_` ref would still be granting here on status alone. This is the
     // behavioural half of the prefix rule asserted at the top of this file.
     expect(await findActiveEntitlement(db, USER)).toBeNull()
+  })
+})
+
+describe('a live subscriber is refused, not silently served', () => {
+  // The money bug this exists to stop: comp days stack from the subscription's
+  // RENEWAL date, and that window is exactly what the customer's next payment
+  // already buys. The grant delivers zero days unless the subscription ends —
+  // while the comp row simultaneously outranks the subscription in
+  // findActiveEntitlement's ORDER BY and makes /account call a paying monthly
+  // customer a one-time pass holder.
+
+  async function liveSubscription(status = 'active') {
+    await db.insert(schema.entitlements).values({
+      userId: USER,
+      paddleSubscriptionId: 'sub_live',
+      status,
+      currentPeriodEnd: new Date(daysFrom(NOW, 20)),
+    })
+  }
+
+  it('refuses and names the subscription blocking it', async () => {
+    await liveSubscription()
+
+    const result = await grantCompPasses(db, { userId: USER, passes: 2, now: NOW })
+
+    expect(result.outcome).toBe('active_subscription')
+    expect(result.blockedBy).toBe('sub_live')
+    expect(result.refs).toEqual([])
+    expect(result.days).toBe(0)
+    expect(result.endsAt).toBeNull()
+  })
+
+  it('writes nothing at all when it refuses', async () => {
+    await liveSubscription()
+    await grantCompPasses(db, { userId: USER, passes: 3, now: NOW })
+
+    const { history } = await getBillingOverview(db, USER)
+    expect(history.filter((row) => isCompRef(row.paddleSubscriptionId))).toHaveLength(0)
+  })
+
+  it('sees the subscription even when an older comp outranks it by date', async () => {
+    // findActiveEntitlement returns ONE row ordered by end date, so a comp
+    // stacked past the renewal hides the subscription from it. The check scans
+    // the whole history instead — otherwise the bug simply repeats.
+    await liveSubscription()
+    await db.insert(schema.entitlements).values({
+      userId: USER,
+      paddleSubscriptionId: compRef(),
+      status: 'active',
+      currentPeriodEnd: new Date(daysFrom(NOW, 400)),
+    })
+
+    const result = await grantCompPasses(db, { userId: USER, now: NOW })
+    expect(result.outcome).toBe('active_subscription')
+  })
+
+  it('still allows a comp during dunning, where the days are real', async () => {
+    // past_due is outside ACTIVE_STATUSES, so access is already paused and comp
+    // days are genuine days. "Here's a week while you sort the card out" is a
+    // real support action and must not be blocked along with the active case.
+    await liveSubscription('past_due')
+
+    const result = await grantCompPasses(db, { userId: USER, now: NOW })
+
+    expect(result.outcome).toBe('granted')
+    expect(result.endsAt!.getTime()).toBe(daysFrom(NOW, PASS_DAYS))
+  })
+
+  it('allows a comp once the subscription has ended', async () => {
+    await liveSubscription('canceled')
+    expect((await grantCompPasses(db, { userId: USER, now: NOW })).outcome).toBe('granted')
+  })
+})
+
+describe('a multi-pass grant is all-or-nothing', () => {
+  it('writes every pass in one batch with the dates stacked', async () => {
+    const result = await grantCompPasses(db, { userId: USER, passes: 4, now: NOW })
+
+    const { history } = await getBillingOverview(db, USER)
+    expect(history).toHaveLength(4)
+    // The precomputed arithmetic must land on exactly what the old
+    // re-read-per-pass loop produced: each pass extends the previous end.
+    const ends = history.map((row) => row.currentPeriodEnd!.getTime()).sort((a, b) => a - b)
+    expect(ends).toEqual([1, 2, 3, 4].map((n) => daysFrom(NOW, n * PASS_DAYS)))
+    expect(result.endsAt!.getTime()).toBe(daysFrom(NOW, 4 * PASS_DAYS))
+  })
+
+  it('writes nothing when the batch cannot land', async () => {
+    // `entitlements.user_id` is a real foreign key, so the whole batch fails.
+    // The property under test is the one the console's error copy rests on: a
+    // failed grant leaves no partial access behind. A loop of N independent
+    // inserts could not promise that, and the toast claimed it anyway.
+    await expect(
+      grantCompPasses(db, { userId: 'no-such-user', passes: 5, now: NOW }),
+    ).rejects.toThrow()
+
+    const orphans = await db
+      .select()
+      .from(schema.entitlements)
+      .where(eq(schema.entitlements.userId, 'no-such-user'))
+    expect(orphans).toHaveLength(0)
   })
 })
 
@@ -312,6 +410,28 @@ describe('revoking a comp', () => {
 
     expect(result.outcome).toBe('not_found')
     expect((await rowFor(ref))?.status).toBe('active')
+  })
+
+  it('leaves an already-expired comp completely alone', async () => {
+    // Nothing flips a comp's status when its window closes, so an expired comp
+    // still reads `status: 'active'` and the Revoke control used to render for
+    // it. Revoking then set `current_period_end = now`, dragging a date months
+    // in the PAST forward to today — rewriting history to say the customer had
+    // access for longer than they did, on a row granting nothing either way.
+    const grantedAt = new Date(NOW.getTime() - 90 * DAY_MS)
+    const { refs } = await grantCompPasses(db, { userId: USER, now: grantedAt })
+    const ref = refs[0]!
+    const before = await rowFor(ref)
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+
+    const result = await revokeCompPass(db, { userId: USER, ref, now: NOW })
+
+    expect(result.outcome).toBe('already_expired')
+
+    const after = await rowFor(ref)
+    expect(after?.currentPeriodEnd?.getTime()).toBe(before?.currentPeriodEnd?.getTime())
+    expect(after?.currentPeriodEnd!.getTime()).toBeLessThan(NOW.getTime())
+    expect(after?.status).toBe('active')
   })
 
   it('reports an unknown ref rather than pretending it worked', async () => {

@@ -32,10 +32,27 @@ export default defineEventHandler(async (event) => {
     {
       actorUserId: admin.id,
       action: 'admin.user_searched',
-      // No target: a search has no single subject. The needle IS the fact worth
-      // recording — "who did this admin go looking for" is the question an
-      // audit of a support team answers, and a result count would not tell you.
-      metadata: { query: needle, limit: query.limit },
+      // No target: a search has no single subject.
+      //
+      // The needle is stored as a SALTED HASH, never as the address. "Who did
+      // this admin go looking for" is genuinely the question auditing a search
+      // answers, and a hash still answers it: an investigator who suspects an
+      // address hashes it and compares. What it does not do is leave a readable
+      // email in a table that is append-only, never pruned, and therefore
+      // outlives the account — which would have undone the live-join redaction
+      // the rest of this trail is built on and broken the same deletion promise
+      // /account makes. Salting matters here specifically: a bare SHA-256 of an
+      // email is reversed by hashing a list of emails.
+      //
+      // No result count, because metadata is written before the action under
+      // audit-before-act and the outcome is not knowable yet — the same reason
+      // a grant records its intent rather than the resulting expiry.
+      metadata: {
+        queryHash: await saltedHash(needle, useRuntimeConfig(event).sessionPassword),
+        /** Distinguishes a two-letter fishing trip from a full address. */
+        queryLength: needle.length,
+        limit: query.limit,
+      },
       ipHash: await auditIpHash(event),
     },
     async () => {
