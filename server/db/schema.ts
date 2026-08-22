@@ -551,6 +551,34 @@ export const instanceSecrets = sqliteTable('instance_secrets', {
     .notNull(),
 })
 
+// Ops events — the alerting spool. Anything that should wake the owner up gets
+// a row here, and server/tasks/ops/alert.ts drains it on a cron and emails a
+// digest. This exists because Workers Logs cannot be alerted on: the only
+// component that knows a request blew up is the Worker itself, at the moment
+// it happens — so it writes the fact down where a cron can find it.
+//
+// Distinct from `feedback` above, and deliberately so: ops_events is what the
+// Worker noticed, feedback is what a person said. They have different
+// retention (these rows are pruned after OPS_EVENT_RETENTION_DAYS, feedback is
+// kept), different audiences, and different triage paths.
+//
+// `notified_at` is the drain marker, not a timestamp anyone reads: NULL means
+// "still owed an email". Indexed because the cron filters on it every tick.
+export const opsEvents = sqliteTable(
+  'ops_events',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    kind: text('kind').notNull(), // a `kind` from the log taxonomy, e.g. server_error
+    detail: text('detail'), // one-line human summary — goes in the email body
+    path: text('path'), // request path, when there was one (query already stripped)
+    notifiedAt: integer('notified_at', { mode: 'timestamp' }),
+    ...timestamps,
+  },
+  (t) => [index('ops_events_notified_at_idx').on(t.notifiedAt)],
+)
+
 // Type exports — use these in your app, not raw Drizzle types
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
@@ -568,4 +596,6 @@ export type NewAuditLogEntry = typeof auditLog.$inferInsert
 export type FileRecord = typeof files.$inferSelect
 export type NewFileRecord = typeof files.$inferInsert
 export type NotificationPreference = typeof notificationPreferences.$inferSelect
+export type OpsEvent = typeof opsEvents.$inferSelect
+export type NewOpsEvent = typeof opsEvents.$inferInsert
 export type NewNotificationPreference = typeof notificationPreferences.$inferInsert

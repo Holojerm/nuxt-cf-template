@@ -40,6 +40,10 @@ one and stay on it, because alternating makes each think nothing has been applie
 
 The **preview** D1 is a second database with the same problem: `bun run db:migrate:preview`.
 
+`GET /api/status` reports the gap: `migrations.pending` lists every migration in the repo
+that the deployed database has not applied. It is what the portfolio dashboard polls, and
+the quickest way to check by hand after a deploy — `curl https://<app>/api/status | jq .migrations`.
+
 ## NuxtHub deletes `env` from the generated wrangler config
 
 `wrangler.toml` is an input, not the deployed config. `nuxt build` writes
@@ -75,6 +79,12 @@ crons` (wrangler.toml) tells Cloudflare when to fire. The join is an **exact str
 on the expression, so `"0 4 * * *"` and `"0 04 * * *"` are different keys — Cloudflare wakes
 the Worker on schedule, `runCronTasks` finds nothing, and the handler returns success. No
 error, no log line. If a task never runs, compare those two strings before anything else.
+
+`bun run crons:check` (in `bun run ci`) compares them for you, both directions, and also
+fails when a scheduled task name has no file under `server/tasks/`. The map is declared
+once as `SCHEDULED_TASKS` at the top of `nuxt.config.ts` and handed to both
+`nitro.scheduledTasks` and `runtimeConfig.scheduledTasks` (what `/api/status` reports) —
+keep it there; the gate can read an inline literal too, but one map is harder to get wrong.
 
 No custom Worker entry is needed for either background surface: the `cloudflare_module`
 preset already exports `scheduled()` (which calls `runCronTasks` when

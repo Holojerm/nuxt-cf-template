@@ -7,7 +7,8 @@
 // are non-inheritable and the preview environment repeats every one of them.
 // Outside it: two package.json scripts (wrangler's `d1 migrations` subcommand
 // takes a database NAME, not a binding), portless.name, the Nuxt MCP URL, the
-// MCP worker's own config, and the server name it reports to MCP clients.
+// MCP worker's own config, the server name it reports to MCP clients, and the
+// fleet manifest (fleet.json) that the portfolio dashboard reads.
 //
 // Missing one produces failures that don't look like a rename problem at all.
 // Workers Builds refuses every build when the dashboard Worker name doesn't
@@ -84,6 +85,10 @@ const TARGETS: Target[] = [
   { file: 'wrangler.toml' },
   { file: 'package.json' },
   { file: '.mcp.json' },
+  // The fleet manifest names the Worker (slug, workers[0]) and the D1 / R2
+  // resources. `bun run fleet:check` fails the build if it stops matching
+  // wrangler.toml, so it has to be renamed in the same pass.
+  { file: 'fleet.json' },
   { file: 'mcp/wrangler.jsonc', optional: true },
   { file: 'mcp/package.json', optional: true },
   // The only .ts source in this list, and the only functional placeholder that

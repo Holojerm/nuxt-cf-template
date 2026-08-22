@@ -38,8 +38,8 @@ A production-ready template for full-stack apps on **Nuxt 4 + Cloudflare Workers
 bun run rename acme-widgets --display "Acme Widgets"
 ```
 
-That rewrites all six occurrences of `my-app` across `wrangler.toml`, `package.json`
-(scripts + `portless.name`), `.mcp.json`, and `mcp/`, then prints what's left for you to do
+That rewrites every occurrence of `my-app` across `wrangler.toml`, `package.json`
+(scripts + `portless.name`), `.mcp.json`, `fleet.json`, and `mcp/`, then prints what's left for you to do
 by hand. Missing one of these is not obvious later: Workers Builds refuses every build when
 the dashboard Worker name doesn't match `wrangler.toml`, and the Nuxt MCP server just never
 connects when its URL doesn't match `portless.name`.
@@ -214,7 +214,9 @@ bun format            # Format with oxfmt
 bun typecheck         # TypeScript type checking
 bun run brand:generate # Rebuild favicon, app icon, and og.png from the brand mark
 bun run brand:check   # Fail if those files no longer match the mark (part of ci)
-bun run ci            # Lint + design/brand/seo gates + typecheck + test + build — Workers Builds runs this
+bun run fleet:check   # Fail if fleet.json no longer matches wrangler.toml (part of ci)
+bun run crons:check   # Fail if [triggers] crons and nitro.scheduledTasks disagree (part of ci)
+bun run ci            # Lint + design/brand/seo/fleet/crons gates + typecheck + test + build — Workers Builds runs this
 bun run ci:browser    # playwright:install + test:a11y (a11y + CSP + E2E) — GitHub Actions runs this,
                       # because Workers Builds has no Chromium libraries. See CLAUDE.md › Gotchas.
 bun db:generate       # Generate Drizzle migration after schema changes
@@ -379,8 +381,9 @@ wrangler r2 bucket create my-app-blob-preview
 wrangler queues create my-app-email-preview
 ```
 
-Paste the two ids into the `[env.preview]` placeholders in `wrangler.toml`
-(`YOUR_PREVIEW_D1_DATABASE_ID`, `YOUR_PREVIEW_KV_NAMESPACE_ID`).
+Paste the two ids into `wrangler.toml` under `[env.preview]` — the `database_id` on
+`[[env.preview.d1_databases]]` and the `id` on `[[env.preview.kv_namespaces]]`. A fork
+inherits this repo's values, so these are replacements, not blanks to fill.
 
 > A separate namespace, deliberately, rather than `wrangler kv namespace create KV --preview`.
 > That flag creates a *preview namespace attached to the production binding* and prints a
@@ -698,6 +701,108 @@ The DB logic lives in [`server/utils/purge.ts`](./server/utils/purge.ts) and tak
 argument, because Nitro skips scheduled tasks entirely under vitest — a test driving the task
 wrapper would be testing the shim. [`test/purge.test.ts`](./test/purge.test.ts) drives the
 util against a real D1 inside workerd.
+
+Two files, one string, and nothing that checks — so something does now: `bun run crons:check`
+(part of `bun run ci`) fails when the two lists differ in either direction, or when a scheduled
+task name has no file under `server/tasks/`. The map lives once, as `SCHEDULED_TASKS` at the top
+of `nuxt.config.ts`, and is handed to both `nitro.scheduledTasks` and `runtimeConfig.scheduledTasks`
+so [`/api/status`](#fleet-contract-status-manifest-and-the-portfolio-dashboard) can report it.
+
+The second task that ships is [`ops:alert`](./server/tasks/ops/alert.ts), every 30 minutes —
+see [Ops alerting](#ops-alerting) below.
+
+---
+
+## Ops alerting
+
+Cloudflare cannot alert on Worker logs. Workers Logs has no notification hook, Log Explorer does
+not carry `workers_trace_events`, and the Notifications catalogue has no usable Workers entry. So
+the only component that both knows a request failed and can do something about it is the Worker
+itself — and this template makes it do so.
+
+- **The spool.** [`recordOpsEvent(db, { kind, detail, path })`](./server/utils/ops.ts) writes a
+  row to `ops_events`. The error plugin calls it for every unhandled 5xx; call it yourself for
+  anything else worth waking up for (a webhook whose signature failed, a money event that
+  matched no account). It never throws and truncates `detail` to 500 characters — an alerting
+  failure must not become the user's problem, and a stack trace is not an email.
+- **The digest.** [`server/tasks/ops/alert.ts`](./server/tasks/ops/alert.ts) runs every 30
+  minutes, groups what is pending by `kind` (loudest first, three examples each), emails one
+  message through the `[[send_email]] ALERT_EMAIL` binding, marks the rows notified, and prunes
+  anything older than 7 days. Rows are marked **only after the send resolves**: a failed send
+  leaves them pending and the next tick retries. Silence is the healthy state — an empty spool
+  costs one indexed `SELECT` and one `DELETE` per tick.
+- **Turning it on** is three steps in [`wrangler.toml`](./wrangler.toml): verify your address
+  under Email → Email Routing → Destination addresses, uncomment the `[[send_email]]` block with
+  that address, and set `NUXT_ALERT_EMAIL_TO` (the same address) and `NUXT_ALERT_EMAIL_FROM`
+  (any address on a zone in your account with Email Routing enabled) in `[vars]`. Sends to a
+  verified destination are free. Until then every tick logs `ops_alert_unconfigured` and sends
+  nothing — a setup state, not an error.
+- **What it cannot catch** is the Worker failing to run at all: a broken deploy alerts nobody,
+  because the thing that would alert you is the thing that is broken. That is what the portfolio
+  dashboard's external poll of `/api/status` is for.
+
+[`test/ops.test.ts`](./test/ops.test.ts) drives the spool against a real D1 — including the
+case where the mailer throws and the rows must survive.
+
+---
+
+## Fleet contract (status, manifest, and the portfolio dashboard)
+
+More than one app gets forked from this template, and a dashboard (`fleet` — itself a fork) watches
+all of them. It needs three things from each app, and all three ship here so a fork has them the
+moment it syncs.
+
+### `fleet.json`
+
+A manifest at the repo root that says what this app is: slug, display name, `stage`
+(`live | built | dormant | unreleased | personal` — which decides whether zero traffic is an
+outage or a Tuesday), every Worker the repo deploys, the D1/KV/R2 bindings with their ids, the
+cron triggers, how it deploys, which template commit it last synced to, which optional modules it
+kept (`features`), and the secret **names** production needs. Shape and field-by-field reasoning:
+[`shared/utils/fleet-manifest.ts`](./shared/utils/fleet-manifest.ts).
+
+It is only worth reading if it is true, so `bun run fleet:check` (part of `bun run ci`) fails the
+build when it stops matching `wrangler.toml` — Worker name, binding names and ids, crons,
+`NUXT_PUBLIC_APP_URL`, the `mcp/` Worker — or still carries a `YOUR_…` placeholder outside
+`stage: "unreleased"`. `bun run rename` rewrites it with everything else. Edit it in the same
+commit as the wrangler change it describes.
+
+### `GET /api/status` and `GET /api/fleet`
+
+[`/api/status`](./server/api/status.get.ts) is public, unauthenticated, and carries no secrets:
+
+```json
+{
+  "schema": 1, "status": "ok", "database": "connected",
+  "app": { "slug": "my-app", "stage": "unreleased", "workers": ["my-app", "my-app-mcp"] },
+  "build": { "sha": "d0b2f48…", "date": "2026-08-22" },
+  "versions": { "nuxt": "^4.5.2", "wrangler": "^4.125.0", "templateSyncedSha": null },
+  "migrations": { "repo": { "head": "0013_…", "count": 14 }, "applied": { "table": "d1_migrations", "head": "0013_…", "count": 14 }, "pending": [], "unknown": [] },
+  "crons": { "0 4 * * *": ["purge-expired-tokens"], "*/30 * * * *": ["ops:alert"] }
+}
+```
+
+`migrations.pending` is the field that earns the route its keep: it is every migration in the repo
+that production has never applied — the deploy-before-migrate gap described in CLAUDE.md ›
+Gotchas, reported by the Worker the moment it opens instead of by a user. `status` is `degraded`
+while it is non-empty, `down` (HTTP 503) when D1 is unreachable. `/api/health` is unchanged and
+still the thing to point a dumb uptime check at.
+
+[`/api/fleet`](./server/api/fleet.get.ts) is counters only — users, entitlements by status, the
+ops spool, the feedback queue — behind `Authorization: Bearer $NUXT_FLEET_TOKEN`. With the token
+unset it **404s**, so an app that has not opted into the dashboard advertises nothing. Rotation
+accepts `NUXT_FLEET_TOKEN_PREVIOUS` alongside the current one
+([`server/utils/fleet-auth.ts`](./server/utils/fleet-auth.ts)). A fork adds its own numbers to
+[`collectFleetCounters()`](./server/utils/fleet-status.ts)'s `extra` rather than inventing a
+second route.
+
+Both are allowlisted in [`server/middleware/auth.ts`](./server/middleware/auth.ts) — the session
+guard must not 401 them before they answer.
+
+### Ops alerting
+
+The [spool and digest above](#ops-alerting) is the third piece: the dashboard reads the pending
+count, and the email is how you hear about it when you are not looking at the dashboard.
 
 ---
 

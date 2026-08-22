@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "slug": "my-app",
+  "name": "My App",
+  "stage": "unreleased",
+  "urls": { "prod": "https://my-app.jeremy-ettlinger.workers.dev" },
+  "workers": ["my-app", "my-app-mcp"],
+  "bindings": {
+    "d1": [{ "name": "my-app-db", "id": "e05a806f-7596-4b97-893c-cb27614bd265" }],
+    "kv": ["110a52465ec94fc2b452a4783c5a4421"],
+    "r2": ["my-app-blob"]
+  },
+  "crons": ["0 4 * * *", "*/30 * * * *"],
+  "deploy": "workers-builds",
+  "template": { "repo": "Holojerm/nuxt-cf-template", "syncedSha": null },
+  "features": { "auth": true, "billing": true, "posthog": { "projectId": 569675 }, "opsEvents": true },
+  "secrets": ["NUXT_SESSION_PASSWORD"]
+}

@@ -22,6 +22,7 @@ Read the row that matches what you are about to touch. Do not load them all.
 | [`.claude/docs/images.md`](.claude/docs/images.md) | `<NuxtImg>` at the edge vs. transforming a private R2 object in the Worker | Rendering any image, adding a thumbnail, or debugging a `/cdn-cgi/image/` 404 |
 | [`.claude/docs/brand.md`](.claude/docs/brand.md) | How every icon is generated from one `Logo.vue` | Redesigning the mark or fixing `brand:check` |
 | [`.claude/docs/agent-setup.md`](.claude/docs/agent-setup.md) | MCP servers, skills, slash commands, cloud routines | Configuring tooling, or setting up a fork |
+| [`.claude/docs/fleet.md`](.claude/docs/fleet.md) | `fleet.json`, `/api/status`, `/api/fleet`, the `ops_events` spool and its digest cron | Touching the manifest, the status/fleet endpoints, or ops alerting |
 | [`TEARDOWN.md`](TEARDOWN.md) | How to **remove** billing, referrals, the MCP worker, or swap Paddle for Stripe | You do not need one of the shipped subsystems |
 | [`DESIGN.md`](DESIGN.md) | The visual design system — source of truth | Writing any UI |
 
@@ -82,13 +83,14 @@ restart. The rest are in [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).
 │   └── utils/              # Server utilities (helpers, etc.)
 ├── shared/                 # Auto-imported in BOTH app/ and server/ (Nuxt 4 `shared/`)
 │   ├── types/              # Cross-cutting type augmentation (runtime config)
-│   └── utils/              # site.ts (URL identity), schema.ts (JSON-LD builders)
+│   └── utils/              # site.ts (URL identity), schema.ts (JSON-LD builders), fleet-manifest.ts (fleet.json shape)
 ├── content/                # @nuxt/content sources — NOT scanned by Nuxt as app code
 │   └── blog/               # One markdown file per post; the filename is the URL
 ├── scripts/                # One-off scripts (bun seed, etc.)
 ├── public/                 # Static assets — og.png, favicon.svg, apple-touch-icon.png
 ├── .github/                # Dependabot + browser-suites.yml (axe/CSP/E2E — the only CI
 │                           # not in Workers Builds; that image can't launch Chromium)
+├── fleet.json              # How this app describes itself to the portfolio dashboard — see bun run fleet:check
 ├── content.config.ts       # Blog collection + frontmatter schema
 ├── drizzle.config.ts       # Drizzle Kit config
 ├── nuxt.config.ts
@@ -193,6 +195,10 @@ Each of these has a full contract in its own doc — this is the one-line versio
   Feedback text is untrusted input. → [`patterns.md`](.claude/docs/patterns.md)
 - **Performance** — server-side `useFetch` for initial loads, `defineAsyncComponent` for
   heavy components, uploads to R2 via `blob`. → [`patterns.md`](.claude/docs/patterns.md)
+- **Fleet contract** — `fleet.json` describes this app, `GET /api/status` reports build,
+  migrations and crons, `GET /api/fleet` reports counters behind a token, and every 5xx
+  spools an `ops_events` row that a cron emails as a digest.
+  → [`fleet.md`](.claude/docs/fleet.md)
 
 ---
 
@@ -222,6 +228,8 @@ bun run design:check  # Fail on UI code that bypasses the DESIGN.md token layer
 bun run brand:generate # Rebuild favicon.svg, apple-touch-icon.png and og.png from the brand mark
 bun run brand:check   # Fail when those generated files no longer match the mark
 bun run seo:check     # Fail on pages that bypass useSeo() or aren't declared public/noindex
+bun run fleet:check   # Fail when fleet.json stops matching wrangler.toml (names, binding ids, crons)
+bun run crons:check   # Fail when [triggers] crons and nitro.scheduledTasks disagree, or a task has no file
 bun run test:a11y     # Playwright/Chromium browser suites: axe over every public route
                       # (light + dark) AND the Content-Security-Policy spec (test/csp/)
 bun typecheck         # TypeScript type checking
@@ -233,9 +241,10 @@ bun db:migrate:preview # Apply migrations to the preview D1 — nothing does thi
 bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db)
 bun run rename <name> # Rewrite the `my-app` placeholder across wrangler.toml, package.json,
-                      # .mcp.json and mcp/ — all six occurrences, in one go
-bun run ci            # Lint + design/brand/seo gates + typecheck + test + build — Workers Builds runs this.
-                      # NO browser suites: Workers Builds cannot launch Chromium (see Gotchas).
+                      # .mcp.json, fleet.json and mcp/ — every occurrence, in one go
+bun run ci            # Lint + design/brand/seo/fleet/crons gates + typecheck + test + build —
+                      # Workers Builds runs this. NO browser suites: that image cannot
+                      # launch Chromium (see Gotchas).
 bun run ci:browser    # playwright:install + test:a11y — what GitHub Actions runs
 bun run deploy        # Manual deploy to Cloudflare via wrangler (normally unnecessary —
                       # Workers Builds deploys automatically on push to main).

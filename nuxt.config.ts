@@ -1,4 +1,6 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+import { execSync } from 'node:child_process'
+
 import { useNitro, useNuxt } from '@nuxt/kit'
 
 import type { PublicPage } from './shared/utils/site'
@@ -191,6 +193,45 @@ const securityHeaders = {
   // cannot re-open, so guessing wrong silently removes the wallet buttons and
   // nothing logs. The default (`payment=self`, delegable) is already correct.
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+}
+
+// ─── Scheduled tasks ─────────────────────────────────────────────────────────
+//
+// Cron expression → task names. This map is the ONLY thing that connects a
+// Cloudflare cron trigger to a task, and the join is an exact string match on
+// the expression, so every key here must appear verbatim in `[triggers] crons`
+// in wrangler.toml. A mismatch is silent: the Worker wakes on schedule and does
+// nothing. `bun run crons:check` fails the build on one.
+//
+// Hoisted to a const so it can be handed to BOTH `nitro.scheduledTasks` (what
+// runs) and `runtimeConfig.scheduledTasks` (what /api/status reports) — one
+// map, so the dashboard compares the schedule Nitro will honour against the
+// triggers Cloudflare says it registered.
+//
+//   04:00 UTC  — retention sweep, server/tasks/purge-expired-tokens.ts
+//   */30       — ops digest, server/tasks/ops/alert.ts. Silence is the healthy
+//                state: an empty spool costs one indexed SELECT per tick.
+const SCHEDULED_TASKS: Record<string, string[]> = {
+  '0 4 * * *': ['purge-expired-tokens'],
+  '*/30 * * * *': ['ops:alert'],
+}
+
+/**
+ * The commit this build came from, for /api/status. Workers Builds exports
+ * WORKERS_CI_COMMIT_SHA and GitHub Actions GITHUB_SHA; a local build asks git.
+ * Empty when none of those is available (a tarball, a shallow copy with no
+ * .git) — reported as null by the route rather than guessed.
+ */
+function buildSha(): string {
+  const fromCi = process.env.WORKERS_CI_COMMIT_SHA ?? process.env.GITHUB_SHA
+  if (fromCi) return fromCi
+  try {
+    return execSync('git rev-parse HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim()
+  } catch {
+    return ''
+  }
 }
 
 export default defineNuxtConfig({
@@ -514,6 +555,25 @@ export default defineNuxtConfig({
     // worse than a coarse right one, and crawlers discount lastmod that always
     // says "today", which is what `new Date()` at request time produces.
     buildDate: new Date().toISOString().slice(0, 10),
+    // The cron map Nitro runs, exposed so /api/status can report it. Server-only.
+    scheduledTasks: SCHEDULED_TASKS,
+    // ── Fleet (the portfolio dashboard) ─────────────────────────────────────
+    // Bearer the dashboard presents to /api/fleet. Unset = that route 404s, so
+    // an app that has not opted in advertises nothing. 32+ characters; generate
+    // with `openssl rand -base64 32` and set via `wrangler secret put
+    // NUXT_FLEET_TOKEN`. `_PREVIOUS` is only set during a rotation — see
+    // server/utils/fleet-auth.ts for the three-step.
+    fleetToken: '',
+    fleetTokenPrevious: '',
+    // Ops alerting — where the cron digest goes (server/tasks/ops/alert.ts).
+    // `from` must be on a domain in the Cloudflare account with Email Routing
+    // enabled; `to` must be a verified destination address. That combination
+    // is free and needs no sending-domain onboarding. Both empty = the cron
+    // logs `ops_alert_unconfigured` and sends nothing. Set in wrangler.toml
+    // [vars] as NUXT_ALERT_EMAIL_TO / NUXT_ALERT_EMAIL_FROM — neither is a
+    // secret, and the [[send_email]] binding pins the destination anyway.
+    alertEmailTo: '',
+    alertEmailFrom: '',
     // Paddle billing (sandbox-first) — set via NUXT_PADDLE_* env vars / secrets
     paddle: {
       // Endpoint secret from Paddle → Developer tools → Notifications
@@ -588,6 +648,10 @@ export default defineNuxtConfig({
     // NUXT_PUBLIC_APP_NAME in wrangler.toml [vars] overrides this at runtime
     public: {
       appName: 'My App',
+      // Stamped at build time; /api/status reports it so a dashboard can tell
+      // which commit is live. Public because a sha is not a secret and a
+      // footer may want to show it.
+      buildSha: buildSha(),
       // One sentence describing the product. Used as the landing page's meta
       // description, as the blockquote in /llms.txt, and as the schema.org
       // description — so an answer engine reads the same claim everywhere
@@ -671,17 +735,10 @@ export default defineNuxtConfig({
       tasks: true,
     },
 
-    // Cron expression → task names. This map is the ONLY thing that connects a
-    // Cloudflare cron trigger to a task, and the join is an exact string match
-    // on the expression, so every key here must appear verbatim in
-    // `[triggers] crons` in wrangler.toml. A mismatch is silent: the Worker
-    // wakes on schedule and does nothing.
-    //
-    // 04:00 UTC — crons run on UTC, and this is off-peak for the retention job
-    // in server/tasks/purge-expired-tokens.ts, which is the only thing here.
-    scheduledTasks: {
-      '0 4 * * *': ['purge-expired-tokens'],
-    },
+    // Cron expression → task names. Declared once as SCHEDULED_TASKS at the top
+    // of this file (so /api/status can report the same map) — the rules for
+    // keeping it in step with wrangler.toml are written there.
+    scheduledTasks: SCHEDULED_TASKS,
   },
 
   compatibilityDate: '2025-09-01',
