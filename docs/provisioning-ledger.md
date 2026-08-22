@@ -81,7 +81,8 @@ applied migrations work **through the running Worker**, not just from the CLI.
 | Google / GitHub client **ids** | `live` | agent | prod + preview Worker secrets | `wrangler secret list` | their secrets |
 | `NUXT_RESEND_FROM` | `live` | agent | prod Worker secret | `wrangler secret list` | `NUXT_RESEND_API_KEY` |
 | Cron trigger `0 4 * * *` | `live` | agent (via deploy) | `[triggers]` | dashboard: "Runs At 04:00 AM / Next Sun, 23 Aug 2026 04:00:00" | — |
-| Workers Builds | `configured-unverified` | agent | Worker → Settings → Build | repo `Holojerm/nuxt-cf-template`, branch `main`, build `bun run ci`, deploy `bunx wrangler --cwd .output deploy`, version `bunx wrangler --cwd .output versions upload`, root `/`, non-production builds on | no build has run yet; needs the session-password build variable |
+| Workers Builds | `live` | agent | Worker → Settings → Build | repo `Holojerm/nuxt-cf-template`, branch `main`, build `bun run ci`, deploy `bunx wrangler --cwd .output deploy`, version `bunx wrangler --cwd .output versions upload`, root `/`, non-production builds on. **Proven end to end**: the push fired a build within seconds, it ran the real gates, and it *failed* at `brand:check` for a real reason (caveat 9) rather than passing vacuously | the session-password build variable |
+| Resend API key `my-app` | `configured-unverified` | agent created | resend.com/api-keys | created with **Sending access**, not Full access (no domain to scope to). The agent did not screenshot or read the value, so **whether it was captured before the one-time dialog closed is unconfirmed** — if it was missed, delete the key and create another | owner runs `wrangler secret put NUXT_RESEND_API_KEY` |
 | GitHub App repo access | `live` | agent | github.com/settings/installations | `nuxt-cf-template` added alongside `whonder` + `drawthesystem-cloud`, which were left intact; scope kept at "Only select repositories" | — |
 | Turnstile widget `my-app` | `configured-unverified` | agent | site key in `[vars]` + `[env.preview.vars]` | "Successfully created Turnstile widget"; hostnames = both workers.dev hosts; Managed; pre-clearance off | secret key |
 | GitHub OAuth app | `configured-unverified` | agent | Client ID `Ov23liQyWvgpxRQ0eLrG` | app page reachable; redirect URIs for prod **and** preview | client secret — **not yet generated**, see below |
@@ -91,7 +92,7 @@ applied migrations work **through the running Worker**, not just from the CLI.
 | Paddle webhook destination | `configured-unverified` | agent | sandbox → Notifications | Active, **12 events** = 9 × `subscription.*` + `transaction.completed` + `adjustment.created` + `adjustment.updated`, exactly what `webhook.post.ts` documents | webhook secret, API key, price IDs |
 | PostHog project key | `configured-unverified` | agent | `[vars]` › `NUXT_PUBLIC_POSTHOG_KEY` | project 569675, US region — matches `posthogHost` default | app must be reachable to verify ingestion |
 | PostHog feature flags | `skipped` | owner's choice at kickoff | — | — | `new-onboarding`, `pricing-layout` (`control` \| `pass-first`) stay non-existent; code returns control for both |
-| Resend | `blocked` | — | — | — | 1Password is **not connected to Claude** (`not_connected`); sign-in never happened |
+| Resend account | `live` | owner signed in | resend.com | signed in as jeremy.ettlinger@gmail.com; **no domains** — confirms `onboarding@resend.dev` is the only possible sender | a verified domain, if you ever want to mail anyone but yourself |
 | Sign in with Apple | `skipped` | owner's choice at kickoff | — | — | also impossible on `*.workers.dev` — Apple will not accept it as a verifiable domain |
 | The six third-party secrets | `blocked` | — | — | — | values live in other people's dashboards; must not transit the agent — see below |
 
@@ -230,7 +231,28 @@ Everything marked `configured-unverified` above is *configured correctly and
 unproven*; nothing was marked `live` on the strength of a dashboard screenshot
 alone.
 
-**9. A pending permission-update request from Cloudflare's GitHub App was left
+**9. Changing `NUXT_PUBLIC_APP_URL` invalidates the generated brand assets.**
+Worth knowing before you fork, because the failure arrives later and elsewhere:
+the first Workers Build failed at `brand:check` with
+
+```
+The brand inputs changed since the assets were generated.
+  recorded  459834f13f04bac9
+  current   a63a47871cfb900e
+```
+
+`scripts/brand-inputs.ts` derives `appHost` from `NUXT_PUBLIC_APP_URL`, and
+`public/og.png` renders that host as a wordmark — so the URL is a *brand input*,
+not just config. The og.png on `main` still read `my-app.workers.dev`. The fix
+is the one the gate prints: `bun run brand:generate`, then commit. It rewrote
+exactly two files, `public/og.png` and the fingerprint in `brand.lock.json`; the
+mark, favicon, apple-touch-icon and both PWA icons came out byte-identical.
+
+The gate did its job. It is just not obvious from the *outside* that renaming
+your app's origin is a change to the brand pipeline, so budget for it whenever
+`NUXT_PUBLIC_APP_URL` or `NUXT_PUBLIC_APP_NAME` moves.
+
+**10. A pending permission-update request from Cloudflare's GitHub App was left
 alone.** github.com/settings/installations shows "Permission updates requested"
 for Cloudflare Workers and Pages (and for Claude, and Fleek.co). Only repository
 *access* was changed — reviewing a permissions escalation is yours to do.
