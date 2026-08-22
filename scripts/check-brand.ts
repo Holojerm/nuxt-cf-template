@@ -1,10 +1,11 @@
 // Brand asset gate — run with `bun run brand:check`, wired into `bun run ci`.
 //
-// The three files in public/ are compiled output, and compiled output that
-// nothing verifies goes stale silently. Nothing throws when a favicon is a
-// redesign behind the app, or when og.png still says "My App" three weeks after
-// `bun run rename` — the site builds, the pages render, and you find out from a
-// link preview in someone else's Slack.
+// The six files GENERATED_ASSETS lists (five in public/, plus
+// shared/utils/brand-colors.generated.ts) are compiled output, and compiled
+// output that nothing verifies goes stale silently. Nothing throws when a
+// favicon is a redesign behind the app, or when og.png still says "My App"
+// three weeks after `bun run rename` — the site builds, the pages render, and
+// you find out from a link preview in someone else's Slack.
 //
 // So this compares a fingerprint of the generator's inputs (the mark, the
 // DESIGN.md color roles, the fonts, the app name) against the one recorded in
@@ -17,7 +18,13 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
-import { collectBrandInputs, GENERATED_ASSETS, LOCK_FILE, ROOT } from './brand-inputs'
+import {
+  collectBrandInputs,
+  GENERATED_ASSETS,
+  GENERATOR_VERSION,
+  LOCK_FILE,
+  ROOT,
+} from './brand-inputs'
 
 const REMEDY = 'Run `bun run brand:generate` and commit what it writes.'
 
@@ -48,7 +55,30 @@ if (!existsSync(LOCK_FILE)) {
   )
 }
 
-const locked = JSON.parse(readFileSync(LOCK_FILE, 'utf8')) as { fingerprint?: string }
+const locked = JSON.parse(readFileSync(LOCK_FILE, 'utf8')) as {
+  fingerprint?: string
+  generatorVersion?: string
+}
+
+// Checked before the fingerprint, and reported separately from it, because
+// GENERATOR_VERSION is itself one of the things fingerprintOf() hashes — so a
+// generator upgrade (say, when this template added the maskable icons and the
+// manifest colors file) changes the fingerprint exactly the same way a real
+// input change does. Without this split, every fork's first `bun run ci`
+// after pulling that template update fails with "the mark, a color role, a
+// font family, or the app name moved" — none of which is what happened; the
+// pipeline itself changed under them, and `bun run brand:generate` is the fix
+// either way, but a fork owner shouldn't have to go hunting for what "moved".
+if (locked.generatorVersion !== GENERATOR_VERSION) {
+  fail(
+    `The brand pipeline's generator changed, not any of your inputs.`,
+    `  recorded  generator v${locked.generatorVersion ?? '(none — predates this field)'}`,
+    `  current   generator v${GENERATOR_VERSION}`,
+    '',
+    'This happens after picking up a template update to the brand pipeline itself',
+    '(scripts/generate-brand-assets.ts) — regenerate to pick up whatever it now adds.',
+  )
+}
 
 if (locked.fingerprint !== inputs.fingerprint) {
   fail(
