@@ -107,7 +107,12 @@ for (const route of ROUTES) {
       // NuxtUI's color mode defaults to `system`, so emulating the media query
       // is enough — no cookie or class juggling.
       await page.emulateMedia({ colorScheme: mode })
-      await page.goto(route)
+      const response = await page.goto(route)
+
+      // The 404 page is accessible. That is not what this suite is for, and a
+      // route that quietly stopped existing — a renamed post, a moved page —
+      // would otherwise be scanned green forever while nobody could reach it.
+      expect(response?.status(), `${route} did not return 200`).toBe(200)
 
       // Contrast is measured against rendered pixels, so the webfonts have to
       // have landed before axe runs or it can sample a fallback face.
@@ -190,13 +195,32 @@ test('sitemap coverage: every public page is in ROUTES', async ({ request }) => 
 
   expect(paths.length).toBeGreaterThan(0)
 
-  // The exemption above is only safe while a post is genuinely being scanned.
-  // Without this, deleting the post from ROUTES would silently stop testing the
-  // whole [slug].vue template and the coverage check would still pass.
+  // ── The exemption, and the two checks that keep it honest ─────────────────
+  //
+  // Posts are exempt from the sitemap→ROUTES direction on purpose: they all
+  // render through one app/pages/blog/[slug].vue, so scanning every one adds
+  // nothing, and requiring it would fail CI on a pure content commit — which
+  // trains people to delete the guard rather than use it.
+  //
+  // What that exemption cannot be allowed to do is let the sample post go
+  // stale. Asserting only that ROUTES *mentions* something under /blog/ is not
+  // enough: rename a post and ROUTES still mentions the old slug, the scan
+  // fetches a 404, and axe finds the error page perfectly accessible. So the
+  // sampled posts are checked against the live sitemap, which is the same list
+  // the app actually publishes. (The per-route status assertion above closes
+  // the same hole from the other side, for every route.)
+  const sampled = ROUTES.filter((route) => route.startsWith(BLOG_POST_PREFIX))
   expect(
-    ROUTES.filter((route) => route.startsWith(BLOG_POST_PREFIX)),
+    sampled,
     'ROUTES must scan at least one blog post — it stands in for all of them.',
   ).not.toEqual([])
+
+  const stale = sampled.filter((route) => !paths.includes(route))
+  expect(
+    stale,
+    `ROUTES scans blog posts that are not in the sitemap: ${stale.join(', ')}. ` +
+      'A renamed or deleted post leaves the sweep scanning a 404.',
+  ).toEqual([])
 
   const missing = paths.filter(
     (path) => !ROUTES.includes(path) && !path.startsWith(BLOG_POST_PREFIX),

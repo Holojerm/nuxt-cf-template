@@ -41,3 +41,37 @@ export interface BlogPostSummary {
 export function isPostVisible(post: { draft?: boolean }, isDev: boolean): boolean {
   return !post.draft || isDev
 }
+
+/** A post list, and whether it can be believed. */
+export interface BlogQueryResult {
+  posts: BlogPostSummary[]
+  /**
+   * False when the load failed. Callers must not cache a `false` result, and
+   * must not serve it with a cacheable Cache-Control — see
+   * `crawlerCacheControl()` in server/utils/seo.ts.
+   */
+  ok: boolean
+}
+
+/**
+ * Run a post load, turning a failure into an explicitly-incomplete result.
+ *
+ * Takes the loader as an argument rather than calling the collection itself,
+ * for two reasons. It keeps this rule testable — server/utils/blog.ts imports
+ * @nuxt/content's Nitro entry, which resolves a build-only alias the workerd
+ * pool cannot follow. And it puts the caching decision on the *outside* of the
+ * thing that throws: the server wraps its loader in Nitro's cache, so a
+ * rejection propagates out of the cache without ever being stored, and the
+ * degraded result produced here never reaches the cache at all.
+ */
+export async function loadBlogPosts(
+  load: () => Promise<BlogPostSummary[]>,
+  report: (message: string) => void,
+): Promise<BlogQueryResult> {
+  try {
+    return { posts: await load(), ok: true }
+  } catch (error) {
+    report(error instanceof Error ? error.message : String(error))
+    return { posts: [], ok: false }
+  }
+}

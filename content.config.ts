@@ -25,6 +25,11 @@
 
 import { defineCollection, defineContentConfig, z } from '@nuxt/content'
 
+// The same numbers `bun run seo:check` enforces. A relative path rather than
+// `#shared`, because that alias only exists inside a Nuxt build and this file
+// is loaded by c12 before there is one.
+import { DESCRIPTION_MAX, DESCRIPTION_MIN, TITLE_MAX } from './shared/utils/seo-bounds'
+
 /**
  * ISO calendar date, `YYYY-MM-DD`.
  *
@@ -43,10 +48,11 @@ export default defineContentConfig({
       source: 'blog/**',
       schema: z.object({
         // Redeclared over the built-in page fields to attach the length bounds
-        // the SEO gate checks. Google renders roughly 155 characters of the
-        // description and about 60 of the title.
-        title: z.string().min(1).max(70),
-        description: z.string().min(50).max(160),
+        // the SEO gate checks — imported from the one place that states them,
+        // so the schema a writer reads and the gate that fails their build
+        // cannot drift apart.
+        title: z.string().min(1).max(TITLE_MAX),
+        description: z.string().min(DESCRIPTION_MIN).max(DESCRIPTION_MAX),
         /** Publication date. Drives sort order, `datePublished`, and `lastmod`. */
         date: isoDate,
         /** Last substantive edit. Omit it rather than repeating `date`. */

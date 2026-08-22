@@ -274,7 +274,22 @@ export default defineNuxtConfig({
     db: 'sqlite', // D1 SQLite via Drizzle (auto-imports `db` and `schema` in server routes)
     kv: true, // KV store
     blob: true, // R2 object storage
-    cache: true, // Cache layer
+    // Cache layer, for `defineCachedFunction` / `defineCachedEventHandler`.
+    //
+    // The binding is named explicitly, and that is a bug fix rather than a
+    // preference. `cache: true` on Cloudflare resolves to a KV binding called
+    // `CACHE`, which this template's wrangler.toml does not declare — so every
+    // cache read and write threw `Invalid binding 'CACHE': 'undefined'`.
+    // Nitro catches those, so nothing broke loudly: the cache simply never
+    // stored anything, while logging two errors per request into Cloudflare
+    // Logs and, via the error plugin, into PostHog as `server_error`. Observed
+    // directly against `wrangler dev` on the built Worker.
+    //
+    // Pointing it at the `KV` namespace that already exists costs a fork
+    // nothing — no second namespace to create, no second placeholder id in
+    // wrangler.toml. Sharing is safe: Nitro prefixes its entries with
+    // `cache:`, which nothing else in this app writes.
+    cache: { driver: 'cloudflare-kv-binding', binding: 'KV' },
   },
 
   // ─── Blog content (@nuxt/content v3) ───────────────────────────────────────

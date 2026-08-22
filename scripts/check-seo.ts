@@ -21,25 +21,29 @@
 //      busywork with a build failure attached.
 //   5. Exactly one <h1> per page. Cheap to check, and the single most common
 //      real regression in a component-composed page.
-//   6. Blog posts carry the same contract in their frontmatter, plus dates that
-//      are well-formed, in the past, and in the right order. A post is a page
-//      whose copy lives in markdown rather than in a .vue file, and rule 4 has
-//      to follow it there or it stops applying to the pages most likely to be
-//      written in a hurry. See the second walk at the bottom.
+//   6. Blog posts carry the same contract in their frontmatter, plus one <h1>
+//      and dates that are well-formed, in the past, and in the right order. A
+//      post is a page whose copy lives in markdown rather than in a .vue file,
+//      and rules 4 and 5 have to follow it there or they stop applying to the
+//      pages most likely to be written in a hurry. See the second walk below.
 //
 // Escape hatch: `seo-check-ignore` in a comment on the same line or the line
 // above, matching the design-token gate's convention.
+//
+// The string-reading half of rule 4 lives in scripts/lib/seo-source.ts, so it
+// can be driven by ordinary vitest cases (test/seo-source.test.ts) instead of
+// by fixtures embedded in a build script. What is left here is the walk, the
+// rules, and the report.
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
+import { DESCRIPTION_MAX, DESCRIPTION_MIN, TITLE_MAX } from '../shared/utils/seo-bounds'
+import { seoDescription, useSeoArgument } from './lib/seo-source'
+
 const ROOT = resolve(import.meta.dir, '..')
 const PAGES_DIR = join(ROOT, 'app', 'pages')
 const POSTS_DIR = join(ROOT, 'content', 'blog')
-
-/** Google renders roughly 155 characters; under ~50 is rarely a real sentence. */
-const DESCRIPTION_MIN = 50
-const DESCRIPTION_MAX = 160
 
 interface Problem {
   file: string
@@ -63,83 +67,6 @@ function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
 }
 
-/**
- * The text of the object literal passed to `useSeo(`, braces included.
- *
- * Rule 4 has to read this rather than the whole file, and the difference is not
- * cosmetic. A page's source is full of other `description:` keys — every
- * `toast.add()` has one — and searching the file finds whichever comes first.
- * That cuts both ways: `admin/users/[id].vue` was having a toast string
- * measured as its meta description, and a dynamic page could satisfy the
- * relaxation below with a toast key while passing `useSeo({ title })` and no
- * description at all. Both stop at the call boundary.
- *
- * Brace matching is naive — the same trade scripts/check-mirrors.ts makes. A
- * `{` inside a string literal in this argument would confuse it; a `${}` in a
- * template literal is balanced and will not. Returns '' when the call is
- * absent or is not passed an object literal, which fails the rules closed.
- */
-function useSeoArgument(source: string): string {
-  const call = source.indexOf('useSeo(')
-  if (call === -1) return ''
-  const open = source.indexOf('{', call)
-  if (open === -1) return ''
-
-  let depth = 0
-  for (let index = open; index < source.length; index++) {
-    if (source[index] === '{') depth++
-    else if (source[index] === '}') {
-      depth--
-      if (depth === 0) return source.slice(open, index + 1)
-    }
-  }
-  return ''
-}
-
-/**
- * What `description` is set to inside a `useSeo()` argument.
- *
- * `present` is the invariant every page owes: a description reached the
- * composable. `literal` is the text when the gate can actually see it, which is
- * what the length rules need — and it deliberately follows one hop through a
- * local `const`, because `useSeo({ description })` above a
- * `const description = 'A sentence…'` is the same page as writing it inline.
- *
- * A value that resolves to anything else (a record field on a dynamic page, a
- * runtime-config read on the landing page) is accepted with no length check.
- * That is not a loophole, it is the honest limit of reading source: the text
- * does not exist yet. Where such a value has a knowable source — the blog's
- * frontmatter — rule 6 measures it there instead.
- */
-function seoDescription(
-  argument: string,
-  source: string,
-): {
-  present: boolean
-  literal: { quote: string; text: string } | null
-} {
-  const asLiteral = (match: RegExpMatchArray | null) =>
-    match ? { quote: match[1] ?? '', text: match[2] ?? '' } : null
-
-  const keyedLiteral = asLiteral(argument.match(/\bdescription\s*:\s*(['"`])([\s\S]*?)\1/))
-  if (keyedLiteral) return { present: true, literal: keyedLiteral }
-
-  // `description: someIdentifier` or the `{ description }` shorthand.
-  const identifier =
-    argument.match(/\bdescription\s*:\s*([A-Za-z_$][\w$]*)\s*[,}\n]/)?.[1] ??
-    (/\bdescription\s*[,}]/.test(argument) ? 'description' : undefined)
-
-  if (identifier) {
-    const declared = source.match(
-      new RegExp(`\\bconst\\s+${identifier}\\s*=\\s*(['"\`])([\\s\\S]*?)\\1`),
-    )
-    return { present: true, literal: asLiteral(declared) }
-  }
-
-  // Anything else non-empty — a member expression, a call, a ternary.
-  return { present: /\bdescription\s*:\s*\S/.test(argument), literal: null }
-}
-
 function ignored(source: string, needle: string): boolean {
   const lines = source.split('\n')
   return lines.some((line, index) => {
@@ -150,70 +77,6 @@ function ignored(source: string, needle: string): boolean {
 }
 
 const problems: Problem[] = []
-
-// ── Self-check ───────────────────────────────────────────────────────────────
-//
-// Rule 4 used to search the whole file, and the bug that hides in that is not
-// visible in this repo's output: every page happened to pass anyway, for the
-// wrong reason. There is no vitest suite that can cover this file (the pool
-// runs in workerd, which has no filesystem — the same reason check-mirrors.ts
-// is a script), so the fixtures live here and run on every `bun run ci`.
-//
-// Each case is a page source, whether rule 4 should consider a description
-// present, and the literal text (if any) the length rules should measure.
-const DESCRIPTION_FIXTURES: {
-  name: string
-  source: string
-  present: boolean
-  measures: string | null
-}[] = [
-  {
-    name: 'a toast description does not stand in for a missing one',
-    source: `toast.add({ title: 'Saved', description: 'Rewarded 30 days.' })\nuseSeo({ title: 'Customer' })`,
-    present: false,
-    measures: null,
-  },
-  {
-    name: 'a toast description is not what gets measured',
-    source: `toast.add({ description: 'short' })\nuseSeo({ description: 'the real one' })`,
-    present: true,
-    measures: 'the real one',
-  },
-  {
-    name: 'a record field satisfies presence and is exempt from length',
-    source: `toast.add({ description: 'short' })\nuseSeo({ title: post.title, description: post.description })`,
-    present: true,
-    measures: null,
-  },
-  {
-    name: 'a local const is followed one hop and measured',
-    source: `const description = 'A real sentence about this page.'\nuseSeo({ title: 'Home', description })`,
-    present: true,
-    measures: 'A real sentence about this page.',
-  },
-  {
-    name: 'a const bound to config is present but unmeasurable',
-    source: `const description = config.public.appDescription\nuseSeo({ title: 'Home', description })`,
-    present: true,
-    measures: null,
-  },
-]
-
-for (const fixture of DESCRIPTION_FIXTURES) {
-  const found = seoDescription(useSeoArgument(fixture.source), fixture.source)
-  const measured = found.literal?.text ?? null
-  if (found.present !== fixture.present || measured !== fixture.measures) {
-    problems.push({
-      file: 'scripts/check-seo.ts',
-      rule: 'self-check failed',
-      detail:
-        `${fixture.name} — expected present=${fixture.present} measuring ` +
-        `${fixture.measures === null ? 'nothing' : `"${fixture.measures}"`}, got present=${found.present} ` +
-        `measuring ${measured === null ? 'nothing' : `"${measured}"`}`,
-      remedy: 'rule 4 must read the useSeo() argument, not the whole file',
-    })
-  }
-}
 
 for (const file of walk(PAGES_DIR)) {
   const relativePath = relative(ROOT, file)
@@ -284,16 +147,37 @@ for (const file of walk(PAGES_DIR)) {
 
   // ── 4. description quality ─────────────────────────────────────────────────
   //
-  // Read out of the useSeo() argument, never out of the whole file — see
-  // useSeoArgument() and seoDescription() for why that distinction is the
-  // difference between this rule working and this rule appearing to work.
+  // Read out of the useSeo() argument, bounded by the call's own parentheses —
+  // never out of the whole file. See scripts/lib/seo-source.ts for why that
+  // distinction is the difference between this rule working and this rule
+  // appearing to work.
   //
   // Two separate claims: a description reached useSeo() at all, and — when the
   // gate can see its text — that text is a length a search result will print
   // rather than truncate. A description computed at runtime satisfies the first
   // and is exempt from the second, which is the honest limit of a source scan.
-  const description = seoDescription(useSeoArgument(source), source)
-  if (!description.present) {
+  const argument = useSeoArgument(source)
+  if (argument.kind === 'unreadable') {
+    // Fail closed. The gate cannot see what this page publishes, and reporting
+    // nothing would be indistinguishable from reporting that it is fine.
+    problems.push({
+      file: relativePath,
+      rule: 'unreadable useSeo() argument',
+      detail: argument.detail,
+      remedy:
+        'pass an object literal, or a local `const x = { … }` — the gate reads source, ' +
+        'so it cannot follow an import or a function call',
+    })
+  }
+
+  const description =
+    argument.kind === 'object'
+      ? seoDescription(argument.text, source)
+      : { present: false, literal: null }
+
+  // An unreadable argument has already been reported; do not also claim the
+  // description is missing, which would be a guess.
+  if (!description.present && argument.kind === 'object') {
     problems.push({
       file: relativePath,
       rule: 'missing description',
@@ -363,7 +247,14 @@ function readFrontmatter(raw: string): Record<string, string> {
   return fields
 }
 
-const POST_TITLE_MAX = 70
+/** Everything after the frontmatter, with fenced code blocks removed. */
+function postBody(raw: string): string {
+  const withoutFrontmatter = raw.replace(/^---\r?\n[\s\S]*?\r?\n---/, '')
+  // A `#` at the start of a line inside a fence is a comment in some language,
+  // not a heading. Dropping fences first is cheaper and more honest than
+  // trying to tell the two apart in one regex.
+  return withoutFrontmatter.replace(/^```[\s\S]*?^```/gm, '')
+}
 
 /** Today in UTC, `YYYY-MM-DD`. Compared as a string — ISO dates sort correctly. */
 const TODAY = new Date().toISOString().slice(0, 10)
@@ -371,18 +262,34 @@ const TODAY = new Date().toISOString().slice(0, 10)
 if (existsSync(POSTS_DIR)) {
   for (const file of walk(POSTS_DIR, '.md')) {
     const relativePath = relative(ROOT, file)
-    const front = readFrontmatter(readFileSync(file, 'utf8'))
+    const raw = readFileSync(file, 'utf8')
+    const front = readFrontmatter(raw)
+    // YAML booleans arrive here as the string they were written as.
+    const isDraft = front.draft === 'true'
 
     const report = (rule: string, detail: string, remedy: string) =>
       problems.push({ file: relativePath, rule, detail, remedy })
 
     if (!front.title) {
       report('post missing title', 'no `title` in frontmatter', 'add one — it becomes the <h1>')
-    } else if (front.title.length > POST_TITLE_MAX) {
+    } else if (front.title.length > TITLE_MAX) {
       report(
         'post title too long',
-        `${front.title.length} chars, maximum ${POST_TITLE_MAX}`,
+        `${front.title.length} chars, maximum ${TITLE_MAX}`,
         'Google truncates a long title and substitutes its own — write a shorter one',
+      )
+    }
+
+    // Rule 5, for markdown. The page renders `title` as the <h1>, so a level-1
+    // heading in the body is a second one — and nothing else catches it: rule 5
+    // above only reads .vue templates, and axe has no duplicate-h1 rule, so the
+    // a11y sweep is green either way. DESIGN.md › Accessibility asks for one.
+    const bodyH1 = /^#[ \t]+\S/m.exec(postBody(raw))
+    if (bodyH1) {
+      report(
+        'post body has its own <h1>',
+        `body starts a level-1 heading: ${bodyH1[0].trim()}…`,
+        'the page renders `title` as the <h1> — start the body at `##`',
       )
     }
 
@@ -416,15 +323,21 @@ if (existsSync(POSTS_DIR)) {
         `date: ${front.date ?? '(absent)'}`,
         "quote it and write it as 'YYYY-MM-DD' — it becomes <lastmod> and datePublished",
       )
-    } else if (front.date! > TODAY) {
-      // A future date is almost always a typo (a year rolled forward, a month
-      // transposed), and it is the one wrong value that damages rather than
-      // merely misinforms: a `datePublished` in the future is a signal search
-      // engines treat as manipulation, and a `<lastmod>` that has not happened
-      // yet trains a crawler to stop trusting the whole file. Deliberate
-      // scheduling belongs in `draft: true` plus a later commit, not in a date
-      // that is already public and already lying. String comparison is exact
-      // for zero-padded ISO dates, and UTC keeps CI's timezone out of it.
+    } else if (front.date! > TODAY && !isDraft) {
+      // A future date on a PUBLISHED post is almost always a typo (a year
+      // rolled forward, a month transposed), and it is the one wrong value that
+      // damages rather than merely misinforms: a `datePublished` in the future
+      // is a signal search engines treat as manipulation, and a `<lastmod>`
+      // that has not happened yet trains a crawler to stop trusting the whole
+      // file. String comparison is exact for zero-padded ISO dates, and UTC
+      // keeps CI's timezone out of it.
+      //
+      // Skipped for a draft, and only this check is skipped. The remedy below
+      // tells the writer to set `draft: true`, so refusing to accept the result
+      // would be the gate arguing with its own advice — and a draft reaches no
+      // crawler: it is filtered out of /blog, sitemap.xml, and llms.txt, and
+      // 404s in production. Dating one next Tuesday is exactly how you stage a
+      // post you intend to publish next Tuesday.
       report(
         'post dated in the future',
         `date: ${front.date} (today is ${TODAY} UTC)`,
@@ -439,7 +352,7 @@ if (existsSync(POSTS_DIR)) {
           `updated: ${front.updated}`,
           "quote it and write it as 'YYYY-MM-DD', or remove the key",
         )
-      } else if (front.updated > TODAY) {
+      } else if (front.updated > TODAY && !isDraft) {
         report(
           'post updated in the future',
           `updated: ${front.updated} (today is ${TODAY} UTC)`,

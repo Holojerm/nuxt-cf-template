@@ -21,30 +21,28 @@
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
+import { extractFunction as sliceFunction } from './lib/brace-match'
+
 const ROOT = resolve(import.meta.dir, '..')
 
 /**
- * Pull one `function name(...) { ... }` out of a source file by brace matching.
+ * Pull one `function name(...) { ... }` out of a source file.
  *
  * A regex cannot do this — the bodies contain braces — and importing the
  * modules is not an option either: the app's module reaches for Nuxt aliases
  * and Drizzle, and the worker's for the `agents` SDK, neither of which resolves
  * from a plain script.
+ *
+ * The scanning lives in scripts/lib/brace-match.ts, shared with
+ * scripts/check-seo.ts. It returns null on unbalanced input rather than
+ * guessing at a span; here that is fatal, because a half-extracted function
+ * would either fail to compile below or, worse, compile into something that
+ * silently disagrees with its mirror.
  */
 function extractFunction(source: string, name: string): string {
-  const start = source.indexOf(`function ${name}(`)
-  if (start === -1) throw new Error(`could not find function ${name}()`)
-
-  const open = source.indexOf('{', start)
-  let depth = 0
-  for (let i = open; i < source.length; i++) {
-    if (source[i] === '{') depth++
-    else if (source[i] === '}') {
-      depth--
-      if (depth === 0) return source.slice(start, i + 1)
-    }
-  }
-  throw new Error(`unbalanced braces in ${name}()`)
+  const extracted = sliceFunction(source, name)
+  if (extracted === null) throw new Error(`could not extract function ${name}()`)
+  return extracted
 }
 
 /** Evaluate an extracted predicate, with any helpers it needs supplied. */

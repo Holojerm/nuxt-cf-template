@@ -24,8 +24,10 @@
 
 import type { H3Event } from 'h3'
 import { queryCollection } from '@nuxt/content/nitro'
+import { defineCachedFunction } from 'nitropack/runtime'
 
-import type { BlogPostSummary } from '#shared/utils/blog'
+import type { BlogPostSummary, BlogQueryResult } from '#shared/utils/blog'
+import { loadBlogPosts } from '#shared/utils/blog'
 import { pathForLog } from './log'
 
 // Not re-exported: `shared/` is auto-imported Nitro-wide, so a second export of
@@ -49,6 +51,45 @@ export async function listBlogPosts(event: H3Event): Promise<BlogPostSummary[]> 
 }
 
 /**
+ * How long a crawler-facing post list is reused before it is queried again.
+ *
+ * Five minutes, and the number is a compromise between two things that are both
+ * real. `Cache-Control` does not make Cloudflare cache anything on its own — an
+ * `/api/` or generated path is not edge-cached without a cache rule — so every
+ * crawler hit on sitemap.xml or llms.txt otherwise reaches D1, and crawlers
+ * are the one class of client that fetches those files repeatedly and forever.
+ * On the other side, this cache is not invalidated by a deploy: publishing a
+ * post can take up to this long to appear in the sitemap.
+ */
+export const BLOG_CACHE_TTL_SECONDS = 300
+
+/**
+ * The post list, memoised in Nitro's cache storage (KV in production, via
+ * NuxtHub's `hub.cache`).
+ *
+ * `swr: false` on purpose. With stale-while-revalidate a failed refresh serves
+ * the stale list and reports success, which is a *quieter* wrong answer than
+ * the one this whole path is designed around — better to expire, re-query, and
+ * degrade honestly if that fails.
+ *
+ * A rejection is never stored: Nitro awaits the resolver before writing the
+ * entry, so a throw propagates out of the cache with nothing persisted. That is
+ * what makes the composition in `tryListBlogPosts()` safe — the cache wraps the
+ * function that throws, and the catch sits outside it.
+ *
+ * `getKey` is explicit because the argument is an H3Event, which has no
+ * meaningful hash; Nitro still recognises it and uses `event.waitUntil` for the
+ * write, which is what keeps the Worker alive long enough to persist it.
+ */
+const cachedBlogPosts = defineCachedFunction(listBlogPosts, {
+  name: 'blog-posts',
+  group: 'content',
+  getKey: () => 'published',
+  maxAge: BLOG_CACHE_TTL_SECONDS,
+  swr: false,
+})
+
+/**
  * What the two crawler files get: the posts, plus whether that list is
  * trustworthy.
  *
@@ -64,19 +105,12 @@ export async function listBlogPosts(event: H3Event): Promise<BlogPostSummary[]> 
  * The user-facing /api/blog routes deliberately do not use this. A reader
  * asking for the blog should get an error, not a convincing empty page.
  */
-export async function tryListBlogPosts(
-  event: H3Event,
-): Promise<{ posts: BlogPostSummary[]; ok: boolean }> {
-  try {
-    return { posts: await listBlogPosts(event), ok: true }
-  } catch (error) {
-    console.warn(
-      JSON.stringify({
-        kind: 'blog_query_failed',
-        path: pathForLog(event.path),
-        message: error instanceof Error ? error.message : String(error),
-      }),
-    )
-    return { posts: [], ok: false }
-  }
+export function tryListBlogPosts(event: H3Event): Promise<BlogQueryResult> {
+  return loadBlogPosts(
+    () => cachedBlogPosts(event),
+    (message) =>
+      console.warn(
+        JSON.stringify({ kind: 'blog_query_failed', path: pathForLog(event.path), message }),
+      ),
+  )
 }

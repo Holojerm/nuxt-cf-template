@@ -3,8 +3,8 @@
 // runners don't overlap, which is why the specs here are named *.spec.ts while
 // Vitest owns *.test.ts (its `include` globs only `*.test.ts`).
 //
-// Two suites live here, and both are here for the same reason — the thing they
-// check does not exist until a browser renders the page:
+// Three suites live here, and all of them are here for the same reason — the
+// thing they check does not exist until a browser renders the page:
 //
 //   test/a11y/  axe. The rules that matter most — color-contrast above all —
 //               are computed from resolved styles and actual layout, and jsdom
@@ -49,12 +49,14 @@ export default defineConfig({
   // harness, and there is nothing here worth retrying.
   retries: 0,
   // Deliberately NOT raising the 30s default. The first navigation of a run
-  // does blow through it on a cold Vite cache (see test/warmup/), but paying
-  // for that with a bigger budget everywhere makes a genuine hang cost three
-  // times as long in every one of eighteen tests, and blunts the one signal
-  // this timeout exists to give. The `warmup` project below absorbs the cold
-  // build once instead.
+  // does blow through it on a cold Vite cache, but paying for that with a
+  // bigger budget everywhere makes a genuine hang cost three times as long in
+  // every one of eighteen tests, and blunts the one signal this timeout exists
+  // to give. `globalSetup` absorbs the cold build once instead.
   fullyParallel: true,
+  // Runs after `webServer` (Playwright starts that as a plugin, and plugin
+  // setup precedes globalSetup), so the server is reachable by then.
+  globalSetup: './test/warmup/global-setup.ts',
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
 
@@ -65,29 +67,14 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
 
+  // No `dependencies` on any of these. Warming the dev server's first client
+  // build used to be a `warmup` project every other project depended on; it is
+  // `globalSetup` now, which happens once for the whole run and needs nothing
+  // declared per project — including by the next project someone adds.
   projects: [
-    // Runs first and alone; both suites below wait for it. Its only job is to
-    // make the dev server's first client build happen inside a test that is
-    // allowed to take four minutes — see test/warmup/warmup.spec.ts.
-    { name: 'warmup', testDir: './test/warmup', use: { ...devices['Desktop Chrome'] } },
-    {
-      name: 'a11y',
-      testDir: './test/a11y',
-      use: { ...devices['Desktop Chrome'] },
-      dependencies: ['warmup'],
-    },
-    {
-      name: 'csp',
-      testDir: './test/csp',
-      use: { ...devices['Desktop Chrome'] },
-      dependencies: ['warmup'],
-    },
-    {
-      name: 'e2e',
-      testDir: './test/e2e',
-      use: { ...devices['Desktop Chrome'] },
-      dependencies: ['warmup'],
-    },
+    { name: 'a11y', testDir: './test/a11y', use: { ...devices['Desktop Chrome'] } },
+    { name: 'csp', testDir: './test/csp', use: { ...devices['Desktop Chrome'] } },
+    { name: 'e2e', testDir: './test/e2e', use: { ...devices['Desktop Chrome'] } },
   ],
 
   webServer: {
