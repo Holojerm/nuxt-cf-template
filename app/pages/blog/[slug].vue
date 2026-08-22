@@ -27,7 +27,13 @@ definePageMeta({
 const route = useRoute()
 const site = useSiteContext()
 
-const { data: post } = await useFetch(() => `/api/blog/${route.params.slug}`)
+// Encoded, even though the server only ever answers for `[a-z0-9-]`: the value
+// here is whatever was in the address bar, and an unencoded `?` or `#` would
+// silently truncate the request path into a URL that resolves to a different
+// route rather than to the 404 the reader should get.
+const { data: post } = await useFetch(
+  () => `/api/blog/${encodeURIComponent(String(route.params.slug ?? ''))}`,
+)
 
 // A missing slug is a 404, not an empty page. `fatal` so it renders the error
 // page on a client-side navigation too, not just on the server render.

@@ -13,9 +13,14 @@ import { listBlogPosts } from '../../utils/blog'
 export default defineEventHandler(async (event) => {
   const posts = await listBlogPosts(event)
 
-  // Content is immutable between deploys, so a short shared cache is free.
-  // Short rather than long because publishing a post should not mean waiting
-  // out a cache to see it.
+  // Five minutes, to browsers and to any shared cache that sees it (`max-age`
+  // binds both; there is no `s-maxage` because there is no reason to split
+  // them). Cloudflare's edge does not cache an /api/ path without a cache rule,
+  // so in practice this is the reader's own browser. Short rather than long
+  // because publishing a post should not mean waiting out a cache to see it.
+  //
+  // Unlike the crawler files, this route does NOT swallow a query failure —
+  // it throws, so there is no degraded response to accidentally cache.
   setResponseHeader(event, 'Cache-Control', 'public, max-age=300')
 
   return posts

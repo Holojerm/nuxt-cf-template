@@ -13,10 +13,15 @@
 // different Zod instance is a cross-version detail with no upside here — the
 // app's own input validation (server/api/**) is still Zod 4, as CLAUDE.md says.
 //
-// One thing this schema does NOT do is enforce the string lengths at build
-// time. Content derives SQL columns from the schema; it does not run the
-// refinements against your frontmatter. `bun run seo:check` reads the same
-// bounds off the markdown files instead — see scripts/check-seo.ts.
+// ── This schema is a column definition, not a validator ─────────────────────
+// Read that literally. Content walks the schema to derive SQL columns, their
+// types, and their defaults; it never runs it against your frontmatter. So the
+// TYPES below are real — a `draft` column is BOOLEAN, an absent one takes the
+// declared default — and every REFINEMENT below is documentation: `.min(50)`,
+// `.max(70)`, and the `isoDate` regex all pass silently on frontmatter that
+// violates them. `bun run seo:check` re-states those rules against the markdown
+// files themselves, and that is the copy that fails a build. Keep the two in
+// step; scripts/check-seo.ts points back here.
 
 import { defineCollection, defineContentConfig, z } from '@nuxt/content'
 
@@ -48,6 +53,17 @@ export default defineContentConfig({
         updated: isoDate.optional(),
         /** Byline. Becomes the `author` Person node in the post's JSON-LD. */
         author: z.string().min(1),
+        /**
+         * Unfinished. Never listed anywhere; openable by URL in dev only —
+         * see `isPostVisible()` in shared/utils/blog.ts.
+         *
+         * `.default(false)` rather than `.optional()`, and that is the one
+         * refinement on this page that genuinely does something: content writes
+         * the declared default into the column when the key is absent, so
+         * `draft` is never NULL and the query can filter with a plain `= false`
+         * instead of tripping over SQL three-valued logic.
+         */
+        draft: z.boolean().default(false),
       }),
     }),
   },

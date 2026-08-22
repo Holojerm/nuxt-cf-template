@@ -322,12 +322,18 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
 ### Blog content (@nuxt/content)
 
 - **A post is a markdown file in `content/blog/`.** The filename is the URL. Frontmatter is
-  `title`, `description`, `date`, `author`, and optional `updated`, declared in
+  `title`, `description`, `date`, `author`, and optional `updated` and `draft`, declared in
   `content.config.ts`. Quote the dates — unquoted YAML dates become `Date` objects and lose a
   day to a timezone somewhere between YAML, SQLite, and JSON.
 - **The schema does not enforce its own bounds.** Content turns a collection schema into SQL
-  columns; it never runs the refinements against your frontmatter. `bun run seo:check` reads
-  `content/blog/*.md` and applies the title/description limits there instead.
+  columns; it never runs the refinements against your frontmatter. Only the *types* and
+  *defaults* are real. `bun run seo:check` reads `content/blog/*.md` and applies the
+  title/description limits there instead, plus dates that are well-formed, not in the future,
+  and in the right order.
+- **`draft: true` hides a post from every list** (the query filters it, so it is absent from
+  /blog, sitemap.xml, and llms.txt) but leaves its URL readable in dev and 404 in production.
+  The rule is `isPostVisible()` in `shared/utils/blog.ts` — one function, tested, called from
+  the slug route.
 - **Never call `queryCollection()` from app code.** On the client it downloads the collection
   dump and runs it through `@sqlite.org/sqlite-wasm` — a megabyte of WebAssembly, and blocked
   by this app's CSP, which does not grant `'wasm-unsafe-eval'`. Query it in `server/`
@@ -666,7 +672,11 @@ so consola throws `uv_tty_init returned EINVAL` and `nuxt prepare` dies during p
 Observed on a clean `bun install` before `content.experimental.sqliteConnector` was set.
 
 `nuxt.config.ts` pins `sqliteConnector: 'native'` — Node's built-in `node:sqlite`, hence the
-`node >= 22.5` line in `engines`. Note the module's own Bun detection cannot help here:
+`node >= 22.13` line in `engines`. **22.13**, not the 22.5.0 that first shipped `node:sqlite`:
+it was behind `--experimental-sqlite` until 22.13.0 / 23.4.0, and on 22.5–22.12 the module's
+availability probe returns false and falls straight back to the better-sqlite3 prompt — so the
+wrong Node reads as the same confusing crash rather than as a version error.
+Note the module's own Bun detection cannot help here either:
 `bun run dev` and `bun run build` both shell out to the `nuxt` bin, which has a node shebang,
 so `process.versions.bun` is undefined by the time the connector is chosen.
 
