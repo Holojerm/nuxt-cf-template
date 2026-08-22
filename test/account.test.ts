@@ -270,11 +270,14 @@ describe('exportAccount', () => {
       email: 'ada@example.com',
       repliedBy: 'admin-1',
     })
+    // Only one optional type is overridden — the export should still report
+    // the EFFECTIVE state of every optional type, not just the rows that
+    // happen to exist (see AccountExportNotificationPreference).
     await db.insert(schema.notificationPreferences).values({
       id: 'pref-1',
       userId: USER,
       channel: 'email',
-      eventType: 'payment_failed',
+      eventType: 'product_updates',
       enabled: false,
     })
     // Targets this user — belongs in the export.
@@ -318,8 +321,12 @@ describe('exportAccount', () => {
     expect(result.feedback[0]).not.toHaveProperty('repliedBy')
     expect(result.feedback[0]).not.toHaveProperty('ipHash')
 
+    // Every optional type appears — welcome/referral default-on since neither
+    // was ever toggled, product_updates reflects the row above.
     expect(result.notificationPreferences).toEqual([
-      { channel: 'email', eventType: 'payment_failed', enabled: false },
+      { eventType: 'welcome', enabled: true },
+      { eventType: 'product_updates', enabled: false },
+      { eventType: 'referral', enabled: true },
     ])
 
     // Only the row that targets THIS user — and never who did it.

@@ -36,6 +36,8 @@ import type { AuditMetadata } from '../db/schema'
 import { ACTIVE_STATUSES } from './entitlements'
 import { isSubscriptionRef } from './paddle-refs'
 import { withAudit } from './audit'
+import { isNotificationEnabled } from './notifications'
+import { OPTIONAL_NOTIFICATION_EVENT_TYPES } from '#shared/utils/notifications'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type AccountDb = ReturnType<typeof drizzle<typeof tables>>
@@ -254,8 +256,16 @@ export interface AccountExportFeedback {
   createdAt: string
 }
 
+/**
+ * The EFFECTIVE state of one optional email type — not a raw row. Absence of
+ * a `notification_preferences` row means default-on (see schema.ts), so a
+ * person who never touched their settings would export an empty array if this
+ * read the table directly; that's a correct query and a misleading "copy of
+ * your data" all the same. Computed the same way the /account preferences UI
+ * itself does (server/api/account/notifications.get.ts), so the export can
+ * never disagree with what the toggle already shows.
+ */
 export interface AccountExportNotificationPreference {
-  channel: string
   eventType: string
   enabled: boolean
 }
@@ -290,7 +300,7 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
   const user = await db.query.users.findFirst({ where: eq(tables.users.id, userId) })
   if (!user) return null
 
-  const [entitlementRows, feedbackRows, notificationRows, auditRows] = await Promise.all([
+  const [entitlementRows, feedbackRows, notificationPreferences, auditRows] = await Promise.all([
     db.query.entitlements.findMany({
       where: eq(tables.entitlements.userId, userId),
       orderBy: desc(tables.entitlements.createdAt),
@@ -299,9 +309,12 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
       where: eq(tables.feedback.userId, userId),
       orderBy: desc(tables.feedback.createdAt),
     }),
-    db.query.notificationPreferences.findMany({
-      where: eq(tables.notificationPreferences.userId, userId),
-    }),
+    Promise.all(
+      OPTIONAL_NOTIFICATION_EVENT_TYPES.map(async (eventType) => ({
+        eventType,
+        enabled: await isNotificationEnabled(db, userId, eventType),
+      })),
+    ),
     db.query.auditLog.findMany({
       where: and(eq(tables.auditLog.targetType, 'user'), eq(tables.auditLog.targetId, userId)),
       orderBy: desc(tables.auditLog.createdAt),
@@ -343,11 +356,7 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
       status: row.status,
       createdAt: row.createdAt.toISOString(),
     })),
-    notificationPreferences: notificationRows.map((row) => ({
-      channel: row.channel,
-      eventType: row.eventType,
-      enabled: row.enabled,
-    })),
+    notificationPreferences,
     auditEntries: auditRows.map((row) => ({
       action: row.action,
       actorType: row.actorType,
