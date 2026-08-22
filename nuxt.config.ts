@@ -509,6 +509,20 @@ export default defineNuxtConfig({
     turnstile: {
       secretKey: '',
     },
+    // Which queue the email consumer owns, set by NUXT_EMAIL_QUEUE_NAME in
+    // wrangler.toml's [vars] — and again, with a different value, in
+    // [env.preview.vars].
+    //
+    // It is configuration rather than a constant precisely because those two
+    // values differ. A constant is baked into the bundle once, so it matched
+    // the production queue and silently failed to match the preview one; the
+    // consumer then returned without acking, which acks the batch by omission,
+    // and every preview email disappeared. See shouldHandleQueue().
+    //
+    // Empty here on purpose: the default must not be a stale `my-app-email`
+    // that survives `bun run rename`. Unset means "accept every batch", which
+    // for a Worker with one consumer is the safe direction to fail.
+    emailQueueName: '',
     // Transactional email (server/utils/email.ts). Empty key = no-op, so the
     // template runs without a Resend account.
     resend: {

@@ -37,9 +37,24 @@
 // task runtime), which is why the DB logic lives in server/utils/purge.ts and
 // is tested there rather than through this wrapper.
 
+// `db` and `blob` are imported explicitly rather than left to NuxtHub's
+// auto-imports, matching server/utils/account.ts and server/utils/rate-limit.ts.
+// The auto-imports typecheck everywhere but are not always INJECTED at runtime
+// — `kv` resolved to `ReferenceError: kv is not defined` in a server util while
+// the build, typecheck and lint were all green (CLAUDE.md › Gotchas). A task is
+// a worse place than most to discover that: it is an untested bundling surface
+// that runs unattended at 04:00, and the only symptom would be a cron event
+// that failed nightly with nobody watching.
+import { blob } from '@nuxthub/blob'
+import { db } from '@nuxthub/db'
 import { z } from 'zod'
 
-import { purgeExpiredTokens, PURGE_BATCH_LIMIT, PURGE_GRACE_SECONDS } from '../utils/purge'
+import {
+  purgeExpiredTokens,
+  purgePendingUploads,
+  PURGE_BATCH_LIMIT,
+  PURGE_GRACE_SECONDS,
+} from '../utils/purge'
 
 // Cron delivers `{ scheduledTime }` and nothing else, so in practice this
 // validates the hand-run dev route above — where the values arrive as query
@@ -68,19 +83,25 @@ export default defineTask({
     const options = parsed.success ? parsed.data : PayloadSchema.parse({})
 
     const started = Date.now()
-    // `db` is the NuxtHub auto-import. It resolves the D1 binding lazily off
-    // `globalThis.__env__`, which the preset's `scheduled()` sets before it
-    // calls us — so there is a real database here even though no request ran.
+    // `db` resolves the D1 binding lazily off `globalThis.__env__`, which the
+    // preset's `scheduled()` sets before it calls us — so there is a real
+    // database here even though no request ran.
     const result = await purgeExpiredTokens(db, options)
+    // Sequential, not Promise.all: these are two independent sweeps and
+    // running them concurrently only buys latency nobody is waiting for, while
+    // doubling the D1 work in flight during a cron tick.
+    const uploads = await purgePendingUploads(db, blob, options)
 
     console.info(
       JSON.stringify({
         kind: 'purge_expired_tokens',
         ...result,
+        pendingUploads: uploads.files,
+        truncated: result.truncated || uploads.truncated,
         durationMs: Date.now() - started,
       }),
     )
 
-    return { result }
+    return { result: { ...result, pendingUploads: uploads.files } }
   },
 })

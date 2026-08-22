@@ -85,6 +85,13 @@
       "when": 1787403596576,
       "tag": "0011_fine_zzzax",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1787405796700,
+      "tag": "0012_high_baron_strucker",
+      "breakpoints": true
     }
   ]
 }

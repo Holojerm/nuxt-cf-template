@@ -6,8 +6,8 @@
 // [vars] — and then all of that again inside [env.preview], because bindings
 // are non-inheritable and the preview environment repeats every one of them.
 // Outside it: two package.json scripts (wrangler's `d1 migrations` subcommand
-// takes a database NAME, not a binding), portless.name, the Nuxt MCP URL, and
-// the MCP worker's own config.
+// takes a database NAME, not a binding), portless.name, the Nuxt MCP URL, the
+// MCP worker's own config, and the server name it reports to MCP clients.
 //
 // Missing one produces failures that don't look like a rename problem at all.
 // Workers Builds refuses every build when the dashboard Worker name doesn't
@@ -20,9 +20,14 @@
 // time). The count is computed, not asserted — adding a `my-app` to a file
 // already listed here needs no change to this script.
 //
-// It deliberately does NOT touch README.md or CLAUDE.md — those explain the
+// It deliberately does NOT touch prose: README.md and CLAUDE.md explain the
 // template using `my-app` as the worked example, and rewriting them mid-sentence
-// makes the docs read like nonsense.
+// makes the docs read like nonsense. The same exemption covers the one
+// `my-app-email-preview` left in a comment in server/utils/email-queue.ts,
+// which is an example inside an explanation rather than a value anything reads.
+// That file used to be a target, back when it held the queue name as a
+// constant; the name now lives in wrangler.toml's [vars] precisely because a
+// constant could not differ between production and preview.
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -79,14 +84,13 @@ const TARGETS: Target[] = [
   { file: 'wrangler.toml' },
   { file: 'package.json' },
   { file: '.mcp.json' },
-  // The only .ts source in this list. EMAIL_QUEUE_NAME has to equal the `queue`
-  // in both [[queues.producers]] and [[queues.consumers]], because the consumer
-  // filters on it — the cloudflare:queue hook fires for every queue bound to
-  // the Worker. A binding could have been read from the env instead; the queue
-  // NAME cannot, since the whole point is to compare it against the batch's.
-  { file: 'server/utils/email-queue.ts' },
   { file: 'mcp/wrangler.jsonc', optional: true },
   { file: 'mcp/package.json', optional: true },
+  // The only .ts source in this list, and the only functional placeholder that
+  // is not in a config file: `new McpServer({ name: 'my-app-mcp' })`. That name
+  // is what an MCP client displays for the connection, so leaving it behind
+  // means every user of a renamed fork sees "my-app-mcp" in their client.
+  { file: 'mcp/src/server.ts', optional: true },
 ]
 
 const changes: { file: string; count: number }[] = []

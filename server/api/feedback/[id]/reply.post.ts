@@ -78,6 +78,10 @@ export default defineEventHandler(async (event) => {
   const result = await sendEmail({
     to,
     replyTo: config.public.supportEmail,
+    // Not queued: `replied_at` is stamped on `sent` below, and a queued send
+    // reports success at enqueue — so a reply Resend later refused would be
+    // recorded as answered and drop out of the triage queue.
+    inline: true,
     ...feedbackReplyEmail(emailBranding(), {
       reply: body.message,
       originalMessage: row.message,

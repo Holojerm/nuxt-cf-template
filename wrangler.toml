@@ -6,14 +6,32 @@
 # which requires `wrangler login` OR CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars.
 #
 # ─── PROJECT NAME ────────────────────────────────────────────────────────────
-# Run `bun run rename <your-name>` — it updates `name`, `database_name`,
-# `bucket_name`, and `NUXT_PUBLIC_APP_NAME` here plus the other five places
-# `my-app` appears (package.json scripts + portless.name, .mcp.json, mcp/).
+# Run `bun run rename <your-name>`. In THIS file it rewrites `name`,
+# `database_name`, `bucket_name`, both queue names and their dead-letter
+# queues, `NUXT_EMAIL_QUEUE_NAME`, `NUXT_PUBLIC_APP_NAME` — and all of that
+# again inside [env.preview], which repeats every binding. It also covers
+# package.json (scripts + portless.name), .mcp.json, and mcp/. Run it once and
+# read what it prints; the placeholders it cannot fill in are listed there.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name = "my-app"
 compatibility_date = "2025-09-01"
-compatibility_flags = ["nodejs_compat"]
+# `queue_consumer_wait_for_wait_until` is not decoration — it PINS today's
+# default, and the email consumer's correctness rests on it.
+#
+# Nitro's `queue()` handler returns synchronously and only `waitUntil`s the
+# hook, so every ack()/retry() in server/plugins/email-queue-consumer.ts runs
+# after the handler has returned. Cloudflare's default is to wait for
+# `waitUntil` promises before acknowledging a batch, which is what makes that
+# safe. The opposite flag, `queue_consumer_no_wait_for_wait_until`, is
+# experimental with no enable date today — but if a `compatibility_date` bump
+# ever makes it the default, every batch would be acked before a single
+# decision was made and `retry()` would silently become a no-op. Mail would
+# disappear while the logs still reported retries.
+#
+# Pinning the disable flag makes a future date bump safe. `compatibility_flags`
+# is inheritable, so [env.preview] gets it too without repeating it.
+compatibility_flags = ["nodejs_compat", "queue_consumer_wait_for_wait_until"]
 
 [[d1_databases]]
 binding = "DB"
@@ -83,17 +101,25 @@ queue = "my-app-email"
 # so a full batch saves one Worker invocation, not one API call.
 max_batch_timeout = 1
 max_batch_size = 10
-# Must equal EMAIL_QUEUE_MAX_ATTEMPTS in server/utils/email-queue.ts. Cloudflare
-# owns the real cap — `message.retry()` on the final attempt is what moves a
-# message to the dead-letter queue — and that constant exists so the consumer
-# can log the last attempt as it happens instead of it vanishing silently.
+# RETRIES, not deliveries: a message is delivered once and then retried up to
+# this many times, so `message.attempts` runs 1…4. EMAIL_QUEUE_MAX_ATTEMPTS in
+# server/utils/email-queue.ts must therefore be `max_retries + 1`, not this
+# number — it was this number, and the consumer logged "final attempt" on the
+# third of four deliveries. Cloudflare owns the real cap: `message.retry()` on
+# the last delivery is what moves a message to the dead-letter queue.
 max_retries = 3
 # Created automatically on deploy if it doesn't exist. Anything in here is mail
-# that failed three transient attempts: read it with `wrangler queues consumer`
+# that failed four transient attempts: read it with `wrangler queues consumer`
 # or attach a consumer. Note that a PERMANENT failure (a 4xx from Resend — bad
 # `from` domain, suppressed recipient) never lands here; it is acked and logged
-# as `email_queue_dead_letter`, because a third identical rejection teaches
-# nothing.
+# as `email_permanent_failure` with `dropped: true`, because a fourth identical
+# rejection teaches nothing.
+#
+# PII AT REST. A dead-lettered message is the whole rendered email, so this
+# queue holds recipient addresses and full message bodies, readable by anyone
+# with account access. The consumer is careful never to log those; this queue
+# stores them by design. Drain it rather than letting it accumulate, and
+# remember it exists when you answer a deletion request.
 dead_letter_queue = "my-app-email-dlq"
 
 # ─── Scheduled tasks ─────────────────────────────────────────────────────────
@@ -108,6 +134,13 @@ crons = ["0 4 * * *"]
 
 [vars]
 NUXT_PUBLIC_APP_NAME = "My App"
+# Which queue server/plugins/email-queue-consumer.ts owns. MUST equal the
+# `queue` in [[queues.consumers]] above — and the [env.preview] copy must equal
+# ITS consumer's queue, which is a different string. That is the whole reason
+# this is a var and not a constant in the bundle: a constant matched production
+# and silently failed to match preview, and a consumer that skips a batch acks
+# it by omission, so every preview email was destroyed without a log line.
+NUXT_EMAIL_QUEUE_NAME = "my-app-email"
 # Canonical public origin, no trailing slash. Emails, sitemap.xml, robots.txt
 # and og: tags build absolute links from this — a webhook has no request to
 # infer it from. Set it to your real domain before the first production deploy.
@@ -226,6 +259,9 @@ dead_letter_queue = "my-app-email-preview-dlq"
 
 [env.preview.vars]
 NUXT_PUBLIC_APP_NAME = "My App (preview)"
+# The PREVIEW queue's name — deliberately different from the one in [vars], and
+# the reason that value cannot be a compile-time constant.
+NUXT_EMAIL_QUEUE_NAME = "my-app-email-preview"
 # The preview Worker's own origin. `wrangler versions upload` also mints a
 # per-version URL that this cannot know in advance; this value is what emails,
 # canonical tags and sitemap entries are built from, so pointing it at the

@@ -49,7 +49,12 @@
 // Explicit, not the Nitro auto-import: this file is loaded directly by
 // test/email.test.ts, where nothing is injected.
 import { isMandatoryNotification } from '#shared/utils/notifications'
-import { resolveEmailQueue, shouldUseEmailQueue } from './email-queue'
+import {
+  classifyResendResponse,
+  EMAIL_FAILURE_KIND,
+  resolveEmailQueue,
+  shouldUseEmailQueue,
+} from './email-queue'
 import type { EmailQueueMessage } from './email-queue'
 
 export interface SendEmailOptions {
@@ -66,6 +71,24 @@ export interface SendEmailOptions {
    * header.
    */
   unsubscribe?: { eventType: string; url: string }
+  /**
+   * Bypass the queue and POST to Resend on this thread, even where a producer
+   * binding exists.
+   *
+   * For the two callers whose contract is "tell me whether this actually
+   * sent". Queued, `sent: true` only means "accepted for delivery", which is
+   * the right answer almost everywhere and the wrong one for:
+   *
+   *   * `POST /api/auth/magic-link`, which owes the caller a 503 when it could
+   *     not send — with the queue, a broken `from` domain answered 200 "check
+   *     your inbox" and the link never arrived.
+   *   * `POST /api/feedback/:id/reply`, which stamps `replied_at` on success
+   *     and would otherwise record a reply that Resend later refused.
+   *
+   * Everything else should stay queued: retries and a dead-letter queue are
+   * worth more than a synchronous answer nobody reads.
+   */
+  inline?: boolean
 }
 
 export type SendEmailResult =
@@ -168,7 +191,7 @@ export async function sendEmail(opts: SendEmailOptions): Promise<SendEmailResult
   // when it does, the correct move is the thing this function did before the
   // queue existed, not an error. That keeps the never-throws contract true and
   // means adding the queue cannot have made any call site less reliable.
-  const queue = resolveEmailQueue()
+  const queue = opts.inline ? undefined : resolveEmailQueue()
   if (shouldUseEmailQueue(queue, import.meta.dev)) {
     try {
       await queue.send({ v: 1, enqueuedAt: Date.now(), request } satisfies EmailQueueMessage)
@@ -194,19 +217,27 @@ export async function sendEmail(opts: SendEmailOptions): Promise<SendEmailResult
       body: JSON.stringify(request),
     })
 
-    if (!res.ok) {
+    // The SAME classifier the queue consumer uses, so one status cannot mean
+    // two things depending on which path happened to carry the message.
+    const outcome = classifyResendResponse(res.status)
+    if (outcome !== 'sent') {
       // Log the status and Resend's message, never the recipient's address
       // alongside the body — logs are the easiest place to leak PII by accident.
       const detail = await res.text().catch(() => '')
       console.error(
         JSON.stringify({
-          kind: 'email_rejected',
+          kind: EMAIL_FAILURE_KIND[outcome],
+          path: 'inline',
           status: res.status,
           subject: opts.subject,
           detail: detail.slice(0, 300),
         }),
       )
-      return { sent: false, reason: 'rejected' }
+      // `transient` is the provider being unwell, not this address being bad —
+      // reporting it as `rejected` told magic-link "that mailbox refused you",
+      // which it answers with 200 to avoid an enumeration oracle. A Resend
+      // outage therefore looked like a delivered sign-in link.
+      return { sent: false, reason: outcome === 'permanent' ? 'rejected' : 'error' }
     }
 
     const body = (await res.json().catch(() => null)) as { id?: string } | null

@@ -19,6 +19,7 @@ import {
   EMAIL_QUEUE_MAX_ATTEMPTS,
   EmailQueueMessageSchema,
   resolveEmailQueue,
+  shouldHandleQueue,
   shouldUseEmailQueue,
 } from '../server/utils/email-queue'
 
@@ -83,6 +84,32 @@ describe('shouldUseEmailQueue', () => {
   })
 })
 
+describe('shouldHandleQueue', () => {
+  // The bug this function exists for: the expected name used to be a
+  // compile-time constant equal to the PRODUCTION queue, so in preview the
+  // consumer skipped every batch — and skipping without acking acks the batch
+  // by omission, so all preview mail was destroyed with no log line.
+  it('handles the production queue when configured for production', () => {
+    expect(shouldHandleQueue('my-app-email', 'my-app-email')).toBe(true)
+  })
+
+  it('handles the PREVIEW queue when configured for preview', () => {
+    expect(shouldHandleQueue('my-app-email-preview', 'my-app-email-preview')).toBe(true)
+  })
+
+  it('does not treat the preview queue as the production one', () => {
+    // Exactly the mismatch a constant produced, and the reason `bun run rename`
+    // could not fix it: `<name>-email` and `<name>-email-preview` differ.
+    expect(shouldHandleQueue('my-app-email-preview', 'my-app-email')).toBe(false)
+  })
+
+  it('accepts every batch when the name is unconfigured', () => {
+    // One consumer is configured, so delivering beats dropping silently.
+    expect(shouldHandleQueue('anything', '')).toBe(true)
+    expect(shouldHandleQueue('anything', undefined)).toBe(true)
+  })
+})
+
 describe('classifyResendResponse', () => {
   it.each([200, 202])('treats %i as sent', (status) => {
     expect(classifyResendResponse(status)).toBe('sent')
@@ -124,6 +151,16 @@ describe('decideQueueOutcome', () => {
     const decision = decideQueueOutcome('transient', EMAIL_QUEUE_MAX_ATTEMPTS)
     expect(decision.action).toBe('retry')
     expect(decision.final).toBe(true)
+  })
+
+  it('counts deliveries, not retries — `final` is false on max_retries', () => {
+    // The off-by-one this constant was born with. `max_retries = 3` means the
+    // message is DELIVERED up to four times (miniflare: `maxAttempts =
+    // maxRetries + 1`), so attempt 3 is not the last one and must not be
+    // logged as such.
+    expect(EMAIL_QUEUE_MAX_ATTEMPTS).toBe(4)
+    expect(decideQueueOutcome('transient', 3).final).toBe(false)
+    expect(decideQueueOutcome('transient', 4).final).toBe(true)
   })
 
   it('acks a permanent rejection instead of burning attempts on it', () => {
@@ -216,6 +253,49 @@ describe('sendEmail — producer vs inline', () => {
 
     expect(result).toEqual({ sent: true, id: 'email_fallback' })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('`inline: true` bypasses the queue even though a binding exists', async () => {
+    // The opt-out for callers whose contract is "sent, or an error": the
+    // magic-link endpoint owes a 503 it cannot produce from an enqueue, and
+    // the feedback reply stamps `replied_at` on success.
+    const queue = fakeQueue()
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ id: 'email_inline' }), { status: 200 }),
+    )
+    vi.stubGlobal('__env__', { [EMAIL_QUEUE_BINDING]: queue })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('useRuntimeConfig', () => CONFIGURED)
+
+    const result = await sendEmail({ ...BASE, inline: true })
+
+    expect(result).toEqual({ sent: true, id: 'email_inline' })
+    expect(queue.sent).toHaveLength(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a provider outage as `error`, not `rejected`', async () => {
+    // Both paths now share classifyResendResponse. A 503 is the provider being
+    // unwell, not this address being refused — and magic-link answers
+    // `rejected` with 200 (to avoid an enumeration oracle), so misclassifying
+    // an outage told the user their sign-in link was on its way.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('upstream boom', { status: 503 })),
+    )
+    vi.stubGlobal('useRuntimeConfig', () => CONFIGURED)
+
+    expect(await sendEmail(BASE)).toEqual({ sent: false, reason: 'error' })
+  })
+
+  it('still reports a per-message 4xx as `rejected`', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('bad from', { status: 422 })),
+    )
+    vi.stubGlobal('useRuntimeConfig', () => CONFIGURED)
+
+    expect(await sendEmail(BASE)).toEqual({ sent: false, reason: 'rejected' })
   })
 
   it('checks configuration before the queue, so unconfigured never enqueues', async () => {

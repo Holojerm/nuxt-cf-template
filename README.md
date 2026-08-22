@@ -368,13 +368,19 @@ half-finished migration and destructive query lands in your live database.
 
 ```bash
 wrangler d1 create my-app-db-preview            # copy the database_id
-wrangler kv namespace create KV --preview       # copy the id
+wrangler kv namespace create KV-preview         # copy the id
 wrangler r2 bucket create my-app-blob-preview
 wrangler queues create my-app-email-preview
 ```
 
 Paste the two ids into the `[env.preview]` placeholders in `wrangler.toml`
 (`YOUR_PREVIEW_D1_DATABASE_ID`, `YOUR_PREVIEW_KV_NAMESPACE_ID`).
+
+> A separate namespace, deliberately, rather than `wrangler kv namespace create KV --preview`.
+> That flag creates a *preview namespace attached to the production binding* and prints a
+> `preview_id`, which is a different concept: it is what `wrangler dev` uses locally, not what
+> a deployed `[env.preview]` Worker binds. Pasting a `preview_id` into `id` here is the kind
+> of mistake that appears to work until preview writes start landing in production's KV.
 
 ### 2. Bootstrap the preview Worker once
 
@@ -661,7 +667,18 @@ older than a 24-hour grace window — nothing in the request path ever deleted t
 tables grew forever with sign-ins. The grace window is deliberate: a spent token is the only
 evidence a link was replayed, and an expired one is what lets the verify page say "expired"
 rather than "invalid". Each run deletes at most 5000 rows per table, so a long backlog drains
-over several days instead of timing out forever on one enormous `DELETE`.
+over several days instead of timing out forever on one enormous `DELETE`. Both tables carry
+indexes on `expires_at` and `used_at` for this sweep: the `LIMIT` bounds rows *deleted*, not
+rows *examined*, so without them the nightly job scanned the fastest-growing table in the
+database and got slower as the product succeeded.
+
+The same task also collects **abandoned uploads**: `files` rows are written before the object
+exists (the client uploads to R2 directly), so a row still `pending` a day later is an upload
+someone started and walked away from. The schema had promised a sweeper since the table was
+added and none existed, so those rows — and the R2 objects they pointed at — accumulated
+forever. The object is deleted before the row, because the row is the only record of the key:
+delete it first and the object is orphaned permanently, where the other order at worst leaves a
+row whose object is already gone, which the next run retries.
 
 **It runs in `bun dev` too** — the dev preset drives the same map with croner, in-process. To
 run it right now instead of waiting for 04:00, Nitro mounts a dev-only route:
@@ -690,11 +707,12 @@ send becomes a logged no-op, so the template runs without a Resend account.
 **It goes through a queue in production.** When the `EMAIL_QUEUE` producer binding exists,
 `sendEmail()` hands the built request to Cloudflare Queues and returns; the consumer in
 [`server/plugins/email-queue-consumer.ts`](./server/plugins/email-queue-consumer.ts) does the
-Resend POST with retries, dead-lettering to `my-app-email-dlq` after three transient failures.
+Resend POST with retries, dead-lettering to `my-app-email-dlq` after four transient failures
+(`max_retries = 3` counts retries, so a message is *delivered* up to four times).
 That takes a third-party API call off the request path and turns a transient 503 from "the mail
 is gone" into "the mail is late".
 
-Three things worth knowing:
+Things worth knowing:
 
 - **`bun dev` always sends inline.** The dev server has a producer binding (miniflare provides
   one) but no consumer — the dev preset exports no `queue()` handler — so enqueueing there
@@ -702,12 +720,35 @@ Three things worth knowing:
 - **The unconfigured check happens before the enqueue,** and if the enqueue itself fails the
   send falls back to an inline POST. Adding the queue cannot have made any call site less
   reliable than it was.
-- **A permanent rejection (any 4xx but 429) is acked, not retried.** It fails identically three
-  times; the log line `email_queue_dead_letter` is the record. The DLQ is reserved for mail
-  that might still be deliverable.
+- **Two callers opt out with `inline: true`** — the magic-link endpoint, whose contract is
+  "sent, or 503", and the feedback reply, which stamps `replied_at` on success. Queued,
+  `sent: true` only means "accepted for delivery", which would make both of those lie.
+- **A permanent rejection (any 4xx but 429) is acked, not retried.** It fails identically four
+  times; the log line is `email_permanent_failure` with `dropped: true`. It never reaches the
+  DLQ — acking is what keeps it out — and the DLQ is reserved for mail that might still be
+  deliverable.
+- **Both paths share one classifier**, so a given Resend status means the same thing whether it
+  was delivered inline or from the queue, and both log the same two kinds
+  (`email_permanent_failure` / `email_transient_failure`) with a `path` field.
+- **Each POST carries `Idempotency-Key: <message id>`.** A queue message id is stable across
+  redeliveries, so an attempt Resend accepted but we failed to observe — a timeout after the
+  send, an isolate evicted before `ack()` — is deduplicated instead of delivered twice. It also
+  makes re-driving the DLQ by hand safe.
 
 `max_batch_timeout` is set to **1** second rather than the 30s default, because the magic-link
 email is the one message a user is actively waiting on.
+
+> **The dead-letter queue holds PII at rest.** A dead-lettered message is the whole rendered
+> email, so `my-app-email-dlq` contains recipient addresses and full message bodies, readable by
+> anyone with account access. The consumer never logs those; this queue stores them by design.
+> Drain it rather than letting it accumulate, and remember it when answering a deletion request.
+
+> **`compatibility_flags` pins `queue_consumer_wait_for_wait_until`, and that is load-bearing.**
+> Nitro's `queue()` handler returns synchronously and only `waitUntil`s the hook, so every
+> `ack()`/`retry()` runs after it returns — safe only because Cloudflare waits for `waitUntil`
+> before acknowledging a batch. The opposite flag is experimental with no enable date, but if a
+> future `compatibility_date` made it default, every batch would be acked immediately and
+> `retry()` would silently become a no-op. Pinning the disable flag makes a date bump safe.
 
 Which emails exist, and when they fire — decided by `decideNotification()` in
 [`server/utils/billing-notifications.ts`](./server/utils/billing-notifications.ts), covered by

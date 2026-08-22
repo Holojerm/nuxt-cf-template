@@ -205,6 +205,10 @@ export default defineEventHandler(async (event) => {
 
   const result = await sendEmail({
     to: email,
+    // Not queued: this endpoint's contract is "sent, or 503", and a queued send
+    // can only report "accepted for delivery" — which made the failure branch
+    // below unreachable and answered a broken from-domain with "check your inbox".
+    inline: true,
     ...magicLinkEmail(brand, { url, expiresMinutes: MAGIC_LINK_TTL_SECONDS / 60 }),
   })
 

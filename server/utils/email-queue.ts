@@ -42,22 +42,14 @@ import { z } from 'zod'
 export const EMAIL_QUEUE_BINDING = 'EMAIL_QUEUE'
 
 /**
- * Queue name — must match `queue` in BOTH `[[queues.producers]]` and
- * `[[queues.consumers]]`, and the queue you created with `wrangler queues
- * create`.
+ * MUST equal `max_retries` **+ 1** in the `[[queues.consumers]]` block.
  *
- * The consumer filters on it, because the `cloudflare:queue` hook fires for
- * every queue bound to this Worker.
- *
- * It carries the `my-app` placeholder, so `scripts/rename.ts` lists this file
- * as a target — the only .ts source it touches. Queue names are unique per
- * Cloudflare ACCOUNT, not per Worker, so an unprefixed `email` would collide
- * with the next project on the same account; the prefix is not decoration.
- */
-export const EMAIL_QUEUE_NAME = 'my-app-email'
-
-/**
- * MUST equal `max_retries` in the `[[queues.consumers]]` block.
+ * `max_retries` counts RETRIES, not deliveries: a message is handed to the
+ * consumer once and then retried up to that many times, so `message.attempts`
+ * runs 1…max_retries+1. (Confirmed in miniflare's queue broker, which computes
+ * `maxAttempts = (consumer.maxRetries ?? DEFAULT_RETRIES) + 1`.) Setting this
+ * to `max_retries` made `final` true on both the third and fourth delivery, so
+ * `email_transient_failure` claimed "last attempt" a whole attempt early.
  *
  * Cloudflare owns the actual cap: calling `message.retry()` on the final
  * attempt is what moves a message to the dead-letter queue. This constant does
@@ -67,7 +59,7 @@ export const EMAIL_QUEUE_NAME = 'my-app-email'
  * a number duplicated from wrangler.toml, and named so the duplication is
  * visible rather than a literal buried in a branch.
  */
-export const EMAIL_QUEUE_MAX_ATTEMPTS = 3
+export const EMAIL_QUEUE_MAX_ATTEMPTS = 4
 
 /**
  * What the queue carries: exactly the JSON body sendEmail() would have POSTed.
@@ -165,8 +157,25 @@ export function shouldUseEmailQueue(
   return !dev && queue !== undefined
 }
 
-/** How the Resend POST ended, from the consumer's point of view. */
+/** How the Resend POST ended. Same vocabulary on both delivery paths. */
 export type DeliveryOutcome = 'sent' | 'permanent' | 'transient'
+
+/**
+ * The log `kind` for a failed send, whichever path made it.
+ *
+ * Both paths POST to the same API and classify the response with the same
+ * function, so they must not describe the same status with different words.
+ * They previously did: an inline 503 logged `email_rejected` (which reads as
+ * "the address was refused") while the same 503 in the consumer logged
+ * `email_queue_retry`. Anyone grepping for mail failures found half of them.
+ *
+ * The path is a FIELD (`path: 'inline' | 'queue'`), not part of the kind, so
+ * one query covers both and you can still split them when you want to.
+ */
+export const EMAIL_FAILURE_KIND = {
+  permanent: 'email_permanent_failure',
+  transient: 'email_transient_failure',
+} as const satisfies Record<Exclude<DeliveryOutcome, 'sent'>, string>
 
 /**
  * Classify a Resend response so the retry decision is made on facts.
@@ -180,8 +189,16 @@ export type DeliveryOutcome = 'sent' | 'permanent' | 'transient'
  * backlog at the moment the queue is doing its job.
  *
  * Every other 4xx is the message itself being wrong — an unverified `from`, a
- * suppressed recipient, a malformed body. Those fail identically on attempt
- * three, so retrying only delays the log line that tells you what to fix.
+ * suppressed recipient, a malformed body. Those fail identically on every
+ * later attempt, so retrying only delays the log line that tells you what to
+ * fix.
+ *
+ * Used by BOTH delivery paths. sendEmail()'s inline branch maps the result
+ * onto its own vocabulary — `permanent` → `rejected` (this message is wrong),
+ * `transient` → `error` (the provider is unwell) — which is what lets
+ * magic-link's 503 branch distinguish "we cannot send mail right now" from
+ * "that address bounced". Before this was shared, every non-2xx became
+ * `rejected` and a Resend outage was reported to the user as a delivered link.
  */
 export function classifyResendResponse(status: number | null): DeliveryOutcome {
   if (status === null) return 'transient'
@@ -199,15 +216,41 @@ export interface QueueDecision {
 }
 
 /**
+ * Should this consumer handle a batch from `queue`?
+ *
+ * ── Why the expected name is configuration and not a constant ────────────────
+ * It was a constant, and that was a silent bug in preview. `[env.preview]`
+ * names the queue `my-app-email-preview`, but a constant is baked into the
+ * bundle once — so `batch.queue` never matched, the consumer returned before
+ * acking or retrying anything, the batch was implicitly acked, and every
+ * preview email vanished with no log line. `bun run rename` preserved the
+ * mismatch rather than fixing it, because `<name>-email` and
+ * `<name>-email-preview` are different strings.
+ *
+ * A `vars` entry survives NuxtHub's env flattening: the whole `vars` block is
+ * replaced by `[env.preview.vars]` at build time, so the value tracks the
+ * environment the way a compile-time constant cannot.
+ *
+ * An UNSET name accepts every batch, deliberately. This Worker configures
+ * exactly one consumer, so delivering mail is strictly better than dropping it
+ * silently — the failure this whole function exists to prevent. A fork that
+ * later adds a second queue sets the var and gets filtering back.
+ */
+export function shouldHandleQueue(batchQueue: string, expected: string | undefined): boolean {
+  if (!expected) return true
+  return batchQueue === expected
+}
+
+/**
  * What to do with one message, given how its delivery went.
  *
  * Pure, and the whole point of the split: the consumer does I/O and this
  * decides, so the interesting half is testable without a queue or a network.
  *
- * `permanent` acks. That is not "giving up quietly" — the consumer logs it as a
- * dead letter with the status attached. Sending it round three more times to
- * reach the DLQ would cost three more attempts to learn the same thing, and the
- * DLQ is for messages that MIGHT still be deliverable.
+ * `permanent` acks, and the consumer logs it with `dropped: true` because the
+ * message never reaches the dead-letter queue — acking is what keeps it out.
+ * Retrying to get it there would cost three more attempts to learn the same
+ * thing, and the DLQ is for messages that MIGHT still be deliverable.
  */
 export function decideQueueOutcome(
   outcome: DeliveryOutcome,

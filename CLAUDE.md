@@ -563,6 +563,29 @@ key. Mandatory-mail and unsubscribe semantics are decided by
 `buildResendEmailRequest()` before anything is queued — don't re-decide them in
 the consumer.
 
+Five rules that each cost real mail when they were broken:
+
+- **`inline: true` is the opt-out, and only two callers get it.** A queued send
+  reports `sent: true` at enqueue, so any caller whose contract is "did this
+  actually send" must bypass the queue: `POST /api/auth/magic-link` (owes a 503)
+  and `POST /api/feedback/:id/reply` (stamps `replied_at`). Everything else stays
+  queued.
+- **One classifier, both paths.** `classifyResendResponse()` is shared by the
+  inline POST and the consumer, and both log `email_permanent_failure` /
+  `email_transient_failure` with a `path` field. Don't add a third vocabulary: a
+  4xx and a 503 mean different things, and inline maps them to `rejected` and
+  `error` respectively — that distinction is what magic-link's 503 branch reads.
+- **The consumer's expected queue name is a `var`, never a constant.**
+  `NUXT_EMAIL_QUEUE_NAME` differs between `[vars]` and `[env.preview.vars]`. As a
+  constant it matched production and silently missed preview — and a consumer
+  that skips a batch **acks it by omission**, so every preview email was
+  destroyed with no log line. Unexpected queues are logged, never skipped quietly.
+- **`EMAIL_QUEUE_MAX_ATTEMPTS` is `max_retries` + 1.** `max_retries` counts
+  retries, so a message is delivered up to four times.
+- **`compatibility_flags` pins `queue_consumer_wait_for_wait_until`.** Every
+  `ack()`/`retry()` runs inside `waitUntil` after the handler returned; the
+  opposite flag would turn `retry()` into a silent no-op. Don't remove it.
+
 Billing emails are decided by `decideNotification()` on **status transitions**,
 not on events: Paddle fires `subscription.updated` for trivial changes, and
 emailing per event trains people to filter you — taking the payment-failed email
@@ -768,8 +791,17 @@ hand-write an entry that re-exports `fetch`, because it will rot the next time N
 one of them.
 
 Note that Nitro **skips scheduled tasks under vitest** (`isTest` in its task runtime). Put
-the logic in a `server/utils/` function that takes `db` as an argument and test that, as
-`server/utils/purge.ts` does — a test driving the task wrapper tests the shim.
+the logic in a `server/utils/` function that takes `db` (and any binding it needs) as an
+argument and test that, as `server/utils/purge.ts` does — a test driving the task wrapper
+tests the shim. For the same reason, a task must import `db`/`blob` **explicitly** from
+`@nuxthub/db` / `@nuxthub/blob` rather than relying on the auto-imports: a task is an
+untested bundling surface that runs unattended, and the `kv is not defined` failure in
+the gotcha above would surface as a cron event failing nightly with nobody watching.
+
+Anything the sweep filters on needs an **index**. `purge.ts` matches `expires_at` /
+`used_at` / `status`, and a `LIMIT` bounds rows *deleted*, not rows *examined* — so an
+unindexed predicate full-scans the table on every tick and gets slower as the product
+grows. Both credential tables got theirs in migration 0012.
 
 ### @nuxt/content's default SQLite driver crashes `bun run` in postinstall
 

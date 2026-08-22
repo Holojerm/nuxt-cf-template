@@ -198,18 +198,30 @@ export const entitlements = sqliteTable(
 // auth to the MCP worker's OAuth flow (device-code style). Minted for the
 // signed-in user by POST /api/mcp/connect-code; redeemed (by hash) on the MCP
 // worker's /authorize page. Only the SHA-256 hash is stored.
-export const mcpConnectCodes = sqliteTable('mcp_connect_codes', {
-  id: text('id')
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  userId: text('user_id')
-    .notNull()
-    .references(() => users.id),
-  codeHash: text('code_hash').notNull().unique(),
-  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
-  usedAt: integer('used_at', { mode: 'timestamp' }),
-  ...timestamps,
-})
+export const mcpConnectCodes = sqliteTable(
+  'mcp_connect_codes',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    codeHash: text('code_hash').notNull().unique(),
+    expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+    usedAt: integer('used_at', { mode: 'timestamp' }),
+    ...timestamps,
+  },
+  (table) => [
+    // Redemption uses the unique index on `code_hash`, so these two exist
+    // purely for the nightly sweep in server/utils/purge.ts — same reasoning
+    // as on magic_link_tokens: the sweep's OR needs an index on each branch or
+    // the planner scans the table. This one grows far more slowly, but the
+    // scan cost is paid per run regardless of how few rows come back.
+    index('mcp_connect_codes_expires_at_idx').on(table.expiresAt),
+    index('mcp_connect_codes_used_at_idx').on(table.usedAt),
+  ],
+)
 
 // Magic-link tokens — the primary consumer sign-in path. Minted by
 // POST /api/auth/magic-link, redeemed from /auth/verify. Same construction as
@@ -278,6 +290,19 @@ export const magicLinkTokens = sqliteTable(
     // server/utils/magic-link.ts › createMagicLinkToken. This index serves the
     // sweep, and the support question "how many links did this address ask for".
     index('magic_link_tokens_email_created_idx').on(table.email, table.createdAt),
+    // ── The retention sweep's indexes ────────────────────────────────────────
+    // server/utils/purge.ts selects `expires_at < cutoff OR (used_at IS NOT
+    // NULL AND used_at < cutoff)`. Without these it was a full table scan of
+    // the fastest-growing table in the database, every night — and the sweep's
+    // LIMIT bounds rows DELETED, not rows examined, so the scan grew even
+    // though the delete stayed small.
+    //
+    // BOTH columns are indexed, not just `expires_at`, because of the OR:
+    // SQLite can satisfy an OR from an index union only when every branch has
+    // one. Index one side and the planner falls back to scanning for the
+    // other, which is the same cost as indexing neither.
+    index('magic_link_tokens_expires_at_idx').on(table.expiresAt),
+    index('magic_link_tokens_used_at_idx').on(table.usedAt),
   ],
 )
 
