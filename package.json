@@ -34,7 +34,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:a11y": "playwright test",
-    "playwright:install": "playwright install chromium",
+    "playwright:install": "playwright install --with-deps chromium",
     "ci": "bun run lint && bun run design:check && bun run brand:check && bun run mirror:check && bun run seo:check && bun run typecheck && bun run test && bun run playwright:install && bun run test:a11y && bun run build",
     "deploy": "nuxt build && wrangler --cwd .output deploy",
     "build:preview": "CLOUDFLARE_ENV=preview nuxt build",
