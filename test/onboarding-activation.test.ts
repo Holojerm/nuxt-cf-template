@@ -15,7 +15,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '../server/db/schema'
 import { listAudit } from '../server/utils/audit'
-import { computeOnboardingInputs, recordActivationOnce } from '../server/utils/onboarding'
+import {
+  activateIfComplete,
+  computeOnboardingInputs,
+  recordActivationOnce,
+} from '../server/utils/onboarding'
 
 const db = drizzle(env.DB, { schema })
 
@@ -199,5 +203,151 @@ describe('computeOnboardingInputs', () => {
 
     const inputs = await computeOnboardingInputs(db, USER_ID, { portalConfigured: false })
     expect(inputs.entitlementActive).toBe(true)
+  })
+
+  // GET /api/onboarding calls nothing but this function — no
+  // recordActivationOnce, no audit write. That used to not be true (see the
+  // header comment on server/utils/onboarding.ts), and the regression it
+  // caused was invisible to every other test in this file, which all drive
+  // recordActivationOnce/activateIfComplete directly rather than through a
+  // read path. This is the one that would have caught it: seed every signal
+  // true, call only the read function, and prove nothing landed in
+  // audit_log regardless.
+  it('never writes an audit row, even for an already-complete account', async () => {
+    await db.insert(schema.entitlements).values({
+      userId: USER_ID,
+      paddleSubscriptionId: 'sub_1',
+      status: 'active',
+    })
+    await db.insert(schema.notificationPreferences).values({
+      userId: USER_ID,
+      channel: 'email',
+      eventType: 'product_updates',
+      enabled: true,
+    })
+    await db.insert(schema.mcpConnectCodes).values({
+      userId: USER_ID,
+      codeHash: 'd'.repeat(64),
+      expiresAt: new Date(Date.now() + 60_000),
+      usedAt: new Date(),
+    })
+    await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Read-only' })
+
+    const inputs = await computeOnboardingInputs(db, USER_ID, { portalConfigured: false })
+    expect(inputs).toEqual({
+      entitlementActive: true,
+      hasNotificationPreference: true,
+      hasConnectedClient: true,
+      hasSentFeedback: true,
+    })
+
+    expect(await listAudit(db, { targetId: USER_ID })).toHaveLength(0)
+  })
+})
+
+describe('activateIfComplete', () => {
+  it('writes nothing and reports not activated when the checklist is incomplete', async () => {
+    const fetchMock = stubPosthog()
+
+    const result = await activateIfComplete(db, USER_ID, 'control', { portalConfigured: false })
+
+    expect(result).toEqual({ activated: false })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(await listAudit(db, { targetId: USER_ID })).toHaveLength(0)
+  })
+
+  it('does not trust a caller into activating a still-incomplete account — it recomputes and finds the same gap', async () => {
+    // Three of four signals true; entitlementActive still false. There's no
+    // "trust me, it's done" input to this function at all — the only way to
+    // make it return activated:true is to actually seed the fourth signal,
+    // which is the point: recomputing from D1, not from what the caller
+    // (POST /api/onboarding/activated) claims, is what makes this endpoint
+    // safe to call with a client-asserted variant but nothing else.
+    await db.insert(schema.notificationPreferences).values({
+      userId: USER_ID,
+      channel: 'email',
+      eventType: 'product_updates',
+      enabled: true,
+    })
+    await db.insert(schema.mcpConnectCodes).values({
+      userId: USER_ID,
+      codeHash: 'e'.repeat(64),
+      expiresAt: new Date(Date.now() + 60_000),
+      usedAt: new Date(),
+    })
+    await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Almost' })
+
+    const result = await activateIfComplete(db, USER_ID, 'control', { portalConfigured: false })
+
+    expect(result).toEqual({ activated: false })
+    expect(await listAudit(db, { targetId: USER_ID })).toHaveLength(0)
+  })
+
+  it('activates once a complete account is seeded, and records the variant passed in', async () => {
+    const fetchMock = stubPosthog()
+    await db.insert(schema.entitlements).values({
+      userId: USER_ID,
+      paddleSubscriptionId: 'sub_1',
+      status: 'active',
+    })
+    await db.insert(schema.notificationPreferences).values({
+      userId: USER_ID,
+      channel: 'email',
+      eventType: 'product_updates',
+      enabled: true,
+    })
+    await db.insert(schema.mcpConnectCodes).values({
+      userId: USER_ID,
+      codeHash: 'f'.repeat(64),
+      expiresAt: new Date(Date.now() + 60_000),
+      usedAt: new Date(),
+    })
+    await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Done' })
+
+    const result = await activateIfComplete(db, USER_ID, 'compact', { portalConfigured: false })
+
+    expect(result).toEqual({ activated: true })
+    const [, init] = fetchMock.mock.calls[0]!
+    const body = JSON.parse((init as RequestInit).body as string)
+    // The recorded variant is the one this call was given — not a stale
+    // fallback from an earlier, differently-timed call (the bug this whole
+    // POST endpoint exists to fix).
+    expect(body.properties.onboarding_layout_variant).toBe('compact')
+
+    const rows = await listAudit(db, { targetId: USER_ID })
+    expect(rows).toHaveLength(1)
+  })
+
+  it('is idempotent through the same path a repeat POST would take', async () => {
+    const fetchMock = stubPosthog()
+    await db.insert(schema.entitlements).values({
+      userId: USER_ID,
+      paddleSubscriptionId: 'sub_1',
+      status: 'active',
+    })
+    await db.insert(schema.notificationPreferences).values({
+      userId: USER_ID,
+      channel: 'email',
+      eventType: 'product_updates',
+      enabled: true,
+    })
+    await db.insert(schema.mcpConnectCodes).values({
+      userId: USER_ID,
+      codeHash: 'a1'.repeat(32),
+      expiresAt: new Date(Date.now() + 60_000),
+      usedAt: new Date(),
+    })
+    await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Done' })
+
+    const first = await activateIfComplete(db, USER_ID, 'control', { portalConfigured: false })
+    // A second POST — e.g. the client's onMounted trigger and its
+    // variant-change watcher both firing — must not double-record, even
+    // with a DIFFERENT variant on the second call.
+    const second = await activateIfComplete(db, USER_ID, 'compact', { portalConfigured: false })
+
+    expect(first).toEqual({ activated: true })
+    expect(second).toEqual({ activated: false })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(await listAudit(db, { targetId: USER_ID })).toHaveLength(1)
   })
 })

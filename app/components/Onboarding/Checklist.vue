@@ -2,34 +2,36 @@
 // The first-run checklist on /dashboard. Purely presentational: all the
 // "what's done" logic lives in shared/utils/onboarding.ts (pure, unit-tested)
 // and server/utils/onboarding.ts (the D1 reads + the one-time activation
-// event) — this component only renders what its parent hands it. The fetch
-// and the dismissal state live in app/pages/dashboard.vue rather than here,
-// deliberately: both also decide whether the page's empty state shows, and
-// computing that in one place (dashboard.vue) means the checklist's
-// visibility and the empty state's visibility can never briefly disagree —
-// splitting them across a parent ref and a child emit invites exactly the
-// one-render lag that useFlag.ts warns about, just between two components
-// instead of between SSR and onMounted.
+// event) — this component only renders what its parent hands it. The fetch,
+// the dismissal state, and the activation POST live in
+// app/pages/dashboard.vue rather than here, deliberately: the page also
+// decides whether the empty state below shows, and that decision has to
+// agree with the checklist's own visibility in the exact same render —
+// computing both from one ref in one component rules out the two ever
+// disagreeing for a frame.
 //
 // ── A/B: 'onboarding-layout' ────────────────────────────────────────────
-// Two renderings behind one multivariate flag (app/composables/useFlag.ts):
-// 'control' is the full checklist below, 'compact' is a single-line
-// progress strip. Both render in the SAME position in the page, as the only
-// child here — useFlag.ts's own warning is that the flag falls back to
-// 'control' for one frame before resolving in onMounted, and to design "so
-// that frame is not a visible flash (swap content, not layout)". Neither
-// variant ever appears or disappears independently of the other — this
-// component always renders exactly one <UCard>, so there's no frame where
-// the checklist itself pops in or out because of the flag, only a frame
-// where its contents redraw.
+// One <UCard>, always — never two separate cards toggled with v-if/v-else.
+// The 'control' and 'compact' arms differ ONLY in the header slot's
+// content (a two-line heading vs. a single-line progress readout); the
+// body (progress bar + step list) and footer (next action) are identical
+// markup for both. That's what makes the two arms occupy the same box
+// without any manual height-matching: there's barely anything left that
+// COULD differ in height. useFlag.ts's own warning is that the flag falls
+// back to 'control' for one frame before resolving in onMounted, and to
+// design "so that frame is not a visible flash (swap content, not
+// layout)" — sharing one card, with only a small header row varying, is
+// what satisfies that here. The header still gets a `min-h` (below) to
+// absorb the one-line/two-line difference exactly, so even that doesn't
+// move anything beneath it.
 //
-// (The two branches below are two separate <UCard> elements rather than one
-// shared element with conditional slots — Vue's template compiler doesn't
-// support nesting named `<template #slot>` blocks inside a `<template
-// v-if>/<template v-else>` wrapper, which is the shape this started as. Vue
-// still doesn't guarantee reusing the underlying DOM node across the two
-// branches, but the position in the page — the thing that actually matters
-// for "not shifting layout" — is identical either way.)
+// (Historical note: this used to be two separate <UCard v-if>/<UCard
+// v-else> elements. Beyond the height mismatch, that shape doesn't even
+// compile if you try to give each branch real named header/footer slots —
+// Vue's template compiler doesn't support nesting `<template #slot>`
+// blocks inside a `<template v-if>/<template v-else>` wrapper. Always
+// rendering one <UCard> with plain `v-if`/`v-else` on <div>s *inside* its
+// slots sidesteps both problems at once.)
 
 const props = defineProps<{
   progress: OnboardingProgress | null | undefined
@@ -43,53 +45,42 @@ const completedSteps = computed(() => props.progress?.completed ?? 0)
 </script>
 
 <template>
-  <!-- compact: one line — progress bar, count, single next action -->
-  <UCard v-if="variant === 'compact'">
-    <div class="flex flex-wrap items-center gap-4">
-      <UIcon name="i-lucide-list-checks" class="size-4 shrink-0 text-muted" aria-hidden="true" />
-      <UProgress :model-value="completedSteps" :max="totalSteps" size="sm" class="min-w-32 flex-1" />
-      <p class="whitespace-nowrap text-sm text-muted">{{ completedSteps }} of {{ totalSteps }} done</p>
-
-      <FeedbackWidget
-        v-if="progress?.next?.id === 'feedback'"
-        position="inline"
-        label="Send feedback"
-      />
-      <UButton v-else-if="progress?.next" :to="progress.next.action.to" size="sm">
-        {{ progress.next.action.label }}
-      </UButton>
-
-      <UButton
-        icon="i-lucide-x"
-        color="neutral"
-        variant="ghost"
-        size="sm"
-        class="min-touch"
-        aria-label="Dismiss checklist"
-        @click="emit('dismiss')"
-      />
-    </div>
-  </UCard>
-
-  <!-- control: the full checklist -->
-  <UCard v-else>
+  <UCard>
     <template #header>
-      <div class="flex items-center justify-between gap-4">
-        <div>
+      <!-- min-h-10 covers the taller of the two: control's two lines of
+           text vs. compact's one row. Matching it here — rather than
+           leaving the two branches to their natural, different heights —
+           is the actual fix for issue #2: nothing below this slot moves
+           when the flag resolves and swaps which branch is showing. -->
+      <div class="flex min-h-10 items-center justify-between gap-4">
+        <div v-if="variant === 'compact'" class="flex min-w-0 flex-1 items-center gap-3">
+          <UIcon
+            name="i-lucide-list-checks"
+            class="size-4 shrink-0 text-muted"
+            aria-hidden="true"
+          />
+          <UProgress :model-value="completedSteps" :max="totalSteps" size="sm" class="flex-1" />
+          <p class="whitespace-nowrap text-sm text-muted">
+            {{ completedSteps }} of {{ totalSteps }} done
+          </p>
+        </div>
+        <div v-else>
           <h2 class="text-lg text-highlighted">Get set up</h2>
           <p class="text-sm text-muted">{{ completedSteps }} of {{ totalSteps }} done</p>
         </div>
+
         <UButton
           icon="i-lucide-x"
           color="neutral"
           variant="ghost"
-          class="min-touch"
+          class="min-touch shrink-0"
           aria-label="Dismiss checklist"
           @click="emit('dismiss')"
         />
       </div>
     </template>
 
+    <!-- Identical for both arms — see the note above. -->
     <div class="flex flex-col gap-4">
       <UProgress :model-value="completedSteps" :max="totalSteps" size="sm" />
 
@@ -119,7 +110,8 @@ const completedSteps = computed(() => props.progress?.completed ?? 0)
       <!-- One primary action per view — the next incomplete step, and
            nothing else. The 'feedback' step isn't a plain link: it embeds
            the same widget every other page uses floating
-           (app/components/Feedback/FeedbackWidget.vue), inline instead. -->
+           (app/components/Feedback/FeedbackWidget.vue), inline instead.
+           Identical for both arms. -->
       <FeedbackWidget
         v-if="progress?.next?.id === 'feedback'"
         position="inline"

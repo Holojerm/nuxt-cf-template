@@ -1,7 +1,8 @@
-// The database half of the first-run checklist — everything GET
-// /api/onboarding needs that the pure derivation in shared/utils/onboarding.ts
-// can't know on its own: where the four signals come from, and the one-time
-// activation event that fires when they're all true for the first time.
+// The database half of the first-run checklist — everything the two
+// /api/onboarding* endpoints need that the pure derivation in
+// shared/utils/onboarding.ts can't know on its own: where the four signals
+// come from, and the one-time activation event that fires when they're all
+// true for the first time.
 //
 // Like server/utils/audit.ts and server/utils/notifications.ts, every
 // function here takes the Drizzle client as its first argument instead of
@@ -12,7 +13,8 @@
 import { and, eq, isNotNull } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
-import type { OnboardingInputs } from '#shared/utils/onboarding'
+import { deriveOnboardingSteps } from '#shared/utils/onboarding'
+import type { OnboardingInputs, OnboardingLayoutVariant } from '#shared/utils/onboarding'
 import { withAudit } from './audit'
 import { buildEntitlementView } from './entitlement-view'
 import { captureServerEvent } from './posthog'
@@ -79,10 +81,26 @@ export async function computeOnboardingInputs(
  * The same reasoning CLAUDE.md gives for `user_signed_up`/`user_signed_in`
  * (server/utils/auth.ts) applies here: an ad blocker that drops posthog-js
  * would silently lose a client-fired activation event forever, and this is
- * the one event a product most wants to be able to trust. The endpoint that
- * renders the checklist already computed every input server-side to do
- * that, so there's no extra read to pay for also deciding "did this just
- * become true" here.
+ * the one event a product most wants to be able to trust.
+ *
+ * ── Why called from POST /api/onboarding/activated, not GET /api/onboarding ──
+ * It used to live in the GET handler, gated on `progress.complete`. That was
+ * wrong in a way that made the whole 'onboarding-layout' experiment
+ * unmeasurable: GET /api/onboarding runs once per page load, during the
+ * SAME `<script setup>` tick as `useFlagVariant()` — before onMounted, which
+ * is the earliest point that composable ever resolves past its fallback
+ * (app/composables/useFlag.ts). So the FIRST GET that ever observed
+ * `complete: true` — the one call in this account's whole lifetime that
+ * burns the idempotency guard below — always ran with the flag's fallback
+ * value, never the visitor's real arm. A later, correctly-tagged GET (after
+ * the flag resolved) would find the guard already tripped and record
+ * nothing. Every real activation landed tagged as the fallback arm.
+ *
+ * Splitting the write out to its own endpoint, called by the client once it
+ * has BOTH `complete: true` and a resolved variant in hand
+ * (app/pages/dashboard.vue), fixes that: the tag recorded is the one the
+ * visitor actually saw. GET /api/onboarding is now purely a read (and
+ * fetched once, not twice — see that file).
  *
  * ── Idempotency ───────────────────────────────────────────────────────────
  * An `audit_log` row with action `onboarding.activated` (actorType `user`,
@@ -108,7 +126,7 @@ export async function computeOnboardingInputs(
 export async function recordActivationOnce(
   db: OnboardingDb,
   userId: string,
-  variant: string,
+  variant: OnboardingLayoutVariant,
 ): Promise<boolean> {
   const existing = await db.query.auditLog.findFirst({
     where: and(
@@ -134,11 +152,41 @@ export async function recordActivationOnce(
         event: 'user_activated',
         // The A/B variant the browser was showing when the checklist
         // completed (app/composables/useFlag.ts › useFlagVariant), passed
-        // through by the caller — see server/api/onboarding.get.ts. Without
-        // this the 'onboarding-layout' experiment would have no outcome
-        // metric to compare arms on.
+        // through by the caller — see server/api/onboarding/activated.post.ts.
+        // Without this the 'onboarding-layout' experiment would have no
+        // outcome metric to compare arms on.
         properties: { onboarding_layout_variant: variant },
       }),
   )
   return true
+}
+
+export interface ActivateIfCompleteResult {
+  activated: boolean
+}
+
+/**
+ * The full decision behind POST /api/onboarding/activated: recompute the
+ * checklist from scratch — never trust the caller's claim that it's
+ * complete, the same way no other privileged write in this app trusts
+ * client-supplied state for something it alone decides to record — and only
+ * defer to recordActivationOnce() once that's independently verified true.
+ *
+ * Factored out of the endpoint (which is otherwise a two-line wrapper
+ * around this and a session check) so the "not complete yet ⇒ no write, no
+ * matter what the client thinks" behavior is directly testable without an
+ * H3 event — see test/onboarding-activation.test.ts.
+ */
+export async function activateIfComplete(
+  db: OnboardingDb,
+  userId: string,
+  variant: OnboardingLayoutVariant,
+  options: ComputeOnboardingInputsOptions,
+): Promise<ActivateIfCompleteResult> {
+  const inputs = await computeOnboardingInputs(db, userId, options)
+  const progress = deriveOnboardingSteps(inputs)
+
+  if (!progress.complete) return { activated: false }
+
+  return { activated: await recordActivationOnce(db, userId, variant) }
 }

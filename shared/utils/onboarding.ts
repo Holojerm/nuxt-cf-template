@@ -42,6 +42,24 @@ export const onboardingStepSchema = z.object({
 })
 export type OnboardingStep = z.infer<typeof onboardingStepSchema>
 
+/**
+ * The known arms of the 'onboarding-layout' PostHog flag
+ * (app/composables/useFlag.ts › useFlagVariant, read in app/pages/dashboard.vue).
+ *
+ * Bounded rather than a free string because it rides two places that must
+ * never see arbitrary client input: the Zod body of
+ * POST /api/onboarding/activated, and the `onboarding_layout_variant`
+ * property on the `user_activated` PostHog event. It's still
+ * client-asserted — the browser is what resolved the flag, and the server
+ * has no independent way to check which arm a given visitor was actually
+ * shown — bounding it only stops it from being free text, not from being
+ * wrong. Add an arm here (and in the PostHog dashboard) before using it in
+ * useFlagVariant, or the client's default ('control') is what ships.
+ */
+export const ONBOARDING_LAYOUT_VARIANTS = ['control', 'compact'] as const
+export const onboardingLayoutVariantSchema = z.enum(ONBOARDING_LAYOUT_VARIANTS)
+export type OnboardingLayoutVariant = z.infer<typeof onboardingLayoutVariantSchema>
+
 export const onboardingProgressSchema = z.object({
   steps: z.array(onboardingStepSchema),
   completed: z.number().int().min(0),
