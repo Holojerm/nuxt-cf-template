@@ -13,6 +13,7 @@ A production-ready template for full-stack apps on **Nuxt 4 + Cloudflare Workers
 | Auth | nuxt-auth-utils — magic-link sign-in, plus Apple / Google / GitHub OAuth, wired end to end |
 | Billing | Paddle (merchant of record) — checkout, entitlements, self-serve cancellation |
 | Email | Resend over fetch — welcome, receipt, payment-failed, access-ended |
+| Content | `@nuxt/content` v3 — markdown blog, parsed at build time into the app's own D1 |
 | Linting | oxlint + oxfmt |
 | Validation | Zod |
 | Testing | Vitest + `@cloudflare/vitest-pool-workers` (real `workerd` runtime, real bindings) |
@@ -137,6 +138,14 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
 
 Every push to `main` now lints, typechecks, tests, builds, and deploys. Pushes to other branches run the same checks and post a preview URL as a PR comment.
 
+**Node.js version.** The build shells out to the `nuxt` bin, which runs under Node, and
+`@nuxt/content` needs Node ≥ 22.5 for the built-in `node:sqlite` it uses to parse `content/`
+(see [Blog](#blog)). Workers Builds defaults to Node 24 and preinstalls 22 and 24, so this is
+satisfied out of the box — the committed `.node-version` pins it anyway, because the failure
+mode if someone later sets `NODE_VERSION` to something older is not a clear error but an
+interactive install prompt that dies in `postinstall`. Workers Builds reads `.node-version`,
+`.nvmrc`, and a `NODE_VERSION` build variable, in case you prefer the dashboard.
+
 ### 5. Run locally and deploy
 
 ```bash
@@ -221,10 +230,13 @@ bun run deploy        # Build + deploy to Cloudflare (`bun deploy` is reserved b
 │   ├── middleware/     # Auth guard + auth-surface rate limiting
 │   ├── routes/         # Non-/api routes: paddle webhook, ingest proxy, robots, sitemap
 │   └── utils/          # auth, users, email, rate-limit, entitlements, billing
+├── content/
+│   └── blog/           # The blog, as markdown. Add a file, get a page.
 ├── mcp/                # Optional second worker: remote MCP server (OAuth + shared D1)
 ├── test/               # Vitest tests (workerd-runtime, real CF bindings)
 ├── .claude/            # Claude Code config (commands, skills, MCP)
 ├── .github/            # Dependabot config (CI/CD lives in Cloudflare Workers Builds)
+├── content.config.ts   # Blog collection + frontmatter schema (@nuxt/content)
 ├── vitest.config.ts    # Vitest + @cloudflare/vitest-pool-workers config
 ├── DESIGN.md           # Visual design system — the source of truth, see /design-sync
 ├── brand.lock.json     # Fingerprint of the generated brand assets (see brand:check)
@@ -555,6 +567,8 @@ Going live: swap the token/secret for live ones and set `NUXT_PUBLIC_PADDLE_ENV=
 | --- | --- | --- |
 | `/` | Public | Landing page — hero, features, CTA. Indexed. |
 | `/pricing` | Public | Three plans from `app/utils/plans.ts` + price IDs in runtime config. Indexed. |
+| `/blog` | Public | Post index, newest first. Indexed. |
+| `/blog/:slug` | Public | One post, from `content/blog/<slug>.md`. Indexed, with `BlogPosting` JSON-LD. |
 | `/login` | Public | Magic-link form, then buttons for configured OAuth providers, then dev sign-in. `noindex`. |
 | `/auth/verify` | Public | Where a magic link lands. Confirming is what spends the token. `noindex`. |
 | `/unsubscribe` | Public | Where an email footer's unsubscribe link lands. Confirming is what opts you out — a GET must not, because mail gateways fetch it. `noindex`. |
@@ -646,12 +660,17 @@ sitemap route, and a hardcoded array is a second place to remember. Add `/change
 and it was simply never in the sitemap, with nothing failing.
 
 A page without the key is in neither, which is the right default: most pages added to an app
-are private. Dynamic routes (`/posts/[id]`) are one pattern, not N URLs — query D1 for those in
-[`sitemap.xml.get.ts`](./server/routes/sitemap.xml.get.ts).
+are private. Dynamic routes are one pattern, not N URLs, so the collecting hook skips any path
+containing `:` — `/blog/[slug]` is enumerated by querying the content collection inside
+[`sitemap.xml.get.ts`](./server/routes/sitemap.xml.get.ts) instead, which is the pattern to
+copy for public profiles or anything else driven by data. Such a page still declares
+`publicPage`, because `seo:check` enforces "indexable ⇔ declared public" across every page; the
+declaration is inert as a sitemap entry and says so in a comment.
 
-`<lastmod>` is the **build date**, not the request date. `new Date()` at request time tells
-crawlers every page changed today, on every fetch, and they discount a lastmod that always
-says "now".
+`<lastmod>` is the **build date** for static pages, not the request date. `new Date()` at
+request time tells crawlers every page changed today, on every fetch, and they discount a
+lastmod that always says "now". Blog posts are the exception and carry a real per-URL date,
+because their frontmatter states when they were published and last revised.
 
 ### Structured data
 
@@ -661,7 +680,9 @@ duplicated — one `Organization`, one `WebSite`, everything else pointing at th
 what lets a consumer resolve "this page" and "this company" to single entities.
 
 `/` and `/pricing` carry `SoftwareApplication` with a real `AggregateOffer`; `/pricing` adds
-`FAQPage`. Two rules worth keeping:
+`FAQPage`; every blog post carries `BlogPosting` with `datePublished`/`dateModified` and an
+author that resolves to the existing `Organization` node when the byline is the company
+itself. Two rules worth keeping:
 
 - **Never describe something in JSON-LD that isn't on the page.** The pricing FAQ is rendered
   from the same [`PRICING_FAQ`](./app/utils/faq.ts) array that feeds the markup, so the two
@@ -681,11 +702,13 @@ can use the real deployment origin:
   wrong, but because a policy you can read is a policy you can change. Defaults to allowing
   them: for a SaaS marketing site, being quotable is distribution, not theft. Flip with
   `NUXT_PUBLIC_ALLOW_AI_CRAWLERS=false`.
-- **`sitemap.xml`** — derived from the route table, as above.
+- **`sitemap.xml`** — derived from the route table, as above, plus the blog posts queried out
+  of the content collection.
 - **`llms.txt`** — the [llmstxt.org](https://llmstxt.org) convention: a short Markdown map of
   the site for a model with limited context and no patience for navigation. A map, not a
   mirror — every line is a link plus one sentence, built from the same `publicPage`
-  declarations, so it can't drift.
+  declarations, so it can't drift. Posts get their own `## Blog` section with the publication
+  date on each line, because a model that cannot date a claim will repeat it as current.
 
 Set `NUXT_PUBLIC_INDEXABLE=false` on preview deploys: robots.txt disallows everything, every
 page renders `noindex`, sitemap.xml goes empty and llms.txt 404s. An indexed preview URL
@@ -704,6 +727,12 @@ traffic graph months later. The gate fails the build on a page that skips `useSe
 declared), has a missing or badly-sized description, or has more than one `<h1>`. Escape hatch
 is `seo-check-ignore`, same as the design-token gate.
 
+It reads `content/blog/*.md` too, applying the same title and description bounds to their
+frontmatter and insisting each post has a valid `date` and an `author`. That is not duplicated
+enforcement: `content.config.ts` declares those bounds, but `@nuxt/content` turns a collection
+schema into SQL columns and never runs its refinements against your frontmatter — a
+300-character description parses fine and ships.
+
 `public/og.png` is generated, not hand-made: `bun run brand:generate` composes it from the brand
 mark, the DESIGN.md colours, and the app name in `wrangler.toml`. So the fix for a share image
 that still says "My App" is to rename the project and re-run that command — and `bun run
@@ -714,6 +743,90 @@ for reachable terms and privacy pages before approving an account. The ones here
 processors this template ships with (Cloudflare, Paddle, PostHog, Resend) and describe the real
 refund behaviour. They are still a starting point, not legal advice, and each carries a banner
 saying so until you remove it.
+
+---
+
+## Blog
+
+The SEO machinery above needs something to rank, and answer engines need something to quote.
+Seven evergreen marketing pages are not that. The blog is [`@nuxt/content`
+v3](https://content.nuxt.com) — the only runtime dependency this template adds beyond the
+stack table.
+
+### Writing a post
+
+Drop a markdown file in `content/blog/`. The filename is the URL.
+
+```md
+---
+title: 'Sign-in without passwords'
+description: 'A magic link is the front door and OAuth sits underneath it. Why the account key is a verified email address.'
+date: '2026-08-05'
+author: 'My Company Ltd'
+---
+
+Prose. Start at `##` — the `<h1>` is rendered from `title`.
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `title` | yes | ≤ 70 chars. Becomes the `<h1>`, the `<title>`, and the `headline`. |
+| `description` | yes | 50–160 chars. The search snippet, the `og:description`, and the `llms.txt` line. |
+| `date` | yes | **Quoted** `'YYYY-MM-DD'`. Sort order, `datePublished`, `<lastmod>`. |
+| `updated` | no | Same format. Only when the post was actually revised. |
+| `author` | yes | Matching the legal entity attributes the post to the `Organization` node; anything else becomes a `Person`. |
+
+Quote the dates. Unquoted YAML dates are parsed into `Date` objects and then round-tripped
+through SQLite and JSON, which is three chances to pick up a timezone that shifts the day.
+`bun run seo:check` fails the build on a malformed one, and on a description outside the
+bounds — the collection schema in [`content.config.ts`](./content.config.ts) declares them but
+does not enforce them.
+
+Three seed posts ship with the template. **They describe the template, not your product** —
+replace them, the same way you replace the changelog entries.
+
+### Where the content actually lives
+
+Content v3 does not ship markdown to the browser. It parses `content/` at build time into SQL,
+and a Worker has no filesystem, so at runtime that store is D1.
+
+**It shares the app's `DB` binding**, creating `_content_info` and `_content_blog` next to your
+own tables. Drizzle never sees them: `drizzle-kit generate` diffs `schema.ts` against its own
+snapshot rather than the live database, and `wrangler d1 migrations apply` only runs the files
+in `server/db/migrations` and tracks them in its own table. (`drizzle-kit push` *does* diff
+against a live database and is deliberately not wired up — keep it that way, or exclude
+`_content_*`.) The alternative — a second `CONTENT_DB` binding — buys isolation at the cost of
+a placeholder database id that every fork must replace before `wrangler deploy` will accept the
+config. To take it anyway: create the database, add the `[[d1_databases]]` block, and change
+`bindingName` in `nuxt.config.ts`. Nothing else reads these tables.
+
+**There is no migration step.** Unlike the app's own schema — which you *do* have to apply
+yourself with `bun run db:migrate:remote` — the content tables are created and filled by the
+Worker itself: the build writes a compressed SQL dump into the static assets, and the first
+request after a deploy compares its checksum against `_content_info` and imports it if they
+differ.
+
+In dev, none of that applies: parsing and queries go to a local SQLite file under `.data/`
+through Node's built-in `node:sqlite`. That is why `package.json` now declares a `node >=22.5`
+engine. The module's default is `better-sqlite3`, a native module this repo does not have and
+which it tries to install *by prompting on stdin* — under `bun run` that is not a prompt, it is
+a crash in `postinstall`.
+
+### Reading it
+
+Pages fetch `/api/blog` and `/api/blog/:slug` rather than calling `queryCollection()` directly,
+and that is not ceremony. Content's app-side `queryCollection()` runs in the browser by
+downloading the collection dump and executing it in `@sqlite.org/sqlite-wasm` — a megabyte of
+WebAssembly to read three posts, and it would not run anyway, because compiling WebAssembly
+needs `'wasm-unsafe-eval'` in `script-src` and [this app's CSP](./nuxt.config.ts) does not
+grant it.
+The failure would appear only after a client-side navigation, in production. So the queries
+live in [`server/utils/blog.ts`](./server/utils/blog.ts) and the browser gets JSON.
+
+Markdown renders through `<ContentRenderer>` onto NuxtUI's `Prose*` components, which are
+registered automatically because `@nuxt/content` is installed. They already read the token
+layer; the two defaults that contradict `DESIGN.md` — `font-bold` on serif headings and
+hover-only link underlines — are overridden under `ui.prose` in `app/app.config.ts`.
 
 ---
 

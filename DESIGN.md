@@ -239,6 +239,11 @@ because this system is for reading. Never set arbitrary sizes (`text-[13px]`).
   header wrap to two lines or scroll sideways.
 - **Links:** inline prose links are `text-primary` **and** underlined (see Accessibility ›
   Contrast). Standalone links in navigation or footers are colour-only by design.
+- **Long-form content:** markdown (the blog, `content/`) renders through NuxtUI's `Prose*`
+  components, which already read the token layer. Two of their defaults contradict this file
+  and are overridden in `app.config.ts` under `ui.prose`: `h1`–`h3` drop `font-bold`, and
+  inline links get a real `underline` instead of a hover-only bottom border. Measure is
+  `max-w-2xl` — a reading column, not the full container.
 - **Empty states:** one line of `text-muted` explanation plus one action. No illustrations.
 - **Tables:** `font-mono` for numeric columns, right-aligned. Row separators, not zebra striping.
 

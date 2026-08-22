@@ -100,6 +100,15 @@ export default defineEventHandler(async (event) => {
     return
   }
 
+  // The blog. Reading it must not require an account — that is the entire
+  // point of publishing it, and the readers who matter most (Googlebot,
+  // GPTBot, ClaudeBot) cannot sign in at all. Method-scoped like the rules
+  // above: there is no write endpoint here today, and if one is ever added it
+  // should have to opt out of the guard deliberately rather than inherit it.
+  if ((path === '/api/blog' || path.startsWith('/api/blog/')) && event.method === 'GET') {
+    return
+  }
+
   // One-click unsubscribe: mail providers POST here with no session (RFC 8058
   // List-Unsubscribe-Post) and people click the same URL from an email's
   // footer, which is a GET. Method-scoped like the feedback rule above — a

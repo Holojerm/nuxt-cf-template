@@ -37,6 +37,12 @@ import { expect, test } from '@playwright/test'
 const ROUTES = [
   '/',
   '/pricing',
+  '/blog',
+  // One post stands in for all of them — see BLOG_POST_PREFIX below. This one
+  // is chosen because it exercises the most rendered markdown: h2s, lists,
+  // inline code, bold, and an inline link, which is the node most likely to
+  // fail contrast in one of the two modes.
+  '/blog/how-billing-works',
   '/changelog',
   '/login',
   '/auth/verify',
@@ -44,6 +50,16 @@ const ROUTES = [
   '/terms',
   '/privacy',
 ]
+
+/**
+ * Blog posts are content, not pages: every one of them renders through the same
+ * app/pages/blog/[slug].vue, so the markup axe sees differs only in prose.
+ * Scanning all of them would make writing a post a CI failure until someone
+ * remembered this file — which trains people to weaken the guard rather than
+ * use it. The coverage test below accepts any URL under this prefix, and
+ * separately insists that at least one real post is actually scanned.
+ */
+const BLOG_POST_PREFIX = '/blog/'
 
 const COLOR_MODES = ['light', 'dark'] as const
 
@@ -174,7 +190,17 @@ test('sitemap coverage: every public page is in ROUTES', async ({ request }) => 
 
   expect(paths.length).toBeGreaterThan(0)
 
-  const missing = paths.filter((path) => !ROUTES.includes(path))
+  // The exemption above is only safe while a post is genuinely being scanned.
+  // Without this, deleting the post from ROUTES would silently stop testing the
+  // whole [slug].vue template and the coverage check would still pass.
+  expect(
+    ROUTES.filter((route) => route.startsWith(BLOG_POST_PREFIX)),
+    'ROUTES must scan at least one blog post — it stands in for all of them.',
+  ).not.toEqual([])
+
+  const missing = paths.filter(
+    (path) => !ROUTES.includes(path) && !path.startsWith(BLOG_POST_PREFIX),
+  )
   expect(
     missing,
     `Public pages missing from the a11y sweep: ${missing.join(', ')}. ` +

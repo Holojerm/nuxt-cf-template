@@ -10,11 +10,18 @@
 // the alternative is letting a model infer the shape of the product from
 // whichever marketing page it happened to land on.
 //
+// Blog posts are appended from the content collection, for the same reason they
+// are appended to sitemap.xml: they have no route-table entry to collect. They
+// are also the part of this file with the most to offer an answer engine — a
+// marketing page states what the product is, a post explains how it works, and
+// the second is what gets quoted.
+//
 // Suppressed on preview deploys for the same reason robots.txt is.
 
+import { listBlogPostsOrEmpty } from '../utils/blog'
 import { buildLlmsTxt } from '../utils/seo'
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
 
   setResponseHeader(event, 'Content-Type', 'text/plain; charset=utf-8')
@@ -24,6 +31,8 @@ export default defineEventHandler((event) => {
     return 'Not found\n'
   }
 
+  const posts = await listBlogPostsOrEmpty(event)
+
   setResponseHeader(event, 'Cache-Control', 'public, max-age=3600')
   return buildLlmsTxt({
     appName: config.public.appName,
@@ -32,5 +41,11 @@ export default defineEventHandler((event) => {
     supportEmail: config.public.supportEmail,
     legalEntity: config.public.legalEntity,
     pages: config.publicPages ?? [],
+    posts: posts.map((post) => ({
+      path: post.path,
+      title: post.title,
+      description: post.description,
+      date: post.date,
+    })),
   })
 })

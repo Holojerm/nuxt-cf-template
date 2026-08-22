@@ -21,15 +21,20 @@
 //      busywork with a build failure attached.
 //   5. Exactly one <h1> per page. Cheap to check, and the single most common
 //      real regression in a component-composed page.
+//   6. Blog posts carry the same contract in their frontmatter. A post is a
+//      page whose copy lives in markdown rather than in a .vue file, and rule 4
+//      has to follow it there or it stops applying to the pages most likely to
+//      be written in a hurry. See the second walk at the bottom.
 //
 // Escape hatch: `seo-check-ignore` in a comment on the same line or the line
 // above, matching the design-token gate's convention.
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dir, '..')
 const PAGES_DIR = join(ROOT, 'app', 'pages')
+const POSTS_DIR = join(ROOT, 'content', 'blog')
 
 /** Google renders roughly 155 characters; under ~50 is rarely a real sentence. */
 const DESCRIPTION_MIN = 50
@@ -42,12 +47,12 @@ interface Problem {
   remedy: string
 }
 
-function walk(dir: string): string[] {
+function walk(dir: string, extension = '.vue'): string[] {
   const found: string[] = []
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry)
-    if (statSync(full).isDirectory()) found.push(...walk(full))
-    else if (entry.endsWith('.vue')) found.push(full)
+    if (statSync(full).isDirectory()) found.push(...walk(full, extension))
+    else if (entry.endsWith(extension)) found.push(full)
   }
   return found
 }
@@ -72,6 +77,9 @@ for (const file of walk(PAGES_DIR)) {
   const relativePath = relative(ROOT, file)
   const raw = readFileSync(file, 'utf8')
   const source = stripComments(raw)
+  // A route with a dynamic segment renders N pages from data, so some of the
+  // rules below can only be checked at the source of that data.
+  const dynamic = relativePath.includes('[')
 
   // ── 1. exactly one useSeo() ────────────────────────────────────────────────
   const seoCalls = source.match(/\buseSeo\s*\(/g)?.length ?? 0
@@ -140,12 +148,21 @@ for (const file of walk(PAGES_DIR)) {
   // check on the literal part rather than a guess at the runtime length.
   const descriptionMatch = source.match(/\bdescription\s*:\s*(['"`])([\s\S]*?)\1/)
   if (!descriptionMatch) {
-    problems.push({
-      file: relativePath,
-      rule: 'missing description',
-      detail: 'no description passed to useSeo()',
-      remedy: 'write one sentence describing what is on this page',
-    })
+    // On a dynamic page the description is a field of the record being
+    // rendered, so there is no literal here to measure and demanding one would
+    // only produce a decorative fallback string that never renders. The
+    // requirement does not disappear, it moves: rule 6 below applies the same
+    // bounds to content/blog/*.md, which is where that data actually lives.
+    // What still has to be true here is that a description is passed at all.
+    const passesOne = dynamic && /\bdescription\s*:\s*\S/.test(source)
+    if (!passesOne) {
+      problems.push({
+        file: relativePath,
+        rule: 'missing description',
+        detail: 'no description passed to useSeo()',
+        remedy: 'write one sentence describing what is on this page',
+      })
+    }
   } else if (!noindex) {
     const [, quote, text = ''] = descriptionMatch
     const interpolated = quote === '`' && text.includes('${')
@@ -179,6 +196,100 @@ for (const file of walk(PAGES_DIR)) {
       detail: `${h1Count} found`,
       remedy: 'one h1 per page — demote the rest to h2',
     })
+  }
+}
+
+// ── 6. blog frontmatter ──────────────────────────────────────────────────────
+//
+// The same contract as rule 4, applied where a post's copy actually lives. This
+// is not duplicated enforcement: content.config.ts declares these bounds, but
+// @nuxt/content converts a collection schema into SQL columns and does NOT run
+// its refinements against your frontmatter — a 300-character description parses
+// fine and ships. Nothing else would ever notice.
+//
+// A deliberately small YAML reader: these files are written by hand in a fixed
+// shape, and a parser dependency to read four scalar keys would be a strange
+// thing to add to a build gate.
+
+/** Frontmatter scalars, by key. Anything nested or multi-line is ignored. */
+function readFrontmatter(raw: string): Record<string, string> {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return {}
+
+  const fields: Record<string, string> = {}
+  for (const line of (match[1] ?? '').split('\n')) {
+    const field = line.match(/^([A-Za-z_][\w-]*)\s*:\s*(.*)$/)
+    if (!field) continue
+    const [, key = '', rawValue = ''] = field
+    fields[key] = rawValue.trim().replace(/^(['"])([\s\S]*)\1$/, '$2')
+  }
+  return fields
+}
+
+const POST_TITLE_MAX = 70
+
+if (existsSync(POSTS_DIR)) {
+  for (const file of walk(POSTS_DIR, '.md')) {
+    const relativePath = relative(ROOT, file)
+    const front = readFrontmatter(readFileSync(file, 'utf8'))
+
+    const report = (rule: string, detail: string, remedy: string) =>
+      problems.push({ file: relativePath, rule, detail, remedy })
+
+    if (!front.title) {
+      report('post missing title', 'no `title` in frontmatter', 'add one — it becomes the <h1>')
+    } else if (front.title.length > POST_TITLE_MAX) {
+      report(
+        'post title too long',
+        `${front.title.length} chars, maximum ${POST_TITLE_MAX}`,
+        'Google truncates a long title and substitutes its own — write a shorter one',
+      )
+    }
+
+    if (!front.description) {
+      report(
+        'post missing description',
+        'no `description` in frontmatter',
+        'this is the search snippet, the og:description, and the llms.txt line — write it',
+      )
+    } else if (front.description.length < DESCRIPTION_MIN) {
+      report(
+        'post description too short',
+        `${front.description.length} chars, minimum ${DESCRIPTION_MIN}`,
+        'search results and answer engines both quote this — make it a real sentence',
+      )
+    } else if (front.description.length > DESCRIPTION_MAX) {
+      report(
+        'post description too long',
+        `${front.description.length} chars, maximum ${DESCRIPTION_MAX}`,
+        `Google truncates near ${DESCRIPTION_MAX} — say it shorter or it gets said for you`,
+      )
+    }
+
+    // The dates are the post's `<lastmod>` and its `datePublished`. A missing
+    // one leaves both null, which reads to a crawler as an undated article.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(front.date ?? '')) {
+      report(
+        'post date missing or malformed',
+        `date: ${front.date ?? '(absent)'}`,
+        "quote it and write it as 'YYYY-MM-DD' — it becomes <lastmod> and datePublished",
+      )
+    }
+    if (front.updated !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(front.updated)) {
+      report(
+        'post updated date malformed',
+        `updated: ${front.updated}`,
+        "quote it and write it as 'YYYY-MM-DD', or remove the key",
+      )
+    }
+
+    if (!front.author) {
+      report(
+        'post missing author',
+        'no `author` in frontmatter',
+        'it becomes the JSON-LD author — use the legal entity to attribute it to the company',
+      )
+    }
   }
 }
 

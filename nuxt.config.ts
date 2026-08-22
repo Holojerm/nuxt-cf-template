@@ -202,6 +202,12 @@ export default defineNuxtConfig({
   modules: [
     '@nuxt/ui',
     '@nuxthub/core',
+    // The blog. Markdown in content/, parsed at build time into SQL, queried at
+    // runtime out of D1 — see the `content` block further down for which
+    // database that is and why. Registering it also makes @nuxt/ui register its
+    // Prose* components globally, which is what gives rendered markdown the
+    // DESIGN.md type scale without a stylesheet of our own.
+    '@nuxt/content',
     'nuxt-auth-utils',
     // nuxt-mcp rewrites `.mcp.json` — a *tracked* file — with the live dev
     // server URL every time a dev server boots. Helpful when you started that
@@ -260,6 +266,63 @@ export default defineNuxtConfig({
     kv: true, // KV store
     blob: true, // R2 object storage
     cache: true, // Cache layer
+  },
+
+  // ─── Blog content (@nuxt/content v3) ───────────────────────────────────────
+  //
+  // Content v3 does not ship markdown to the client; it parses content/ at
+  // build time into SQL and queries it at runtime. A Worker has no filesystem,
+  // so on Cloudflare that store has to be D1.
+  //
+  // WHICH D1. This points at the app's own `DB` binding rather than a second
+  // `CONTENT_DB`, and that is a deliberate trade:
+  //
+  //   * Cost of sharing: content creates its own `_content_info` and
+  //     `_content_blog` tables inside the app's database. Drizzle never sees
+  //     them — `drizzle-kit generate` diffs schema.ts against its own snapshot
+  //     in server/db/migrations/meta, not against the live database, and
+  //     `wrangler d1 migrations apply` only runs the files in that directory
+  //     and records them in its own `d1_migrations` table. So `bun db:generate`
+  //     will not try to drop these, and `bun db:migrate` will not try to create
+  //     them. (`drizzle-kit push`, which DOES diff against a live database,
+  //     is not wired up here — keep it that way, or exclude `_content_*`.)
+  //   * Cost of not sharing: a second `[[d1_databases]]` block with a
+  //     placeholder id, which every fork must replace with a real database
+  //     before `wrangler deploy` will even accept the config. That is a second
+  //     setup step, on the deploy path, to isolate three markdown files.
+  //
+  // Sharing wins at this size. If the blog ever grows into something with real
+  // write traffic, split it: create the database, add the binding, and change
+  // `bindingName` here — nothing else in the app reads these tables.
+  //
+  // NO MIGRATION STEP. Unlike the app's own schema (CLAUDE.md › Gotchas:
+  // "Nothing applies migrations to production D1"), the content tables need no
+  // `db:migrate:remote`. The build writes a compressed SQL dump into the
+  // Worker's static assets, and the first request after a deploy compares its
+  // checksum against `_content_info` and imports it if they differ. That is
+  // content's `integrityCheck`, and it stays on precisely because we deploy
+  // with wrangler: NuxtHub's own "apply queries during build" path is disabled
+  // for the d1 driver, and it would not reach the remote database anyway.
+  //
+  // DEV AND BUILD both ignore the setting above: parsing content, and every
+  // `nuxt dev` query, run against a local SQLite file in .data/ instead. Which
+  // SQLite is the `sqliteConnector` below, and it is not optional here.
+  //
+  // The module's default is `better-sqlite3` — a native module this repo does
+  // not have, which it tries to install by *prompting on stdin*. Under `bun
+  // run` that is not a prompt, it is a crash: consola cannot open a TTY, and
+  // `nuxt prepare` dies in postinstall with `uv_tty_init returned EINVAL`.
+  // Observed on a clean install here, before this line existed.
+  //
+  // `native` is `node:sqlite`, built into Node since 22.5 — nothing to install,
+  // nothing to compile, and it is the runtime that actually executes the build
+  // (`bun run dev` and `bun run build` both shell out to the `nuxt` bin, which
+  // has a node shebang, so `process.versions.bun` is undefined inside it and
+  // the module's own Bun detection never fires). package.json's `engines`
+  // records the 22.5 floor this depends on.
+  content: {
+    database: { type: 'd1', bindingName: 'DB' },
+    experimental: { sqliteConnector: 'native' },
   },
 
   // NuxtUI v4 + Tailwind v4

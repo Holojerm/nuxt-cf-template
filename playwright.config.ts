@@ -40,6 +40,17 @@ export default defineConfig({
   // A failing contrast ratio is deterministic — a retry only hides flake in the
   // harness, and there is nothing here worth retrying.
   retries: 0,
+  // Playwright's default is 30s per test, and the FIRST navigation of a run
+  // blows through it on a cold Vite cache: `nuxt dev` answers the webServer
+  // health check by server-rendering one page, then the browser asks for the
+  // client bundle and Vite transforms the whole component tree on demand. That
+  // tree grew when @nuxt/content arrived — NuxtUI registers ~40 Prose*
+  // components globally as soon as it is installed — and the first `page.goto`
+  // started timing out at 30s while every later one took two seconds.
+  //
+  // Same reasoning as webServer.timeout below: budget for the cold path, which
+  // is the only path CI ever takes. A real hang still fails, just later.
+  timeout: 90_000,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',

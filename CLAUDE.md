@@ -22,6 +22,7 @@ When working with AI assistants (Claude, etc.), always reference this file first
 | Linting      | **oxlint**                 | Fast Rust-based linter, config in `.oxlintrc.json`               |
 | Formatting   | **oxfmt**                  | Fast Rust-based formatter, config in `.oxfmtrc.json`             |
 | Validation   | **Zod**                    | All user input + API I/O                                         |
+| Content      | **@nuxt/content v3**       | Markdown blog in `content/`, parsed to SQL, served from the `DB` D1 |
 
 ---
 
@@ -52,9 +53,12 @@ When working with AI assistants (Claude, etc.), always reference this file first
 ├── shared/                 # Auto-imported in BOTH app/ and server/ (Nuxt 4 `shared/`)
 │   ├── types/              # Cross-cutting type augmentation (runtime config)
 │   └── utils/              # site.ts (URL identity), schema.ts (JSON-LD builders)
+├── content/                # @nuxt/content sources — NOT scanned by Nuxt as app code
+│   └── blog/               # One markdown file per post; the filename is the URL
 ├── scripts/                # One-off scripts (bun seed, etc.)
 ├── public/                 # Static assets — og.png, favicon.svg, apple-touch-icon.png
 ├── .github/                # Dependabot config (CI/CD lives in Cloudflare Workers Builds)
+├── content.config.ts       # Blog collection + frontmatter schema
 ├── drizzle.config.ts       # Drizzle Kit config
 ├── nuxt.config.ts
 ├── wrangler.toml
@@ -296,6 +300,11 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
   That one declaration is what puts a page in **both** `sitemap.xml` and `llms.txt` —
   there is no list to update. A page without it is in neither, which is the right
   default. `noindex: true` and `publicPage` are mutually exclusive and the gate enforces it.
+- **A dynamic route cannot reach either file that way.** The collecting hook skips any path
+  containing `:`, because `/blog/[slug]` is one pattern rather than N URLs. Enumerate those
+  server-side in `sitemap.xml.get.ts` / `llms.txt.get.ts` — see `server/utils/blog.ts`. The
+  page still declares `publicPage` (the gate's invariant is per-page), with a comment saying
+  the values are inert.
 - **Never write FAQ (or any) JSON-LD for content that isn't rendered.** `/pricing`
   builds its `FAQPage` from the same `PRICING_FAQ` array it renders — see
   `app/utils/faq.ts`. Structured data describing invisible content is a manual-action
@@ -309,6 +318,27 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
   every page render `noindex`, and sitemap/llms.txt go empty. `NUXT_PUBLIC_ALLOW_AI_CRAWLERS=false`
   blocks the named answer-engine crawlers (`server/utils/seo.ts` › `AI_CRAWLERS`); it defaults
   to **true** because being quotable by an answer engine is distribution for a SaaS marketing site.
+
+### Blog content (@nuxt/content)
+
+- **A post is a markdown file in `content/blog/`.** The filename is the URL. Frontmatter is
+  `title`, `description`, `date`, `author`, and optional `updated`, declared in
+  `content.config.ts`. Quote the dates — unquoted YAML dates become `Date` objects and lose a
+  day to a timezone somewhere between YAML, SQLite, and JSON.
+- **The schema does not enforce its own bounds.** Content turns a collection schema into SQL
+  columns; it never runs the refinements against your frontmatter. `bun run seo:check` reads
+  `content/blog/*.md` and applies the title/description limits there instead.
+- **Never call `queryCollection()` from app code.** On the client it downloads the collection
+  dump and runs it through `@sqlite.org/sqlite-wasm` — a megabyte of WebAssembly, and blocked
+  by this app's CSP, which does not grant `'wasm-unsafe-eval'`. Query it in `server/`
+  (`server/utils/blog.ts`) and have pages `useFetch('/api/blog…')`.
+- **Content lives in the app's own `DB` D1 binding** as `_content_*` tables, and needs no
+  Drizzle migration: the Worker imports the build's SQL dump on the first request after a
+  deploy. Do not run `drizzle-kit push` — it diffs against the live database and would try to
+  drop them.
+- Render with `<ContentRenderer>`; NuxtUI's `Prose*` components are registered automatically
+  and are themed under `ui.prose` in `app/app.config.ts` (DESIGN.md › Component behavior ›
+  Long-form content).
 
 ### Forms
 
@@ -627,6 +657,29 @@ command tracks state in wrangler's default `d1_migrations`, while the generated
 `.output/server/wrangler.json` sets `migrations_table = "_hub_migrations"`. Both work; pick
 one and stay on it, because alternating makes each think nothing has been applied.
 
+### @nuxt/content's default SQLite driver crashes `bun run` in postinstall
+
+Content v3 needs a local SQLite for parsing and for `nuxt dev`, and its default connector is
+`better-sqlite3` — a native module this repo does not depend on. When it is missing, the module
+does not fail; it **prompts on stdin** to install it. Under `bun run` there is no usable TTY,
+so consola throws `uv_tty_init returned EINVAL` and `nuxt prepare` dies during postinstall.
+Observed on a clean `bun install` before `content.experimental.sqliteConnector` was set.
+
+`nuxt.config.ts` pins `sqliteConnector: 'native'` — Node's built-in `node:sqlite`, hence the
+`node >= 22.5` line in `engines`. Note the module's own Bun detection cannot help here:
+`bun run dev` and `bun run build` both shell out to the `nuxt` bin, which has a node shebang,
+so `process.versions.bun` is undefined by the time the connector is chosen.
+
+That makes the Node version a **deploy-environment** constraint, not just a local one: CI runs
+`bun run ci`, which runs `nuxt build`, which is Node. Workers Builds defaults to Node 24 and
+preinstalls 22 and 24, so it passes today. The committed `.node-version` pins it anyway, so
+that a future image default — or someone setting `NODE_VERSION=20` for an unrelated reason —
+cannot quietly reintroduce the prompt. `engines` is documentation here, not a gate: bun warns
+on a mismatch rather than refusing to install. Workers Builds reads `.node-version`, `.nvmrc`,
+or a `NODE_VERSION` build variable.
+
+Production is unaffected — there the store is D1 (`content.database`), not a file.
+
 ### The dev server caches its DB connection — external writes need a restart
 
 `bun seed` (and anything else writing to `.data/db/sqlite.db` with `bun:sqlite`) writes the file
@@ -687,7 +740,7 @@ How each gate stays scoped — **match this when you add a gate**:
 | Gate | Why a sibling worktree can't reach it |
 | --- | --- |
 | `lint` | `.oxlintrc.json` › `ignorePatterns` lists `.claude/**` |
-| `design:check` / `seo:check` / `brand:check` | Walk `ROOT/app`, `ROOT/app/pages`, and fixed root-relative asset paths |
+| `design:check` / `seo:check` / `brand:check` | Walk `ROOT/app`, `ROOT/app/pages`, `ROOT/content/blog`, and fixed root-relative asset paths |
 | `test` | `vitest.config.ts` › `include` is `test/**` + `server/**`, relative to the checkout |
 | `typecheck` | Nuxt's generated `.nuxt/tsconfig.*` use scoped includes (`../app/**/*`, `../server/**/*`), not a root glob |
 | `test:a11y` | Per-checkout port — see below |
