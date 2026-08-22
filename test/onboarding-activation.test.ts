@@ -10,6 +10,7 @@
 // instead of before, and every test here still passes on the first call.
 
 import { env } from 'cloudflare:test'
+import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -18,6 +19,7 @@ import { listAudit } from '../server/utils/audit'
 import {
   activateIfComplete,
   computeOnboardingInputs,
+  hasActivated,
   recordActivationOnce,
 } from '../server/utils/onboarding'
 
@@ -135,6 +137,32 @@ describe('recordActivationOnce', () => {
     // capture itself never actually reached PostHog.
     const secondCall = await recordActivationOnce(db, USER_ID, 'control')
     expect(secondCall).toBe(false)
+  })
+})
+
+describe('hasActivated', () => {
+  it('is false before any activation', async () => {
+    expect(await hasActivated(db, USER_ID)).toBe(false)
+  })
+
+  it('is true once recordActivationOnce has fired, and stays true', async () => {
+    stubPosthog()
+    await recordActivationOnce(db, USER_ID, 'control')
+
+    expect(await hasActivated(db, USER_ID)).toBe(true)
+  })
+
+  it('is per-account — activating one user does not mark another', async () => {
+    stubPosthog()
+    const OTHER_USER = 'user-onboarding-3'
+    await db
+      .insert(schema.users)
+      .values({ id: OTHER_USER, email: 'cleo@example.com', name: 'Cleo' })
+
+    await recordActivationOnce(db, USER_ID, 'control')
+
+    expect(await hasActivated(db, USER_ID)).toBe(true)
+    expect(await hasActivated(db, OTHER_USER)).toBe(false)
   })
 })
 
@@ -349,5 +377,54 @@ describe('activateIfComplete', () => {
     expect(second).toEqual({ activated: false })
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(await listAudit(db, { targetId: USER_ID })).toHaveLength(1)
+  })
+
+  // The efficiency claim from the review: once an account is activated,
+  // every subsequent call — which, in practice, is every dashboard load for
+  // that account forever — must resolve from the one-read hasActivated()
+  // guard alone, without paying for computeOnboardingInputs's four reads.
+  // Asserting "it's fast" isn't meaningful in a test; asserting "it
+  // couldn't have looked at the current signals" is: delete the
+  // entitlement that made the account complete in the first place, and
+  // confirm the answer doesn't change. If activateIfComplete were still
+  // recomputing, this would flip to activated:false (or worse, throw, since
+  // buildEntitlementView would now see no row) — it does neither, because
+  // the guard check short-circuits before computeOnboardingInputs ever runs.
+  it('skips recomputing the checklist entirely once already activated', async () => {
+    const fetchMock = stubPosthog()
+    await db.insert(schema.entitlements).values({
+      userId: USER_ID,
+      paddleSubscriptionId: 'sub_1',
+      status: 'active',
+    })
+    await db.insert(schema.notificationPreferences).values({
+      userId: USER_ID,
+      channel: 'email',
+      eventType: 'product_updates',
+      enabled: true,
+    })
+    await db.insert(schema.mcpConnectCodes).values({
+      userId: USER_ID,
+      codeHash: 'b2'.repeat(32),
+      expiresAt: new Date(Date.now() + 60_000),
+      usedAt: new Date(),
+    })
+    await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Done' })
+
+    const first = await activateIfComplete(db, USER_ID, 'control', { portalConfigured: false })
+    expect(first).toEqual({ activated: true })
+    fetchMock.mockClear()
+
+    // The checklist is no longer complete by any honest recomputation — if
+    // this call recomputed, it would have nothing left to activate.
+    await db.delete(schema.entitlements).where(eq(schema.entitlements.userId, USER_ID))
+
+    const second = await activateIfComplete(db, USER_ID, 'control', { portalConfigured: false })
+
+    expect(second).toEqual({ activated: false })
+    // Not "false because incomplete" — false because the guard alone
+    // answered it, before computeOnboardingInputs (and therefore
+    // buildEntitlementView) ever ran.
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

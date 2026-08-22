@@ -8,7 +8,13 @@
 // was almost always tagged with the fallback variant rather than the one
 // the visitor was really shown. This endpoint is the client's explicit "I
 // just watched the checklist reach complete, with this variant on screen"
-// signal — see app/pages/dashboard.vue for when it's called.
+// signal — see app/pages/dashboard.vue for when it's called: gated on
+// useFlagVariant's `settled` (not on the variant merely changing) AND
+// `complete`, and on GET /api/onboarding not already reporting
+// `activated: true` — once it does, the client stops calling this endpoint
+// at all, rather than paying for a request whose only job would be to say
+// no. activateIfComplete() below still checks the same guard itself first,
+// cheaply, for every call that arrives anyway (a stale page, a retry).
 //
 // `db` and `schema` are auto-imported by @nuxthub/core — never instantiate
 // Drizzle manually.

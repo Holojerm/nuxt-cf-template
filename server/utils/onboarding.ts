@@ -72,6 +72,27 @@ export async function computeOnboardingInputs(
 }
 
 /**
+ * Whether `onboarding.activated` has already been recorded for this
+ * account — one indexed read against `audit_log`. Factored out so the two
+ * callers that both need this exact question answered (recordActivationOnce's
+ * own guard below, and activateIfComplete's early exit, which skips the four
+ * reads in computeOnboardingInputs entirely once this is true) share one
+ * query instead of hand-copying it, and so GET /api/onboarding — which asks
+ * the same question purely to report `activated` in its response, never to
+ * write anything — can reuse it too.
+ */
+export async function hasActivated(db: OnboardingDb, userId: string): Promise<boolean> {
+  const existing = await db.query.auditLog.findFirst({
+    where: and(
+      eq(tables.auditLog.actorUserId, userId),
+      eq(tables.auditLog.action, 'onboarding.activated'),
+    ),
+    columns: { id: true },
+  })
+  return Boolean(existing)
+}
+
+/**
  * Fire `user_activated` exactly once per account, the moment the checklist
  * is first observed complete. Returns `true` the one time it actually fires,
  * `false` on every call after (including calls where the checklist merely
@@ -98,18 +119,21 @@ export async function computeOnboardingInputs(
  *
  * Splitting the write out to its own endpoint, called by the client once it
  * has BOTH `complete: true` and a resolved variant in hand
- * (app/pages/dashboard.vue), fixes that: the tag recorded is the one the
+ * (app/pages/dashboard.vue — gated on useFlagVariant's `settled`, not on
+ * the variant merely changing; see app/composables/useFlag.ts for why that
+ * distinction is load-bearing), fixes that: the tag recorded is the one the
  * visitor actually saw. GET /api/onboarding is now purely a read (and
  * fetched once, not twice — see that file).
  *
  * ── Idempotency ───────────────────────────────────────────────────────────
  * An `audit_log` row with action `onboarding.activated` (actorType `user`,
  * actorUserId = targetId = this user) is the guard: if one already exists,
- * the event has fired before and this call is a no-op. The row is written
- * via `withAudit` — audit before act (server/utils/audit.ts) — so a dropped
- * PostHog capture can never leave the guard un-set: the row lands first,
- * the capture attempt happens after, and either way the next call sees the
- * row and skips.
+ * the event has fired before and this call is a no-op — see hasActivated()
+ * below, which owns the actual query. The row is written via `withAudit` —
+ * audit before act (server/utils/audit.ts) — so a dropped PostHog capture
+ * can never leave the guard un-set: the row lands first, the capture
+ * attempt happens after, and either way the next call sees the row and
+ * skips.
  *
  * This is check-then-write, not atomic — there's no unique constraint on
  * (actor_user_id, action) backing it, and adding one is a schema change out
@@ -128,14 +152,7 @@ export async function recordActivationOnce(
   userId: string,
   variant: OnboardingLayoutVariant,
 ): Promise<boolean> {
-  const existing = await db.query.auditLog.findFirst({
-    where: and(
-      eq(tables.auditLog.actorUserId, userId),
-      eq(tables.auditLog.action, 'onboarding.activated'),
-    ),
-    columns: { id: true },
-  })
-  if (existing) return false
+  if (await hasActivated(db, userId)) return false
 
   await withAudit(
     db,
@@ -172,6 +189,16 @@ export interface ActivateIfCompleteResult {
  * client-supplied state for something it alone decides to record — and only
  * defer to recordActivationOnce() once that's independently verified true.
  *
+ * Checks hasActivated() FIRST, before paying for computeOnboardingInputs's
+ * four reads. This matters because this function's steady-state caller is
+ * not "the moment someone finishes onboarding" — it's every dashboard load
+ * for every account that already has, forever (app/pages/dashboard.vue
+ * calls POST /api/onboarding/activated once per visit until GET
+ * /api/onboarding reports `activated: true`, at which point the client
+ * stops calling it at all — but every visit before that first GET refresh
+ * lands here). One indexed read to say "nothing to do" beats four just to
+ * throw the answer away.
+ *
  * Factored out of the endpoint (which is otherwise a two-line wrapper
  * around this and a session check) so the "not complete yet ⇒ no write, no
  * matter what the client thinks" behavior is directly testable without an
@@ -183,6 +210,8 @@ export async function activateIfComplete(
   variant: OnboardingLayoutVariant,
   options: ComputeOnboardingInputsOptions,
 ): Promise<ActivateIfCompleteResult> {
+  if (await hasActivated(db, userId)) return { activated: false }
+
   const inputs = await computeOnboardingInputs(db, userId, options)
   const progress = deriveOnboardingSteps(inputs)
 

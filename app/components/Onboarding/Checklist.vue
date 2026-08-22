@@ -38,7 +38,7 @@ const props = defineProps<{
   variant: string
 }>()
 
-const emit = defineEmits<{ dismiss: [] }>()
+const emit = defineEmits<{ dismiss: []; submitted: [] }>()
 
 const totalSteps = computed(() => props.progress?.total ?? ONBOARDING_STEP_IDS.length)
 const completedSteps = computed(() => props.progress?.completed ?? 0)
@@ -111,11 +111,15 @@ const completedSteps = computed(() => props.progress?.completed ?? 0)
            nothing else. The 'feedback' step isn't a plain link: it embeds
            the same widget every other page uses floating
            (app/components/Feedback/FeedbackWidget.vue), inline instead.
-           Identical for both arms. -->
+           Identical for both arms. Forwarding its `submitted` event is what
+           lets app/pages/dashboard.vue know to refresh the checklist —
+           without it, finishing the LAST step this way never reflects
+           anywhere except after a reload. -->
       <FeedbackWidget
         v-if="progress?.next?.id === 'feedback'"
         position="inline"
         label="Send feedback"
+        @submitted="emit('submitted')"
       />
       <UButton v-else-if="progress?.next" :to="progress.next.action.to">
         {{ progress.next.action.label }}

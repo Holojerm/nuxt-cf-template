@@ -43,18 +43,25 @@ export const onboardingStepSchema = z.object({
 export type OnboardingStep = z.infer<typeof onboardingStepSchema>
 
 /**
- * The known arms of the 'onboarding-layout' PostHog flag
- * (app/composables/useFlag.ts › useFlagVariant, read in app/pages/dashboard.vue).
+ * The known arms of the 'onboarding-layout' PostHog flag. One list, passed
+ * to BOTH sides that need to agree on it:
+ *   - app/pages/dashboard.vue passes this to useFlagVariant's `allowed`
+ *     param (app/composables/useFlag.ts), which clamps anything PostHog
+ *     returns that isn't in this list back to the fallback — so an arm
+ *     added in the PostHog dashboard before it's added here renders (and,
+ *     see below, records) as the fallback, not as itself.
+ *   - The Zod body of POST /api/onboarding/activated, and by extension the
+ *     `onboarding_layout_variant` property on the `user_activated` PostHog
+ *     event, both validate against this same enum.
  *
- * Bounded rather than a free string because it rides two places that must
- * never see arbitrary client input: the Zod body of
- * POST /api/onboarding/activated, and the `onboarding_layout_variant`
- * property on the `user_activated` PostHog event. It's still
- * client-asserted — the browser is what resolved the flag, and the server
- * has no independent way to check which arm a given visitor was actually
- * shown — bounding it only stops it from being free text, not from being
- * wrong. Add an arm here (and in the PostHog dashboard) before using it in
- * useFlagVariant, or the client's default ('control') is what ships.
+ * Add an arm here BEFORE configuring it in the PostHog dashboard, not
+ * after — the client-side clamp means the order the other way round just
+ * means visitors bucketed into the new arm quietly get the control
+ * experience (and their activations record as 'control') until this list
+ * catches up, rather than anything failing loudly. This value is still
+ * client-asserted either way — the browser is what resolved the flag, and
+ * the server has no independent way to check which arm a given visitor was
+ * actually shown — the clamp only guarantees it's one of these two.
  */
 export const ONBOARDING_LAYOUT_VARIANTS = ['control', 'compact'] as const
 export const onboardingLayoutVariantSchema = z.enum(ONBOARDING_LAYOUT_VARIANTS)
@@ -70,6 +77,25 @@ export const onboardingProgressSchema = z.object({
   next: onboardingStepSchema.nullable(),
 })
 export type OnboardingProgress = z.infer<typeof onboardingProgressSchema>
+
+/**
+ * What GET /api/onboarding actually returns on the wire: the pure
+ * derivation above, plus one fact that derivation can't know about because
+ * it isn't one of the four checklist signals — whether this account's
+ * `user_activated` event has already been recorded (server/utils/onboarding.ts
+ * › hasActivated). Kept as a separate schema, extending rather than folding
+ * into onboardingProgressSchema, because `deriveOnboardingSteps` below has
+ * to stay pure and D1-independent — see the module comment — and `activated`
+ * is neither of those.
+ *
+ * The client (app/pages/dashboard.vue) uses it to skip
+ * POST /api/onboarding/activated entirely once it's already true, rather
+ * than calling an endpoint whose only job at that point is to say no.
+ */
+export const onboardingStatusSchema = onboardingProgressSchema.extend({
+  activated: z.boolean(),
+})
+export type OnboardingStatus = z.infer<typeof onboardingStatusSchema>
 
 /**
  * The raw signals the checklist is derived from. Each one is a fact that
@@ -164,4 +190,36 @@ export function deriveOnboardingSteps(inputs: OnboardingInputs): OnboardingProgr
     complete: completed === steps.length,
     next: steps.find((step) => !step.done) ?? null,
   })
+}
+
+export interface ActivationAttemptState {
+  /** From useFlagVariant's `settled` (app/composables/useFlag.ts) — true
+   * once the A/B flag has actually reported a value, or been confirmed to
+   * have nothing to report. NOT the same question as "has the variant
+   * changed" — see that file for why conflating the two was the bug. */
+  settled: boolean
+  complete: boolean
+  /** From GET /api/onboarding's own response — true once this account has
+   * already been recorded, so a returning visitor's page load doesn't
+   * bother asking again. */
+  activated: boolean
+}
+
+/**
+ * Whether app/pages/dashboard.vue should attempt
+ * POST /api/onboarding/activated right now. Pulled out of that page's
+ * tryRecordActivation() as a pure function so the decision criteria are
+ * directly testable (test/onboarding.test.ts) without mounting the page.
+ *
+ * This only answers "are the preconditions met on THIS call" — it has no
+ * memory of previous calls. The "attempt at most once, ever, this page
+ * load" half is the caller's job: a closure boolean set synchronously
+ * before the resulting network call, the way dashboard.vue does it. That
+ * half can't be a pure function of this state on its own, because "have I
+ * already tried" is exactly the thing a pure function of the CURRENT state
+ * has no way to know — see test/onboarding.test.ts for a test that
+ * exercises the two together, the way the real page does.
+ */
+export function shouldAttemptActivation(state: ActivationAttemptState): boolean {
+  return state.settled && state.complete && !state.activated
 }

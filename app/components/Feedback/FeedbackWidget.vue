@@ -20,6 +20,13 @@ const props = withDefaults(defineProps<Props>(), {
   label: 'Feedback',
 })
 
+// Fires after a successful submission — the only consumer today is the
+// inline instance embedded in the onboarding checklist's "send feedback"
+// step (app/components/Onboarding/Checklist.vue), which has no other way
+// to learn that its own embedded widget just did something that could
+// change what the checklist shows.
+const emit = defineEmits<{ submitted: [] }>()
+
 const open = ref(false)
 const toast = useToast()
 const { loggedIn } = useUserSession()
@@ -113,6 +120,7 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
     color: 'success',
     icon: 'i-lucide-check',
   })
+  emit('submitted')
 }
 </script>
 

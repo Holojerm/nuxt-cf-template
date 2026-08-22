@@ -5,8 +5,12 @@
 // when a later step finishes before an earlier one.
 
 import { describe, expect, it } from 'vitest'
-import { deriveOnboardingSteps, ONBOARDING_STEP_IDS } from '../shared/utils/onboarding'
-import type { OnboardingInputs } from '../shared/utils/onboarding'
+import {
+  deriveOnboardingSteps,
+  ONBOARDING_STEP_IDS,
+  shouldAttemptActivation,
+} from '../shared/utils/onboarding'
+import type { ActivationAttemptState, OnboardingInputs } from '../shared/utils/onboarding'
 
 const NONE_DONE: OnboardingInputs = {
   entitlementActive: false,
@@ -129,5 +133,108 @@ describe('deriveOnboardingSteps — the plan step on /dashboard', () => {
   it('reads the plan step as done whenever entitlementActive is true, independent of everything else', () => {
     const progress = deriveOnboardingSteps({ ...NONE_DONE, entitlementActive: true })
     expect(progress.steps[0]).toMatchObject({ id: 'plan', done: true })
+  })
+})
+
+describe('shouldAttemptActivation', () => {
+  const READY: ActivationAttemptState = { settled: true, complete: true, activated: false }
+
+  it('is true only once every precondition holds', () => {
+    expect(shouldAttemptActivation(READY)).toBe(true)
+  })
+
+  it.each([
+    ['not settled yet — the cold-cache case', { ...READY, settled: false }],
+    ['not complete', { ...READY, complete: false }],
+    ['already recorded (GET reported activated: true)', { ...READY, activated: true }],
+  ] as const)('is false when %s', (_label, state) => {
+    expect(shouldAttemptActivation(state)).toBe(false)
+  })
+
+  it('settled alone is not enough — a settled flag on an incomplete checklist should not fire', () => {
+    expect(shouldAttemptActivation({ settled: true, complete: false, activated: false })).toBe(
+      false,
+    )
+  })
+
+  it('complete alone is not enough — the whole point of this function is that it is not', () => {
+    expect(shouldAttemptActivation({ settled: false, complete: true, activated: false })).toBe(
+      false,
+    )
+  })
+
+  // The property that matters most: across a realistic sequence of watcher
+  // firings — the way app/pages/dashboard.vue actually drives this, via
+  // `watch([settled, () => progress.value?.complete], …, { immediate: true })`
+  // plus a closure `activationAttempted` guard — the decision to attempt the
+  // POST fires exactly once, and only once every precondition is actually
+  // true. This simulates that call pattern directly rather than mounting
+  // the page.
+  describe("single-fire ordering, simulating the page's own call pattern", () => {
+    function simulatePage() {
+      let attempted = false
+      const attempts: ActivationAttemptState[] = []
+
+      /** Mirrors dashboard.vue's tryRecordActivation() exactly: check the
+       * guard, check the pure decision, and — if both pass — record an
+       * "attempt" (standing in for the real $fetch POST) and flip the
+       * guard synchronously, before anything async would happen. */
+      function onWatcherFired(state: ActivationAttemptState): void {
+        if (attempted || !shouldAttemptActivation(state)) return
+        attempted = true
+        attempts.push(state)
+      }
+
+      return { onWatcherFired, attempts: () => attempts }
+    }
+
+    it('cold-cache visitor: settled arrives after complete is already known, fires once when settled catches up', () => {
+      const page = simulatePage()
+
+      // `immediate: true`'s first synchronous firing — SSR/hydration,
+      // settled still false.
+      page.onWatcherFired({ settled: false, complete: true, activated: false })
+      // The 3s-timeout or onFeatureFlags firing, settled catches up.
+      page.onWatcherFired({ settled: true, complete: true, activated: false })
+      // A stray re-fire after that (e.g. onFeatureFlags firing again on a
+      // flags refresh) must not attempt a second time.
+      page.onWatcherFired({ settled: true, complete: true, activated: false })
+
+      expect(page.attempts()).toHaveLength(1)
+      expect(page.attempts()[0]).toEqual({ settled: true, complete: true, activated: false })
+    })
+
+    it('live completion via the embedded feedback widget: complete arrives after settled', () => {
+      const page = simulatePage()
+
+      // Flag already resolved (e.g. cached), checklist still has one step left.
+      page.onWatcherFired({ settled: true, complete: false, activated: false })
+      // handleFeedbackSubmitted's refresh() flips complete live.
+      page.onWatcherFired({ settled: true, complete: true, activated: false })
+      page.onWatcherFired({ settled: true, complete: true, activated: false })
+
+      expect(page.attempts()).toHaveLength(1)
+    })
+
+    it('a returning visitor who already activated never attempts, however many times the watcher fires', () => {
+      const page = simulatePage()
+
+      page.onWatcherFired({ settled: false, complete: true, activated: true })
+      page.onWatcherFired({ settled: true, complete: true, activated: true })
+
+      expect(page.attempts()).toHaveLength(0)
+    })
+
+    it('PostHog unconfigured forever: settled goes true immediately and stays the only firing that matters', () => {
+      const page = simulatePage()
+
+      // useFlag.ts: settled marks true synchronously in onMounted when
+      // client() is undefined — variant never changes past its fallback,
+      // but settled itself still resolves, which is the whole point.
+      page.onWatcherFired({ settled: false, complete: true, activated: false })
+      page.onWatcherFired({ settled: true, complete: true, activated: false })
+
+      expect(page.attempts()).toHaveLength(1)
+    })
   })
 })
