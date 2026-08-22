@@ -16,6 +16,16 @@
 // Unconfigured (no NUXT_RESEND_API_KEY) = no-op with a debug line, so the
 // template runs end-to-end without a Resend account.
 //
+// ── Queued, when a queue exists ──────────────────────────────────────────────
+// When the EMAIL_QUEUE producer binding is bound (production and preview, never
+// `bun dev` — see server/utils/email-queue.ts), the POST below is not made
+// here: the built request is handed to Cloudflare Queues and delivered by the
+// consumer in server/plugins/email-queue-consumer.ts, with retries. Everything
+// above this line still happens first and on this thread, so the never-throws
+// rule, the unconfigured no-op, and the mandatory-unsubscribe refusal are
+// unchanged by that. If the enqueue itself fails, this falls back to sending
+// inline rather than losing the message.
+//
 // ── List-Unsubscribe ──────────────────────────────────────────────────────
 // `unsubscribe` is the one option here that is refused rather than trusted.
 // Gmail and Yahoo require List-Unsubscribe / List-Unsubscribe-Post on bulk
@@ -39,6 +49,8 @@
 // Explicit, not the Nitro auto-import: this file is loaded directly by
 // test/email.test.ts, where nothing is injected.
 import { isMandatoryNotification } from '#shared/utils/notifications'
+import { resolveEmailQueue, shouldUseEmailQueue } from './email-queue'
+import type { EmailQueueMessage } from './email-queue'
 
 export interface SendEmailOptions {
   to: string
@@ -57,7 +69,17 @@ export interface SendEmailOptions {
 }
 
 export type SendEmailResult =
-  | { sent: true; id: string | null }
+  | {
+      sent: true
+      id: string | null
+      /**
+       * True when the message was handed to the queue rather than POSTed here.
+       * `id` is always null in that case — Resend assigns it in the consumer,
+       * after this call has returned. Callers that only branch on `sent` (all
+       * of them today) need no change.
+       */
+      queued?: boolean
+    }
   | { sent: false; reason: 'unconfigured' | 'rejected' | 'error' }
 
 /** The exact JSON body sendEmail() POSTs to Resend. */
@@ -135,6 +157,33 @@ export async function sendEmail(opts: SendEmailOptions): Promise<SendEmailResult
     return { sent: false, reason: 'unconfigured' }
   }
 
+  const request = buildResendEmailRequest(opts, from)
+
+  // ── The queue, when there is one ───────────────────────────────────────────
+  // Deliberately AFTER the unconfigured check: a deployment with no Resend key
+  // must still fail fast rather than fill a queue with mail nothing can send.
+  //
+  // The whole block is inside a try that falls through to the inline POST. A
+  // producer `send()` can fail — Queues has its own limits and outages — and
+  // when it does, the correct move is the thing this function did before the
+  // queue existed, not an error. That keeps the never-throws contract true and
+  // means adding the queue cannot have made any call site less reliable.
+  const queue = resolveEmailQueue()
+  if (shouldUseEmailQueue(queue, import.meta.dev)) {
+    try {
+      await queue.send({ v: 1, enqueuedAt: Date.now(), request } satisfies EmailQueueMessage)
+      return { sent: true, id: null, queued: true }
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          kind: 'email_enqueue_failed',
+          subject: opts.subject,
+          error: String(error),
+        }),
+      )
+    }
+  }
+
   try {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -142,7 +191,7 @@ export async function sendEmail(opts: SendEmailOptions): Promise<SendEmailResult
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(buildResendEmailRequest(opts, from)),
+      body: JSON.stringify(request),
     })
 
     if (!res.ok) {

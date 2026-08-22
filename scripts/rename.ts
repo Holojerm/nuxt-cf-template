@@ -1,14 +1,24 @@
 // Project rename — run with `bun run rename <new-name> [--display "New Name"]`.
 //
-// `my-app` appears in six places across four files, and wrangler's migrations
-// subcommand takes a database NAME rather than a binding, so two of them are
-// inside package.json scripts. Missing one produces failures that don't look
-// like a rename problem at all: Workers Builds refuses every build when the
-// dashboard Worker name doesn't match wrangler.toml, and the Nuxt MCP server
-// silently fails to connect when its URL doesn't match portless.name.
+// `my-app` names a lot of things, and none of them can be looked up from the
+// others at runtime. In wrangler.toml alone it is the Worker, the D1 database,
+// the R2 bucket, the email queue and its dead-letter queue, the display name in
+// [vars] — and then all of that again inside [env.preview], because bindings
+// are non-inheritable and the preview environment repeats every one of them.
+// Outside it: two package.json scripts (wrangler's `d1 migrations` subcommand
+// takes a database NAME, not a binding), portless.name, the Nuxt MCP URL, and
+// the MCP worker's own config.
 //
-// This script does all six, tells you exactly what it changed, and refuses to
-// run twice (there's nothing left to match the second time).
+// Missing one produces failures that don't look like a rename problem at all.
+// Workers Builds refuses every build when the dashboard Worker name doesn't
+// match wrangler.toml; the Nuxt MCP server just never connects when its URL
+// doesn't match portless.name; a queue name that doesn't match the one you
+// created makes `wrangler deploy` fail on a resource you're sure exists.
+//
+// So this replaces every occurrence in every file below, prints the per-file
+// count, and refuses to run twice (there's nothing left to match the second
+// time). The count is computed, not asserted — adding a `my-app` to a file
+// already listed here needs no change to this script.
 //
 // It deliberately does NOT touch README.md or CLAUDE.md — those explain the
 // template using `my-app` as the worked example, and rewriting them mid-sentence
@@ -69,6 +79,12 @@ const TARGETS: Target[] = [
   { file: 'wrangler.toml' },
   { file: 'package.json' },
   { file: '.mcp.json' },
+  // The only .ts source in this list. EMAIL_QUEUE_NAME has to equal the `queue`
+  // in both [[queues.producers]] and [[queues.consumers]], because the consumer
+  // filters on it — the cloudflare:queue hook fires for every queue bound to
+  // the Worker. A binding could have been read from the env instead; the queue
+  // NAME cannot, since the whole point is to compare it against the batch's.
+  { file: 'server/utils/email-queue.ts' },
   { file: 'mcp/wrangler.jsonc', optional: true },
   { file: 'mcp/package.json', optional: true },
 ]
@@ -117,10 +133,17 @@ for (const change of changes) {
 console.info(`
 Still yours to do — these need values only you have:
 
-  1. wrangler.toml    paste the real D1 database_id and KV namespace id
+  1. wrangler.toml    paste the real D1 database_id and KV namespace id — for
+                      BOTH the top-level block and [env.preview]
   2. wrangler.toml    set NUXT_PUBLIC_APP_URL to your deployed origin
-  3. Cloudflare       create the D1 database, KV namespace, and R2 bucket named
-                      ${name}-db / ${name}-blob
+  3. Cloudflare       create the D1 database, KV namespace, R2 bucket and queue:
+                        wrangler d1 create ${name}-db
+                        wrangler kv namespace create KV
+                        wrangler r2 bucket create ${name}-blob
+                        wrangler queues create ${name}-email
+                      The queue must exist before the first deploy; the
+                      dead-letter queue is created for you. See README ›
+                      Preview environment for the -preview set.
   4. Workers Builds   the Worker in the dashboard must be named exactly "${name}",
                       or every build fails before it starts
   5. bun install      regenerate the lockfile entry for the renamed package
