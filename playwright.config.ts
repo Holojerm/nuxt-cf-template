@@ -40,17 +40,12 @@ export default defineConfig({
   // A failing contrast ratio is deterministic — a retry only hides flake in the
   // harness, and there is nothing here worth retrying.
   retries: 0,
-  // Playwright's default is 30s per test, and the FIRST navigation of a run
-  // blows through it on a cold Vite cache: `nuxt dev` answers the webServer
-  // health check by server-rendering one page, then the browser asks for the
-  // client bundle and Vite transforms the whole component tree on demand. That
-  // tree grew when @nuxt/content arrived — NuxtUI registers ~40 Prose*
-  // components globally as soon as it is installed — and the first `page.goto`
-  // started timing out at 30s while every later one took two seconds.
-  //
-  // Same reasoning as webServer.timeout below: budget for the cold path, which
-  // is the only path CI ever takes. A real hang still fails, just later.
-  timeout: 90_000,
+  // Deliberately NOT raising the 30s default. The first navigation of a run
+  // does blow through it on a cold Vite cache (see test/warmup/), but paying
+  // for that with a bigger budget everywhere makes a genuine hang cost three
+  // times as long in every one of eighteen tests, and blunts the one signal
+  // this timeout exists to give. The `warmup` project below absorbs the cold
+  // build once instead.
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
@@ -63,8 +58,22 @@ export default defineConfig({
   },
 
   projects: [
-    { name: 'a11y', testDir: './test/a11y', use: { ...devices['Desktop Chrome'] } },
-    { name: 'csp', testDir: './test/csp', use: { ...devices['Desktop Chrome'] } },
+    // Runs first and alone; both suites below wait for it. Its only job is to
+    // make the dev server's first client build happen inside a test that is
+    // allowed to take four minutes — see test/warmup/warmup.spec.ts.
+    { name: 'warmup', testDir: './test/warmup', use: { ...devices['Desktop Chrome'] } },
+    {
+      name: 'a11y',
+      testDir: './test/a11y',
+      use: { ...devices['Desktop Chrome'] },
+      dependencies: ['warmup'],
+    },
+    {
+      name: 'csp',
+      testDir: './test/csp',
+      use: { ...devices['Desktop Chrome'] },
+      dependencies: ['warmup'],
+    },
   ],
 
   webServer: {

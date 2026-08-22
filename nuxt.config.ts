@@ -314,12 +314,19 @@ export default defineNuxtConfig({
   // `nuxt prepare` dies in postinstall with `uv_tty_init returned EINVAL`.
   // Observed on a clean install here, before this line existed.
   //
-  // `native` is `node:sqlite`, built into Node since 22.5 — nothing to install,
-  // nothing to compile, and it is the runtime that actually executes the build
-  // (`bun run dev` and `bun run build` both shell out to the `nuxt` bin, which
-  // has a node shebang, so `process.versions.bun` is undefined inside it and
-  // the module's own Bun detection never fires). package.json's `engines`
-  // records the 22.5 floor this depends on.
+  // `native` is `node:sqlite` — nothing to install, nothing to compile, and
+  // Node is the runtime that actually executes the build (`bun run dev` and
+  // `bun run build` both shell out to the `nuxt` bin, which has a node shebang,
+  // so `process.versions.bun` is undefined inside it and the module's own Bun
+  // detection never fires).
+  //
+  // The floor is **22.13.0**, not the 22.5.0 that first shipped the module:
+  // until 22.13 / 23.4 it was behind `--experimental-sqlite`, and this stack has
+  // no way to pass that flag. On 22.5–22.12 the module's availability probe
+  // simply returns false and falls back to the better-sqlite3 prompt above — so
+  // the wrong Node here reads as the same confusing crash, not as a version
+  // error. package.json's `engines` and the committed `.node-version` both
+  // record it.
   content: {
     database: { type: 'd1', bindingName: 'DB' },
     experimental: { sqliteConnector: 'native' },

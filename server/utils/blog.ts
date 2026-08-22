@@ -15,7 +15,8 @@
 //     never in SSR, never in a unit test.
 //
 // So the pages call `useFetch('/api/blog…')` and the query stays here, where it
-// runs in the Worker against D1 and ships JSON.
+// runs in the Worker against D1 and ships JSON. Measured: with no app-side
+// call, no sqlite wasm reaches `.output/public/_nuxt` at all.
 //
 // The import is explicit rather than relying on the Nitro auto-import, for the
 // reason CLAUDE.md › Gotchas records about `kv`: a server-util auto-import
@@ -24,28 +25,22 @@
 import type { H3Event } from 'h3'
 import { queryCollection } from '@nuxt/content/nitro'
 
+import type { BlogPostSummary } from '#shared/utils/blog'
 import { pathForLog } from './log'
 
-/**
- * A post without its body — everything a list, a sitemap entry, or a JSON-LD
- * node needs, and nothing that costs a full parsed document to send.
- */
-export interface BlogPostSummary {
-  /** Route path, e.g. `/blog/how-billing-works`. Derived from the filename. */
-  path: string
-  title: string
-  description: string
-  /** `YYYY-MM-DD`, from frontmatter. */
-  date: string
-  /** `YYYY-MM-DD`, only when the post has actually been revised. */
-  updated?: string
-  author: string
-}
+// Not re-exported: `shared/` is auto-imported Nitro-wide, so a second export of
+// the same name gives Nuxt two sources for one identifier and it warns about
+// the ambiguity on every build. Import it from '#shared/utils/blog'.
 
-/** Every post, newest first. */
+/** Newest first, drafts excluded. Throws if the collection cannot be read. */
 export async function listBlogPosts(event: H3Event): Promise<BlogPostSummary[]> {
   const posts = await queryCollection(event, 'blog')
     .select('path', 'title', 'description', 'date', 'updated', 'author')
+    // Filtered in SQL rather than after the fact: a draft should not travel to
+    // the caller at all. `draft` has a schema default of `false`, so the column
+    // is never NULL and this comparison never has to reason about three-valued
+    // logic — see content.config.ts.
+    .where('draft', '=', false)
     .order('date', 'DESC')
     .all()
 
@@ -54,18 +49,26 @@ export async function listBlogPosts(event: H3Event): Promise<BlogPostSummary[]> 
 }
 
 /**
- * Every post, or none — never an exception.
+ * What the two crawler files get: the posts, plus whether that list is
+ * trustworthy.
  *
- * For the two crawler files. A sitemap missing its posts costs some crawl
- * coverage; a sitemap that throws costs all of it plus a crawl error in Search
- * Console, and the likely causes here are transient: D1 briefly unavailable, or
- * the very first request after a deploy racing content's own dump import. The
- * user-facing /api/blog routes deliberately do NOT use this — a reader asking
- * for the blog should see an error, not a convincing empty page.
+ * `ok: false` is not a detail the caller may ignore. Serving a degraded
+ * sitemap is right — a sitemap that 500s costs all crawl coverage plus an error
+ * in Search Console, and the likely causes here are transient (D1 briefly
+ * unavailable, or the first request after a deploy racing content's own dump
+ * import). Serving it with the usual one-hour cache is NOT right: "every post
+ * is gone" and "every post was deleted" look identical to a crawler, and an
+ * hour is long enough for that to be believed. So the flag exists to force the
+ * caller to pick a Cache-Control — see `crawlerCacheControl()`.
+ *
+ * The user-facing /api/blog routes deliberately do not use this. A reader
+ * asking for the blog should get an error, not a convincing empty page.
  */
-export async function listBlogPostsOrEmpty(event: H3Event): Promise<BlogPostSummary[]> {
+export async function tryListBlogPosts(
+  event: H3Event,
+): Promise<{ posts: BlogPostSummary[]; ok: boolean }> {
   try {
-    return await listBlogPosts(event)
+    return { posts: await listBlogPosts(event), ok: true }
   } catch (error) {
     console.warn(
       JSON.stringify({
@@ -74,6 +77,6 @@ export async function listBlogPostsOrEmpty(event: H3Event): Promise<BlogPostSumm
         message: error instanceof Error ? error.message : String(error),
       }),
     )
-    return []
+    return { posts: [], ok: false }
   }
 }

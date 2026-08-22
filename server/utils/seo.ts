@@ -120,14 +120,50 @@ export function buildSitemap(input: SitemapInput): string {
   // Preview deploys are suppressed for the same reason robots.txt is.
   if (!appUrl || !input.indexable || input.entries.length === 0) return EMPTY_SITEMAP
 
+  // Every value is escaped, including the three that "cannot" contain markup.
+  // `changefreq` and `priority` come from a typed page declaration, and
+  // `lastmod` is shaped like a date — but the only thing actually enforcing
+  // that shape is `bun run seo:check` reading the markdown, because
+  // @nuxt/content converts a collection schema into SQL columns without ever
+  // running its refinements (content.config.ts says so). Escaping the whole row
+  // costs nothing and means a hand-edited frontmatter value can never produce a
+  // sitemap that fails to parse.
   const urls = input.entries
     .map((entry) => {
       const loc = escapeXml(absoluteUrl(appUrl, entry.path))
-      return `  <url>\n    <loc>${loc}</loc>\n    <lastmod>${entry.lastmod}</lastmod>\n    <changefreq>${entry.changefreq}</changefreq>\n    <priority>${entry.priority}</priority>\n  </url>`
+      const lastmod = escapeXml(entry.lastmod)
+      const changefreq = escapeXml(entry.changefreq)
+      const priority = escapeXml(entry.priority)
+      return `  <url>\n    <loc>${loc}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>${changefreq}</changefreq>\n    <priority>${priority}</priority>\n  </url>`
     })
     .join('\n')
 
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`
+}
+
+/** What a complete crawler document may be cached for. One hour. */
+export const CRAWLER_CACHE_CONTROL = 'public, max-age=3600'
+
+/** What an incomplete one may be cached for. Nothing. */
+export const DEGRADED_CACHE_CONTROL = 'no-store'
+
+/**
+ * Cache-Control for sitemap.xml and llms.txt, given whether the document is
+ * complete.
+ *
+ * The pairing is the point, and getting it wrong is worse than not degrading at
+ * all. If the blog query fails, both routes still serve — a document missing
+ * its posts beats a 500. But "the posts are missing" and "the posts were
+ * deleted" are the same bytes to a crawler, so caching that answer publicly for
+ * an hour turns a five-second D1 blip into an hour of Google believing the blog
+ * was removed. `no-store` makes the degraded document exactly as durable as the
+ * failure that produced it.
+ *
+ * Applies only to degradation, not to suppression: an empty sitemap on a
+ * preview deploy is a deliberate, stable answer and stays cacheable.
+ */
+export function crawlerCacheControl(complete: boolean): string {
+  return complete ? CRAWLER_CACHE_CONTROL : DEGRADED_CACHE_CONTROL
 }
 
 /**
@@ -141,6 +177,64 @@ export function buildSitemap(input: SitemapInput): string {
  */
 export function blogPostLastmod(post: { date: string; updated?: string }): string {
   return post.updated || post.date
+}
+
+/**
+ * Crawl hints for a blog post. Lower than the marketing pages on purpose: an
+ * individual post is worth indexing, but /pricing and the landing page are what
+ * this site is for. `monthly` because a published post is normally finished —
+ * the index at /blog is the URL that actually changes weekly, and it declares
+ * that itself via `publicPage`.
+ */
+export const POST_CRAWL_HINTS = { changefreq: 'monthly', priority: '0.5' } as const
+
+/** A crawler document plus how long it may be believed. */
+export interface CrawlerDocument {
+  body: string
+  cacheControl: string
+}
+
+export interface SitemapResponseInput {
+  appUrl: string
+  indexable: boolean
+  /** `runtimeConfig.buildDate` — the lastmod every static page shares. */
+  buildDate: string
+  /** Collected from `definePageMeta({ publicPage })` at build time. */
+  pages: PublicPage[]
+  posts: { path: string; date: string; updated?: string }[]
+  /** False when the post query failed — see crawlerCacheControl(). */
+  complete: boolean
+}
+
+/**
+ * Everything /sitemap.xml decides, as one function of plain data.
+ *
+ * The route is deliberately left with nothing but config reads, the query, and
+ * two assignments. That is not tidiness: the bug this shape prevents is a
+ * degraded document going out with the cacheable header, which is invisible in
+ * review (two adjacent, individually-correct lines) and cannot be reached by a
+ * test as long as it lives inside `defineEventHandler` — the vitest pool has
+ * neither Nitro's auto-imports nor content's build aliases.
+ */
+export function sitemapResponse(input: SitemapResponseInput): CrawlerDocument {
+  const entries: SitemapEntry[] = [
+    ...input.pages.map((page) => ({
+      path: page.path,
+      changefreq: page.changefreq,
+      priority: page.priority,
+      lastmod: input.buildDate,
+    })),
+    ...input.posts.map((post) => ({
+      path: post.path,
+      ...POST_CRAWL_HINTS,
+      lastmod: blogPostLastmod(post),
+    })),
+  ]
+
+  return {
+    body: buildSitemap({ appUrl: input.appUrl, indexable: input.indexable, entries }),
+    cacheControl: crawlerCacheControl(input.complete),
+  }
 }
 
 /** One blog post, as llms.txt lists it. */
@@ -211,4 +305,20 @@ export function buildLlmsTxt(input: LlmsTxtInput): string {
   )
 
   return sections.join('\n')
+}
+
+/**
+ * Everything /llms.txt decides once it has chosen to answer at all.
+ *
+ * The same shape as `sitemapResponse()`, and for the same reason: the pairing
+ * of a possibly-degraded body with its Cache-Control is the part worth testing,
+ * and it cannot be tested inside the route. Suppression (no origin, or a
+ * preview deploy) stays in the route, because that is a 404 rather than a
+ * document.
+ */
+export function llmsTxtResponse(input: LlmsTxtInput & { complete: boolean }): CrawlerDocument {
+  return {
+    body: buildLlmsTxt(input),
+    cacheControl: crawlerCacheControl(input.complete),
+  }
 }

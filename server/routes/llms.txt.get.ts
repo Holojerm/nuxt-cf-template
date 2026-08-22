@@ -18,8 +18,8 @@
 //
 // Suppressed on preview deploys for the same reason robots.txt is.
 
-import { listBlogPostsOrEmpty } from '../utils/blog'
-import { buildLlmsTxt } from '../utils/seo'
+import { tryListBlogPosts } from '../utils/blog'
+import { llmsTxtResponse } from '../utils/seo'
 
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
@@ -31,10 +31,9 @@ export default defineEventHandler(async (event) => {
     return 'Not found\n'
   }
 
-  const posts = await listBlogPostsOrEmpty(event)
+  const { posts, ok } = await tryListBlogPosts(event)
 
-  setResponseHeader(event, 'Cache-Control', 'public, max-age=3600')
-  return buildLlmsTxt({
+  const { body, cacheControl } = llmsTxtResponse({
     appName: config.public.appName,
     appUrl: config.public.appUrl,
     description: config.public.appDescription,
@@ -47,5 +46,10 @@ export default defineEventHandler(async (event) => {
       description: post.description,
       date: post.date,
     })),
+    // A failed post query must not be cached as if it were the truth.
+    complete: ok,
   })
+
+  setResponseHeader(event, 'Cache-Control', cacheControl)
+  return body
 })

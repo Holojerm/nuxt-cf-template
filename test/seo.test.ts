@@ -12,7 +12,12 @@ import {
   buildLlmsTxt,
   buildRobotsTxt,
   buildSitemap,
+  crawlerCacheControl,
+  llmsTxtResponse,
+  sitemapResponse,
   AI_CRAWLERS,
+  CRAWLER_CACHE_CONTROL,
+  DEGRADED_CACHE_CONTROL,
 } from '../server/utils/seo'
 import type { SiteContext } from '../shared/utils/schema'
 import {
@@ -319,6 +324,138 @@ describe('buildSitemap', () => {
     })
     expect(xml).not.toContain('example.com//')
     expect(xml).toContain('<loc>https://example.com/search</loc>')
+  })
+
+  it('escapes every value in the row, not just the URL', () => {
+    // `lastmod` looks like it cannot contain markup, but nothing enforces its
+    // shape at runtime: @nuxt/content builds SQL columns from the collection
+    // schema without ever running its refinements, so the value is whatever a
+    // human typed into frontmatter. One `<` there would break the document for
+    // every crawler, not just for the post that caused it.
+    const xml = buildSitemap({
+      ...BASE,
+      entries: [{ ...PAGE, lastmod: '2026-06-18<!--', priority: '0.5 & up' }],
+    })
+    expect(xml).toContain('<lastmod>2026-06-18&lt;!--</lastmod>')
+    expect(xml).toContain('<priority>0.5 &amp; up</priority>')
+    expect(xml).not.toContain('<!--')
+  })
+})
+
+describe('the crawler files under a failed blog query', () => {
+  // Both routes deliberately keep serving when the content collection cannot be
+  // read: a document missing its posts beats a 500. The danger is the second
+  // half of that decision. A crawler cannot tell "the query failed" from "the
+  // posts were deleted", so serving the degraded answer with the usual one-hour
+  // public cache turns a momentary D1 blip into an hour of Google believing the
+  // blog was removed — and the docstring on tryListBlogPosts() names the most
+  // likely trigger as the first request after a deploy.
+  //
+  // These assert the pairing at the only seam a test can reach. The routes
+  // themselves cannot be imported here (the pool has no Nitro auto-imports and
+  // no `#content/*` build aliases), which is exactly why every decision they
+  // make was moved into the two functions below.
+  const PAGES = [
+    {
+      path: '/pricing',
+      changefreq: 'weekly' as const,
+      priority: '0.8',
+      title: 'Pricing',
+      summary: 'Every plan and what it costs.',
+    },
+  ]
+  const POSTS = [{ path: '/blog/how-billing-works', date: '2026-06-18' }]
+  const SITEMAP = {
+    appUrl: 'https://example.com',
+    indexable: true,
+    buildDate: '2026-08-22',
+    pages: PAGES,
+    posts: POSTS,
+  }
+  const LLMS = {
+    appName: 'My App',
+    appUrl: 'https://example.com',
+    description: 'A template.',
+    supportEmail: 'support@example.com',
+    legalEntity: 'My Company Ltd',
+    pages: PAGES,
+    posts: [
+      {
+        path: '/blog/how-billing-works',
+        title: 'How the billing model works',
+        description: 'Two products, one entitlements table.',
+        date: '2026-06-18',
+      },
+    ],
+  }
+
+  it('caches sitemap.xml for an hour only when the post list is trustworthy', () => {
+    expect(sitemapResponse({ ...SITEMAP, complete: true }).cacheControl).toBe(CRAWLER_CACHE_CONTROL)
+    const degraded = sitemapResponse({ ...SITEMAP, posts: [], complete: false })
+    expect(degraded.cacheControl).toBe(DEGRADED_CACHE_CONTROL)
+    // Still a real document — the static pages survive the blog going dark.
+    expect(degraded.body).toContain('<loc>https://example.com/pricing</loc>')
+    expect(degraded.body).not.toContain('/blog/')
+  })
+
+  it('caches llms.txt for an hour only when the post list is trustworthy', () => {
+    expect(llmsTxtResponse({ ...LLMS, complete: true }).cacheControl).toBe(CRAWLER_CACHE_CONTROL)
+    const degraded = llmsTxtResponse({ ...LLMS, posts: [], complete: false })
+    expect(degraded.cacheControl).toBe(DEGRADED_CACHE_CONTROL)
+    expect(degraded.body).toContain('## Pages')
+    expect(degraded.body).not.toContain('## Blog')
+  })
+
+  it('does not treat a deliberately empty document as a failure', () => {
+    // A preview deploy publishes an empty sitemap on purpose. That answer is
+    // stable and belongs in a cache; only degradation does not.
+    const suppressed = sitemapResponse({ ...SITEMAP, indexable: false, complete: true })
+    expect(suppressed.cacheControl).toBe(CRAWLER_CACHE_CONTROL)
+    expect(suppressed.body).not.toContain('<url>')
+  })
+
+  it('is one decision, so the two documents can never disagree', () => {
+    expect(crawlerCacheControl(true)).toBe(CRAWLER_CACHE_CONTROL)
+    expect(crawlerCacheControl(false)).toBe(DEGRADED_CACHE_CONTROL)
+    expect(DEGRADED_CACHE_CONTROL).toBe('no-store')
+  })
+})
+
+describe('sitemapResponse', () => {
+  it('dates static pages from the build and posts from their own frontmatter', () => {
+    const { body } = sitemapResponse({
+      appUrl: 'https://example.com',
+      indexable: true,
+      buildDate: '2026-08-22',
+      pages: [
+        {
+          path: '/pricing',
+          changefreq: 'weekly',
+          priority: '0.8',
+          title: 'Pricing',
+          summary: '…',
+        },
+      ],
+      posts: [
+        { path: '/blog/older', date: '2026-06-18' },
+        { path: '/blog/revised', date: '2026-07-09', updated: '2026-08-05' },
+      ],
+      complete: true,
+    })
+
+    // The whole reason the sitemap queries the collection at all.
+    expect(body).toContain(
+      '<loc>https://example.com/pricing</loc>\n    <lastmod>2026-08-22</lastmod>',
+    )
+    expect(body).toContain(
+      '<loc>https://example.com/blog/older</loc>\n    <lastmod>2026-06-18</lastmod>',
+    )
+    expect(body).toContain(
+      '<loc>https://example.com/blog/revised</loc>\n    <lastmod>2026-08-05</lastmod>',
+    )
+    // Posts are ranked below the marketing pages they support.
+    expect(body).toContain('<priority>0.5</priority>')
+    expect(body).toContain('<changefreq>monthly</changefreq>')
   })
 })
 

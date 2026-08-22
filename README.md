@@ -139,7 +139,7 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
 Every push to `main` now lints, typechecks, tests, builds, and deploys. Pushes to other branches run the same checks and post a preview URL as a PR comment.
 
 **Node.js version.** The build shells out to the `nuxt` bin, which runs under Node, and
-`@nuxt/content` needs Node ≥ 22.5 for the built-in `node:sqlite` it uses to parse `content/`
+`@nuxt/content` needs Node ≥ 22.13 for the built-in `node:sqlite` it uses to parse `content/`
 (see [Blog](#blog)). Workers Builds defaults to Node 24 and preinstalls 22 and 24, so this is
 satisfied out of the box — the committed `.node-version` pins it anyway, because the failure
 mode if someone later sets `NODE_VERSION` to something older is not a clear error but an
@@ -714,6 +714,12 @@ Set `NUXT_PUBLIC_INDEXABLE=false` on preview deploys: robots.txt disallows every
 page renders `noindex`, sitemap.xml goes empty and llms.txt 404s. An indexed preview URL
 competes with production for the same content.
 
+If the blog query fails, sitemap.xml and llms.txt still serve — a document missing its posts
+beats a 500 — but they switch to `Cache-Control: no-store`. A crawler cannot tell "the query
+failed" from "the posts were deleted", and the usual one-hour public cache would turn a
+momentary D1 blip into an hour of that misreading. Suppression is different from degradation:
+an empty preview sitemap is a deliberate, stable answer and stays cacheable.
+
 ### The gate
 
 ```bash
@@ -775,12 +781,20 @@ Prose. Start at `##` — the `<h1>` is rendered from `title`.
 | `date` | yes | **Quoted** `'YYYY-MM-DD'`. Sort order, `datePublished`, `<lastmod>`. |
 | `updated` | no | Same format. Only when the post was actually revised. |
 | `author` | yes | Matching the legal entity attributes the post to the `Organization` node; anything else becomes a `Person`. |
+| `draft` | no | `true` hides the post from every list. Still openable by URL in dev; a 404 in production. |
 
 Quote the dates. Unquoted YAML dates are parsed into `Date` objects and then round-tripped
 through SQLite and JSON, which is three chances to pick up a timezone that shifts the day.
-`bun run seo:check` fails the build on a malformed one, and on a description outside the
-bounds — the collection schema in [`content.config.ts`](./content.config.ts) declares them but
-does not enforce them.
+`bun run seo:check` fails the build on a malformed date, on one in the future, on an `updated`
+that precedes its `date`, and on a description outside the bounds — the collection schema in
+[`content.config.ts`](./content.config.ts) declares those bounds but **does not enforce them**:
+@nuxt/content walks a collection schema to derive SQL columns and never runs its refinements
+against your frontmatter.
+
+A draft is filtered out in the query, so it reaches neither `/blog`, nor `sitemap.xml`, nor
+`llms.txt`. The dev-only URL is the point of the flag: a draft you cannot open is a draft you
+cannot proofread, and the workflow that replaces it — flip the flag, look, flip it back — is
+how an unfinished post gets published by accident.
 
 Three seed posts ship with the template. **They describe the template, not your product** —
 replace them, the same way you replace the changelog entries.
@@ -807,10 +821,12 @@ request after a deploy compares its checksum against `_content_info` and imports
 differ.
 
 In dev, none of that applies: parsing and queries go to a local SQLite file under `.data/`
-through Node's built-in `node:sqlite`. That is why `package.json` now declares a `node >=22.5`
-engine. The module's default is `better-sqlite3`, a native module this repo does not have and
-which it tries to install *by prompting on stdin* — under `bun run` that is not a prompt, it is
-a crash in `postinstall`.
+through Node's built-in `node:sqlite`. That is why `package.json` declares a `node >=22.13`
+engine — 22.13.0 (and 23.4.0) is where `node:sqlite` stopped requiring `--experimental-sqlite`,
+which this stack has no way to pass. The module's default is `better-sqlite3`, a native module
+this repo does not have and which it tries to install *by prompting on stdin* — under `bun run`
+that is not a prompt, it is a crash in `postinstall`, and it is also what an older Node falls
+back to.
 
 ### Reading it
 
@@ -827,6 +843,13 @@ Markdown renders through `<ContentRenderer>` onto NuxtUI's `Prose*` components, 
 registered automatically because `@nuxt/content` is installed. They already read the token
 layer; the two defaults that contradict `DESIGN.md` — `font-bold` on serif headings and
 hover-only link underlines — are overridden under `ui.prose` in `app/app.config.ts`.
+
+What the blog costs the client bundle, measured against the build immediately before it: **no
+sqlite wasm at all** (`.output/public/_nuxt` contains zero matching files), **+38 KB on the
+entry JS** and **+38 KB on the entry CSS**, uncompressed, plus 79 lazily-loaded chunks that
+only download on a page that renders them. The two entry costs are the 44 `Prose*` components
+NuxtUI registers globally; they are not configurable away without patching NuxtUI, and they are
+what makes a post look like the rest of the app.
 
 ---
 

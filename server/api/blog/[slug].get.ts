@@ -7,6 +7,8 @@
 import { z } from 'zod'
 import { queryCollection } from '@nuxt/content/nitro'
 
+import { isPostVisible } from '#shared/utils/blog'
+
 /**
  * The slug, constrained to what a filename in content/blog/ can produce.
  *
@@ -29,8 +31,18 @@ export default defineEventHandler(async (event) => {
 
   const post = await queryCollection(event, 'blog').path(`/blog/${slug}`).first()
 
-  if (!post) throw createError({ statusCode: 404, message: 'Post not found' })
+  // A draft is a 404 in production and readable in dev — one rule, stated once,
+  // in shared/utils/blog.ts. `import.meta.dev` is a compile-time constant, so a
+  // production bundle contains the strict branch and nothing else.
+  if (!post || !isPostVisible(post, import.meta.dev)) {
+    throw createError({ statusCode: 404, message: 'Post not found' })
+  }
 
+  // Five minutes, to browsers and to any shared cache that sees it (`max-age`
+  // binds both; there is no `s-maxage` because there is no reason to split
+  // them). Cloudflare's edge does not cache an /api/ path without a cache rule,
+  // so in practice this is the reader's own browser — enough to make a
+  // back-button return instant, short enough that publishing a fix is visible.
   setResponseHeader(event, 'Cache-Control', 'public, max-age=300')
 
   return post
