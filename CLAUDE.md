@@ -1,7 +1,35 @@
 # Project Standards & AI Development Guide
 
 This file defines the coding, design, and product standards for this project.
-When working with AI assistants (Claude, etc.), always reference this file first.
+It is the **index**, deliberately kept small: it loads into every session, so
+anything that is not needed on every task lives in [`.claude/docs/`](.claude/docs/)
+and is read on demand.
+
+---
+
+## Where things are documented
+
+Read the row that matches what you are about to touch. Do not load them all.
+
+| Doc | Covers | Load it when |
+| --- | --- | --- |
+| [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md) | Silent failure modes — wrong-file databases, migrations that never run, empty sitemaps, rate limiters that quietly do nothing | Something "works" but produces no output; or you touch D1, migrations, deploy config, cron, `definePageMeta`, or a worktree |
+| [`.claude/docs/patterns.md`](.claude/docs/patterns.md) | Worked examples: components, API routes, Drizzle queries, forms, error handling, feedback | Writing a new component, route, form, or query — especially your first change here |
+| [`.claude/docs/auth.md`](.claude/docs/auth.md) | Magic link, OAuth, session revocation, `rateLimit()`, Turnstile | Anything under `server/api/auth/`, sessions, rate limiting, or bot protection |
+| [`.claude/docs/billing.md`](.claude/docs/billing.md) | Paddle, entitlements, clawbacks, referral economics, the `mcp/` worker | Anything that grants, revokes, or prices access |
+| [`.claude/docs/email.md`](.claude/docs/email.md) | Resend, the `EMAIL_QUEUE`, retry/dead-letter, notification decisions | Adding or changing any outbound email |
+| [`.claude/docs/seo.md`](.claude/docs/seo.md) | `useSeo()`, `publicPage` meta, structured data, the blog | Adding or editing a page, or writing in `content/blog/` |
+| [`.claude/docs/images.md`](.claude/docs/images.md) | `<NuxtImg>` at the edge vs. transforming a private R2 object in the Worker | Rendering any image, adding a thumbnail, or debugging a `/cdn-cgi/image/` 404 |
+| [`.claude/docs/brand.md`](.claude/docs/brand.md) | How every icon is generated from one `Logo.vue` | Redesigning the mark or fixing `brand:check` |
+| [`.claude/docs/agent-setup.md`](.claude/docs/agent-setup.md) | MCP servers, skills, slash commands, cloud routines | Configuring tooling, or setting up a fork |
+| [`TEARDOWN.md`](TEARDOWN.md) | How to **remove** billing, referrals, the MCP worker, or swap Paddle for Stripe | You do not need one of the shipped subsystems |
+| [`DESIGN.md`](DESIGN.md) | The visual design system — source of truth | Writing any UI |
+
+**Three gotchas are load-bearing enough to state here**, because each one fails with
+no error at all: local D1 lives in two places and only `.data/db/sqlite.db` is real;
+**nothing applies migrations to production D1 — you run `bun run db:migrate:remote`
+yourself**; and `bun dev` caches its DB connection, so an external write needs a
+restart. The rest are in [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).
 
 ---
 
@@ -25,6 +53,7 @@ When working with AI assistants (Claude, etc.), always reference this file first
 | Content      | **@nuxt/content v3**       | Markdown blog in `content/`, parsed to SQL, served from the `DB` D1 |
 
 ---
+
 
 ## Directory Structure
 
@@ -70,6 +99,7 @@ When working with AI assistants (Claude, etc.), always reference this file first
 
 ---
 
+
 ## Coding Standards
 
 ### General Rules
@@ -80,97 +110,9 @@ When working with AI assistants (Claude, etc.), always reference this file first
 - **Nuxt auto-imports.** Never manually import `ref`, `computed`, `useState`, `useFetch`, etc. — Nuxt auto-imports these.
 - **No `console.log` in committed code.** Use `console.warn`/`console.error` for real issues only.
 
-### Vue / Nuxt Patterns
-
-```vue
-<!-- ALWAYS use <script setup lang="ts"> -->
-<script setup lang="ts">
-// Props — define with TypeScript interface
-interface Props {
-  userId: string
-  isActive?: boolean
-}
-
-const props = withDefaults(defineProps<Props>(), {
-  isActive: false,
-})
-
-// Emits — define with TypeScript
-const emit = defineEmits<{
-  update: [value: string]
-  close: []
-}>()
-
-// Data fetching — useFetch for pages, $fetch for mutations
-const { data: user, status } = await useFetch(`/api/users/${props.userId}`)
-
-// Computed
-const displayName = computed(() => user.value?.name ?? 'Unknown')
-</script>
-
-<template>
-  <!-- PascalCase for components -->
-  <UserCard :user="user" @update="emit('update', $event)" />
-</template>
-```
-
-### API Routes
-
-```typescript
-// server/api/users/[id].get.ts
-// File naming: [method].ts suffix = HTTP method (get, post, put, delete, patch)
-
-import { z } from 'zod'
-
-export default defineEventHandler(async (event) => {
-  // 1. Validate route params
-  const { id } = getRouterParams(event)
-
-  // 2. Auth (if not handled globally by middleware)
-  const session = await getUserSession(event)
-  if (!session.user) throw createError({ statusCode: 401 })
-
-  // 3. Database query via Drizzle
-  // `db` and `schema` are auto-imported by @nuxthub/core — do NOT import manually
-  const user = await db.query.users.findFirst({
-    where: eq(schema.users.id, id),
-  })
-
-  if (!user) throw createError({ statusCode: 404, message: 'User not found' })
-
-  // 4. Return data — Nitro auto-serializes to JSON
-  return user
-})
-```
-
-```typescript
-// POST / mutation endpoints — always validate body with Zod
-export default defineEventHandler(async (event) => {
-  const bodySchema = z.object({
-    name: z.string().min(1).max(100),
-    email: z.string().email(),
-  })
-
-  const body = await readValidatedBody(event, bodySchema.parse)
-  // body is now fully typed and validated
-})
-```
-
-### Database (Drizzle + D1)
-
-- **Schema lives in `server/db/schema.ts`** — one file, all tables.
-- **Always export inferred types**: `export type User = typeof users.$inferSelect`
-- **`db` and `schema` are auto-imported** by `@nuxthub/core` Nitro-wide — they work in `server/api/`, `server/utils/`, `server/middleware/`, `server/plugins/`, `server/routes/`. Never import or instantiate Drizzle manually.
-- **Migrations**: Run `bun db:generate` after schema changes, commit migration files.
-- **Local dev DB**: NuxtHub creates `.data/db/sqlite.db` on first `bun dev`. This is NOT the same file as `.wrangler/state/v3/d1/` — do not seed via `wrangler d1 execute --local`, the dev server won't read it. Seed via `bun seed` (see `scripts/seed.ts`), which writes directly to NuxtHub's path with `bun:sqlite`.
-
-```typescript
-// Good — db and schema are auto-imported, no import statement needed
-const users = await db.select().from(schema.users).where(eq(schema.users.role, 'trainer'))
-
-// Bad — raw SQL unless absolutely necessary
-await db.run(sql`SELECT * FROM users`)
-```
+- **Worked examples** — a full `<script setup>` component, a Zod-validated API route,
+  Drizzle queries, forms, and error handling — are in
+  [`.claude/docs/patterns.md`](.claude/docs/patterns.md). Copy those shapes.
 
 ---
 
@@ -185,23 +127,13 @@ don't hand-edit them and expect the change to survive. `bun run design:check` (p
 
 The dev-only `/design-system` route renders every token and component state on one page in both
 color modes — use it to verify a design change actually landed.
-
 ### The brand mark
 
-The logo is drawn **once**, in [`app/components/Brand/Logo.vue`](app/components/Brand/Logo.vue),
-and every standalone file is cut from it by `bun run brand:generate` — `public/favicon.svg`,
-`public/apple-touch-icon.png`, `public/og.png`. The header renders that same
-`<svg data-brand-mark>` element, so the tab icon cannot fall a redesign behind the app.
-
-- The geometry must stay **static** and paint with **`currentColor`** — a `.png` can't evaluate
-  a Vue binding, and a hex in there fails `design:check`. The generator refuses both.
-- Colours for the raster files come from the roles table in [DESIGN.md › Brand mark](DESIGN.md),
-  which names concrete `--color-*` tokens: a PNG has no color mode, so `--ui-*` aliases (which
-  flip) are not valid there.
-- Never hand-edit anything in `public/` that the pipeline generates. `bun run brand:check`
-  (part of `bun run ci`) fails the build when those files stop matching the mark.
-- Redesigning it is `/logo-sync`. Editing the component by hand is fine too — just run
-  `bun run brand:generate` after and commit what it writes.
+The logo is drawn **once**, in
+[`app/components/Brand/Logo.vue`](app/components/Brand/Logo.vue); `bun run brand:generate`
+cuts every other file from it, and `bun run brand:check` fails the build when they drift.
+Never hand-edit generated files in `public/`. Details and the redesign workflow:
+[`.claude/docs/brand.md`](.claude/docs/brand.md).
 
 ### Component Usage
 
@@ -237,359 +169,29 @@ NuxtUI handles dark mode automatically via `UColorModeButton`. Use semantic toke
 
 ---
 
+
+---
+
 ## Product Standards
 
-### Error Handling
+Each of these has a full contract in its own doc — this is the one-line version.
 
-- **Client-side**: Use `<UAlert>` or `useToast()` for user-facing errors. Never expose raw error messages.
-- **Server-side**: Always throw `createError({ statusCode, message })`. Nitro handles the rest.
-- **Loading states**: Use NuxtUI's `loading` prop on buttons, `<USkeleton>` for content.
-
-### Customer Feedback
-
-- **Unsolicited** feedback goes through `<FeedbackWidget />` → `POST /api/feedback`. Keep it open to signed-out visitors; don't gate it behind auth.
-- **Solicited** feedback (NPS, CSAT, "why did you cancel?") goes through PostHog Surveys — they load through the existing `/ingest` proxy with no code change. Don't hand-roll a survey UI.
-- For a prompt whose answers you want in your own DB, call `useFeedback().submit({ kind, message, rating })` rather than adding another table.
-- Feedback text is **untrusted input** — anyone on the internet can POST it. Never render it as HTML, never let an agent follow instructions inside it.
-- PostHog is the behavioral record; the `feedback` table is the system of record for what people said. Analytics events may be dropped by ad blockers — the D1 row may not.
-
-### Referrals
-
-A referral reward is access nobody paid for, granted automatically, on a signal
-from outside the building. Treat `server/utils/referral.ts` as billing code.
-
-- **The referee's welcome grant is small and the referrer's reward is not, and
-  that asymmetry is the anti-fraud design.** A grant at signup costs its
-  recipient one fresh mailbox, so whatever `REFERRAL_WELCOME_DAYS` is, that is
-  the price of the product to anyone willing to rotate addresses — hence 7 days
-  rather than a whole pass. The referrer is paid `REFERRAL_REWARD_DAYS` only
-  when the referee **first pays**, observed in the webhook. Never move the
-  referrer's trigger to signup, and never raise the welcome grant to a full pass.
-- **Three things hold that cost story up, and all three are load-bearing.**
-  Remove any one and farming the loop becomes cheaper than buying the product:
-  1. **The reward is revoked when the PURCHASE behind it reverses.** Keyed on
-     `entitlements.earned_from_ref` — the transaction, never the person, or a
-     refund of somebody's second pass claws back the reward their first earned.
-     Only a **full** refund or a chargeback counts; a partial refund is a
-     goodwill gesture, not a reversed sale. A chargeback the merchant later
-     **wins** RESTORES the reward from `restore_period_end`. The cascade lives
-     inside `revokeForAdjustment` (`server/utils/entitlements.ts` ›
-     `revokeDerivedEntitlements`), not in the webhook route, so every caller
-     gets it; the route only writes the audit rows.
-  2. **The cap counts revoked rows.** Refund-churn burns budget instead of
-     recycling it; counting only live rows would make the ceiling unreachable.
-  3. **Self-referral is judged by mailbox, not address** (`isSameMailbox`), so
-     `me+1@gmail.com` on `me@gmail.com`'s code is refused.
-- **The welcome grant is once per MAILBOX, not once per account.** Its ref is
-  `welcome_<saltedHash('referral-welcome:v1:' + canonical mailbox)>`. Keyed on
-  the user id it was renewable forever by deleting the account and signing up
-  again on the same address.
-- **That salt is provisioned, never configured** (`server/utils/identity.ts`,
-  `instance_secrets`): 32 random bytes written to D1 on first use and never
-  rotated. It is deliberately not `sessionPassword` — an operator may rotate
-  that after a compromise, and rotating it would recompute every mailbox's ref
-  and silently re-arm every spent trial. It is deliberately not a new env var
-  either, for the reason `unsubscribe.ts` gives: a new secret is a human gate,
-  and the fork that never sets it is the fork that gets the bug. The digest is
-  domain-separated because unprefixed it was byte-identical to the magic-link
-  per-address rate-limit key. `grantRefereeWelcome` also checks the pre-2026-08-22
-  ref during transition; delete that once no legacy row can still be granting.
-- **Idempotency is structural.** There is no ledger table and no "already paid"
-  flag, because both need a read-then-write a webhook redelivery can race.
-  Each grant derives a deterministic ref (`server/utils/paddle-refs.ts`) and the
-  unique index on `paddle_subscription_id` refuses the second write. So the
-  webhook hook is called on *every* qualifying event: a redelivery is a repair
-  path, not a second payout. The cap is the one soft edge — it is read-then-write,
-  so the true ceiling is `REFERRAL_MAX_REWARDS` plus in-flight deliveries.
-- **The two prefixes are counted differently.** `REFERRAL_MAX_REWARDS` counts
-  `referral_` rows only; a person's own `welcome_` row must not eat the budget
-  they earn with. That is the whole reason they are not one prefix.
-- **`rewardedCount` on the share card counts rewards that still STAND**
-  (`countStandingReferralRewards`), while the cap counts every payout ever
-  triggered including revoked ones (`countReferralRewards`). Two queries on
-  purpose: showing a clawed-back reward as "earned you days" sends somebody
-  looking for days that are not there, and letting a refund refund the budget
-  slot makes the cap unreachable.
-- **A live subscriber IS paid** — unlike a comp, which still refuses. A comp is
-  an apology an operator chooses to send; a referral reward was earned by
-  somebody the product already promised. The days stack from the renewal date
-  and start when the subscription ends, and the share card says exactly that.
-  Refusing lost the reward permanently (the trigger never retries) and did it to
-  the referrers most worth having. Self-referral and tombstoned referrers are
-  still refused, and every skip is logged.
-- **"First paid" for a subscription is a status transition, not money** —
-  `previousStatus === null || 'trialing'`. `past_due → active` is a dunning
-  recovery, not a first payment. It is not keyed on `transaction.completed` with
-  a `subscription_id` because `applyPaddleEvent` classifies that as `ignored`
-  with no userId; see the reasoning at the webhook call site. The clawback is
-  the backstop for what a status cannot distinguish.
-- A `?ref=` code lands in the existing **first-touch** attribution cookie
-  (`shared/utils/attribution.ts`), so a returning visitor cannot be re-credited
-  to whoever sent them the most recent link. It becomes `users.referred_by` on
-  the INSERT branch of `upsertOAuthUser` and only when it resolves to a real,
-  live, other account. A magic link carries the code on its **token row**
-  (`magic_link_tokens.referral_code`), so a link requested on a laptop and
-  opened on a phone still attributes; `withReferralCode()` is the same-browser
-  backstop for rows minted before that column, and may only ever fill a hole,
-  never overwrite one.
-- Every grant writes a `referral.rewarded` audit row with `actorType: 'system'`.
-  Ids and day counts only — never a code or an address.
-
-### SEO & AEO
-
-- **Every page calls `useSeo()` exactly once.** It is the only thing that emits
-  `<link rel="canonical">`, Open Graph, Twitter cards, and JSON-LD. `bun run seo:check`
-  (part of `bun run ci`) fails the build on a page that skips it or that calls
-  `useSeoMeta()`/`useHead()` to set SEO tags directly.
-- **Public pages declare themselves**: `definePageMeta({ publicPage: { changefreq, priority, title, summary } })`.
-  That one declaration is what puts a page in **both** `sitemap.xml` and `llms.txt` —
-  there is no list to update. A page without it is in neither, which is the right
-  default. `noindex: true` and `publicPage` are mutually exclusive and the gate enforces it.
-- **A dynamic route cannot reach either file that way.** The collecting hook skips any path
-  containing `:`, because `/blog/[slug]` is one pattern rather than N URLs. Enumerate those
-  server-side in `sitemap.xml.get.ts` / `llms.txt.get.ts` — see `server/utils/blog.ts`. The
-  page still declares `publicPage` (the gate's invariant is per-page), with a comment saying
-  the values are inert.
-- **Never write FAQ (or any) JSON-LD for content that isn't rendered.** `/pricing`
-  builds its `FAQPage` from the same `PRICING_FAQ` array it renders — see
-  `app/utils/faq.ts`. Structured data describing invisible content is a manual-action
-  risk with Google and a lie an answer engine will repeat.
-- **Prices go into schema as numbers**, never display strings. `app/utils/plans.ts`
-  carries `amount` + `currency` + `unit` alongside the `'$12'` display copy for exactly
-  this reason.
-- Structured-data builders live in `shared/utils/schema.ts` and are pure functions of a
-  `SiteContext` — add a node type there, unit-test it, then pass it via `useSeo({ schema: [...] })`.
-- `NUXT_PUBLIC_INDEXABLE=false` on preview deploys makes robots.txt disallow everything,
-  every page render `noindex`, and sitemap/llms.txt go empty. `NUXT_PUBLIC_ALLOW_AI_CRAWLERS=false`
-  blocks the named answer-engine crawlers (`server/utils/seo.ts` › `AI_CRAWLERS`); it defaults
-  to **true** because being quotable by an answer engine is distribution for a SaaS marketing site.
-
-### Blog content (@nuxt/content)
-
-- **A post is a markdown file in `content/blog/`.** The filename is the URL. Frontmatter is
-  `title`, `description`, `date`, `author`, and optional `updated` and `draft`, declared in
-  `content.config.ts`. Quote the dates — unquoted YAML dates become `Date` objects and lose a
-  day to a timezone somewhere between YAML, SQLite, and JSON.
-- **The schema does not enforce its own bounds.** Content turns a collection schema into SQL
-  columns; it never runs the refinements against your frontmatter. Only the *types* and
-  *defaults* are real. `bun run seo:check` reads `content/blog/*.md` and applies the
-  title/description limits there instead, plus dates that are well-formed, not in the future,
-  and in the right order.
-- **`draft: true` hides a post from every list** (the query filters it, so it is absent from
-  /blog, sitemap.xml, and llms.txt) but leaves its URL readable in dev and 404 in production.
-  The rule is `isPostVisible()` in `shared/utils/blog.ts` — one function, tested, called from
-  the slug route.
-- **Never call `queryCollection()` from app code.** On the client it downloads the collection
-  dump and runs it through `@sqlite.org/sqlite-wasm` — a megabyte of WebAssembly, and blocked
-  by this app's CSP, which does not grant `'wasm-unsafe-eval'`. Query it in `server/`
-  (`server/utils/blog.ts`) and have pages `useFetch('/api/blog…')`.
-- **Content lives in the app's own `DB` D1 binding** as `_content_*` tables, and needs no
-  Drizzle migration: the Worker imports the build's SQL dump on the first request after a
-  deploy. Do not run `drizzle-kit push` — it diffs against the live database and would try to
-  drop them.
-- Render with `<ContentRenderer>`; NuxtUI's `Prose*` components are registered automatically
-  and are themed under `ui.prose` in `app/app.config.ts` (DESIGN.md › Component behavior ›
-  Long-form content).
-
-### Forms
-
-- Always use `<UForm>` with a Zod schema — it handles validation display automatically.
-- Never trust client-side validation alone — always re-validate on the server with Zod.
-
-### Performance
-
-- **Prefer server-side data fetching** (`useFetch` with `await` in `<script setup>`) for initial page loads.
-- **Lazy-load heavy components**: `const HeavyChart = defineAsyncComponent(() => import('./HeavyChart.vue'))`
-- **Image uploads go to R2** via `blob` (auto-imported) — never store base64 in the database.
-
-### Auth Patterns
-
-Sign-in is **implemented**, not scaffolded. The primary path is a **magic link**
-(`server/api/auth/magic-link.post.ts` → `/auth/verify` → `verify.post.ts`); Apple,
-Google, and GitHub OAuth sit under it at `server/api/auth/<provider>.get.ts`;
-users are provisioned on first login by `upsertOAuthUser()`; and a dev-only email
-shortcut lets a fresh clone reach a gated page without registering anything.
-
-Three rules the magic-link flow depends on, each of which is a real bug if broken:
-
-- **A GET never spends a token.** Mail security gateways prefetch every URL in an
-  incoming message, so a link that signs you in by being fetched signs the scanner
-  in. `GET /api/auth/magic-link/verify` only reports whether a token is usable;
-  the POST behind the button on `/auth/verify` is what consumes it.
-- **Redemption is one atomic statement** — `UPDATE … WHERE used_at IS NULL AND
-  expires_at > now RETURNING *` (`server/utils/magic-link.ts`). Read-then-write is a
-  login bypass with a race in it: two requests carrying one token would both win.
-- **The request endpoint answers identically for an unknown address**, or it is an
-  account-enumeration oracle. Its per-address rate limit is what stops it being a
-  mail cannon pointed at someone else's inbox.
-- **Reserved addresses are refused at mint time.** Deletion anonymizes the `users`
-  row and keys it `deleted-<id>@deleted.invalid`, so a link for that tombstone
-  would redeem into the deleted account. `isUndeliverableAddress()` refuses the
-  `.invalid` TLD. The sign-in email is `security.sign_in_link`, which the
-  taxonomy classifies as mandatory, so it can never carry List-Unsubscribe.
-- **The token rides in the URL fragment**, never the query string. A fragment is
-  never transmitted, so it reaches no access log, no `Referer`, and no proxy —
-  which matters because PostHog autocapture attaches `location.href` to every
-  event. `app/utils/analytics-privacy.ts` scrubs whatever gets past that.
-- **Nothing about the address is observable from outside.** The per-address rate
-  limit calls the pure `consumeRateLimit()` rather than `rateLimit()`, because
-  the wrapper's `X-RateLimit-Remaining` header and 429 would each answer "is this
-  stranger mid-sign-in?" to anyone who POSTs their address. Exhaustion, a
-  reserved address, and a provider-rejected send all return the same `{ ok: true }`.
-
-GitHub ships **unconfigured on purpose** — it is a developer credential, and a
-consumer sign-in page that leads with it tells most visitors the product isn't for
-them. Configure it for a devtool fork; it renders last either way
-(`server/api/auth/providers.get.ts`).
-
-```typescript
-// Protect a page client-side (UX only — see the warning below)
-definePageMeta({ middleware: 'auth' })
-definePageMeta({ middleware: ['auth', 'subscription'] }) // signed in AND paying
-
-// Access session in a page
-const { loggedIn, user } = useUserSession()
-
-// Protect a server route — THIS is the real boundary
-const session = await getUserSession(event)
-if (!session.user) throw createError({ statusCode: 401 })
-
-// Or, for anything paid:
-const { user, entitlement } = await requireSubscription(event) // 401 | 402
-```
-
-**The client middleware is not a security boundary.** `app/middleware/auth.ts`
-and `app/middleware/subscription.ts` run in the browser and exist so people see
-a login page instead of an empty one. Every paid API route must call
-`requireSubscription(event)` itself, or the gate is decorative.
-
-**Sessions are revocable.** A sealed cookie has no server-side record, so
-revocation needs both halves: every session carries `issuedAt`, and
-`users.sessions_invalid_before` is the watermark that kills everything older.
-`server/middleware/auth.ts` checks it on every `/api/*` request that carries a
-session — one indexed read, deliberately uncached (`server/utils/session-guard.ts`
-explains why a cache would reintroduce the bug). Deletion sets the watermark;
-that is what makes "delete my account" end the session on the user's other
-devices instead of only the one they clicked from. Anything else that must
-invalidate sessions sets the same column — do not add a second mechanism.
-
-**Identity is the verified email address.** Signing in with a magic link today
-and Google tomorrow on the same address lands on the same account by design.
-That's only safe because every caller of `establishSession()` passes an explicit
-`emailVerified` — an unverified address would be an account-takeover primitive.
-Never default that flag to `true` when adding a provider. The magic-link path is
-the one place where that flag is our own evidence rather than a third party's: the
-token was mailed to that address and came back.
-
-Adding a provider is three steps: add the `oauth.<name>` keys to
-`nuxt.config.ts`, write `server/api/auth/<name>.get.ts` mapping the provider's
-user shape onto `OAuthProfile`, and add a row to `server/api/auth/providers.get.ts`
-so `/login` renders the button. (Apple is the exception to step two twice over:
-its callback is a cross-site form POST, so that route is `apple.ts` with no
-method suffix, and it needs `NUXT_OAUTH_APPLE_REDIRECT_URL` because its handler
-does not fall back to the request origin the way the others do.)
-
-**Never put a secret in a URL a browser will keep.** Two flows here have to hand
-someone a credential in a link — the sign-in link and the unsubscribe link — and
-three places will happily record it: Cloudflare Logs (`event.path` includes the
-query; use `pathForLog()`), the `Referer` the `/ingest` proxy forwards to
-PostHog, and PostHog autocapture, which attaches `location.href` to every event.
-Put the token in the **fragment** where possible, and scrub the rest through
-`app/utils/analytics-privacy.ts`. Analytics access is handed out far more freely
-than database access, which is exactly why nothing secret may travel there.
-
-### Rate Limiting
-
-`rateLimit(event, { name, limit, windowSeconds })` — one call, two backends. It
-prefers Cloudflare's **native Rate Limiting binding** (`[[ratelimits]]` in
-`wrangler.toml`, resolved off `event.context.cloudflare.env`) and otherwise uses
-the original **KV fixed window**. Applied to the whole `/api/auth/` surface in
-`server/middleware/auth.ts`, per-address on magic-link requests (keyed by a salted
-hash, never the raw address), and per-user on connect-code minting.
-
-The binding's `(limit, period)` is fixed at deploy — `limit({ key })` takes only a
-key — so `chooseBackend` delegates to it **only when both numbers match**
-`NATIVE_LIMITER`, and everything else stays on KV. Don't relax that: routing a
-20/60s handler through a 30/60s binding enforces 30 while `X-RateLimit-Limit: 20`
-goes out on the response, and nothing fails. `period` may only be **10 or 60**.
-
-- Changing the auth limit means changing `NATIVE_LIMITER` **and** `wrangler.toml`.
-  `test/rate-limit.test.ts` drives the real binding and fails when they drift.
-- Both backends **fail open** (an outage in the abuse-control layer must not take
-  sign-in down). A throwing binding does not cascade to KV — one policy, logged.
-- The binding counts **per colo**; KV is eventually consistent. Either way this is
-  abuse control, not metering. Anything you bill on needs a Durable Object.
-- Each call site logs its backend once per isolate (`rate_limit_backend`), with a
-  `reason` when it fell back. Read that before assuming the binding is in play.
-
-### Bot Protection (Turnstile)
-
-`requireTurnstile(event, token)` (`server/utils/turnstile.ts`) — throws 400 with a
-`data.code` when a challenge fails. Wired on the two endpoints a stranger can
-reach: `POST /api/auth/magic-link` and anonymous `POST /api/feedback`. Signed-in
-feedback skips it, because `useFeedback().submit()` is also called
-programmatically with no widget on screen.
-
-- **Unset `NUXT_TURNSTILE_SECRET_KEY` = skipped**, like Resend. Site key without
-  secret key is the one bad state and logs `turnstile_half_configured`.
-- Render `<NuxtTurnstile>` behind a `useRuntimeConfig().public.turnstile.siteKey`
-  check, never unconditionally — an unconfigured fork must load nothing.
-- Unlike the rate limiters it **fails closed**: a bot check that failed open is a
-  bypass an attacker can trigger by making `siteverify` slow.
-- **On the mint path it runs first**, before the per-address bucket is charged.
-  A challenge behind the limiter lets an unsolved bot burn a victim's budget and
-  lock them out of their own sign-in — the limiter becomes the attack.
-- `https://challenges.cloudflare.com` is already in `script-src` and `frame-src`.
-
-### Transactional Email
-
-Templates live in `server/utils/email-templates.ts`, except the sign-in link, which
-lives in `server/utils/auth-email-templates.ts` because it is the one email that is
-load-bearing rather than a courtesy — `POST /api/auth/magic-link` inspects
-`sendEmail()`'s result and 503s in production rather than claiming to have sent one.
-
-`sendEmail()` (Resend over fetch) **never throws** — it's always called from
-something more important than the email, and a mail outage must not 500 a login
-or make Paddle replay a money event. Unset `NUXT_RESEND_API_KEY` = logged no-op.
-
-**It enqueues rather than POSTs when the `EMAIL_QUEUE` binding exists** (production
-and preview, never `bun dev` — the dev preset has no `queue()` handler, so a local
-enqueue is a black hole that reports success). `server/utils/email-queue.ts` owns
-that decision and the pure retry/dead-letter logic;
-`server/plugins/email-queue-consumer.ts` does the delivery. Three invariants:
-the unconfigured check runs **before** the enqueue, a failed enqueue falls back to
-an inline send, and the message body carries the built request but never the API
-key. Mandatory-mail and unsubscribe semantics are decided by
-`buildResendEmailRequest()` before anything is queued — don't re-decide them in
-the consumer.
-
-Five rules that each cost real mail when they were broken:
-
-- **`inline: true` is the opt-out, and only two callers get it.** A queued send
-  reports `sent: true` at enqueue, so any caller whose contract is "did this
-  actually send" must bypass the queue: `POST /api/auth/magic-link` (owes a 503)
-  and `POST /api/feedback/:id/reply` (stamps `replied_at`). Everything else stays
-  queued.
-- **One classifier, both paths.** `classifyResendResponse()` is shared by the
-  inline POST and the consumer, and both log `email_permanent_failure` /
-  `email_transient_failure` with a `path` field. Don't add a third vocabulary: a
-  4xx and a 503 mean different things, and inline maps them to `rejected` and
-  `error` respectively — that distinction is what magic-link's 503 branch reads.
-- **The consumer's expected queue name is a `var`, never a constant.**
-  `NUXT_EMAIL_QUEUE_NAME` differs between `[vars]` and `[env.preview.vars]`. As a
-  constant it matched production and silently missed preview — and a consumer
-  that skips a batch **acks it by omission**, so every preview email was
-  destroyed with no log line. Unexpected queues are logged, never skipped quietly.
-- **`EMAIL_QUEUE_MAX_ATTEMPTS` is `max_retries` + 1.** `max_retries` counts
-  retries, so a message is delivered up to four times.
-- **`compatibility_flags` pins `queue_consumer_wait_for_wait_until`.** Every
-  `ack()`/`retry()` runs inside `waitUntil` after the handler returned; the
-  opposite flag would turn `retry()` into a silent no-op. Don't remove it.
-
-Billing emails are decided by `decideNotification()` on **status transitions**,
-not on events: Paddle fires `subscription.updated` for trivial changes, and
-emailing per event trains people to filter you — taking the payment-failed email
-with it. Add a case to that function, not an ad-hoc send in a handler.
+- **Errors** — `<UAlert>`/`useToast()` on the client, `createError({ statusCode })` on the
+  server, never a raw error message to a user. → [`patterns.md`](.claude/docs/patterns.md)
+- **Forms** — `<UForm>` with a Zod schema, re-validated server-side with the same schema.
+  Client validation is never the boundary. → [`patterns.md`](.claude/docs/patterns.md)
+- **Auth** — the client middleware is **not** a security boundary; every paid API route
+  calls `requireSubscription(event)` itself. → [`auth.md`](.claude/docs/auth.md)
+- **Billing & referrals** — a referral reward is access nobody paid for; treat
+  `server/utils/referral.ts` as billing code. → [`billing.md`](.claude/docs/billing.md)
+- **Email** — `sendEmail()` never throws, and enqueues rather than POSTs when
+  `EMAIL_QUEUE` exists. → [`email.md`](.claude/docs/email.md)
+- **SEO & AEO** — every page calls `useSeo()` exactly once and declares `publicPage`;
+  `bun run seo:check` fails the build otherwise. → [`seo.md`](.claude/docs/seo.md)
+- **Feedback** — unsolicited via `<FeedbackWidget />`; solicited via PostHog Surveys.
+  Feedback text is untrusted input. → [`patterns.md`](.claude/docs/patterns.md)
+- **Performance** — server-side `useFetch` for initial loads, `defineAsyncComponent` for
+  heavy components, uploads to R2 via `blob`. → [`patterns.md`](.claude/docs/patterns.md)
 
 ---
 
@@ -602,6 +204,7 @@ with it. Add a case to that function, not an ad-hoc send in a handler.
 - **PRs require**: lint + typecheck + tests to pass before merge — enforced by the Workers Builds check (non-production branch builds run `bun run ci` and post status + a preview URL back to the PR)
 
 ---
+
 
 ## Common Commands
 
@@ -639,11 +242,9 @@ bun run mcp:typecheck # Typecheck the MCP worker
 bun run mcp:deploy    # Deploy the MCP worker
 ```
 
-### Billing & MCP worker
-
-- **Paddle billing** is pre-wired: webhook at `server/routes/paddle/webhook.post.ts` (HMAC-verified, outside `/api/`), `entitlements` table, `requireSubscription(event, productKey?)` server util (throws 401/402), `usePaddle()` checkout composable, and the UI on top — `/pricing` (plans from `app/utils/plans.ts` + price IDs in runtime config) and `/account` (status, history, self-serve cancel via the Paddle portal). Gate paid API routes with `await requireSubscription(event)` — never trust client state for access control.
-- **Feedback loop** is pre-wired: `<FeedbackWidget />` (mounted in the default layout) → `POST /api/feedback` (public — the auth middleware allowlists that exact method + path; the handler rate-limits by `ip_hash` in D1) → a `feedback` row in D1 **and** a server-side PostHog `feedback_submitted` event carrying the session-replay link. Never capture the same event from the client too. Read the queue with `GET /api/feedback` (admin-only via `requireAdmin()`); the `feedback-triage` routine turns it into GitHub issues.
-- **MCP worker** (`mcp/`) is an optional second Worker: OAuth 2.1 (workers-oauth-provider + `OAUTH_KV`), stateless `createMcpHandler` tools at `/mcp`, sharing the app's D1 by `database_id`. The app owns all migrations; the worker reads with raw SQL. Users bridge identity with single-use connect codes (`POST /api/mcp/connect-code` ↔ the worker's `/authorize` page). Its wrangler scripts pass `-c wrangler.jsonc` — required, because the app build's `.wrangler/deploy/config.json` redirect confuses wrangler otherwise. Do not use `McpAgent` for new tools — it's deprecated in the agents SDK; `createMcpHandler` is the current path.
+`bun run ci` is the merge gate. It is a gate on finished work, not a precondition for
+starting — run it when you have something to merge, and again after any change you think
+is trivial. If it fails, fix the failure; do not work around it.
 
 ---
 
@@ -661,319 +262,15 @@ When I ask you to build features in this project:
 
 ---
 
-## MCP Servers & Skills
-
-This project ships with Claude Code configuration in `.mcp.json` and `.claude/`. All forks inherit this setup automatically.
-
-### MCP Servers (`.mcp.json`)
-
-| Server | Type | Purpose |
-| --- | --- | --- |
-| `cloudflare-docs` | Remote HTTP | Workers, D1, KV, R2, Pages documentation — always active |
-| `cloudflare-bindings` | Remote HTTP | Workers bindings and API reference — always active |
-| `nuxt-ui` | Remote HTTP | NuxtUI v4 component API docs, composables, templates, migration guide — always active |
-| `github` | Remote HTTP | GitHub repo/PR/issue context — requires `GITHUB_TOKEN` env var |
-| `nuxt` | Local SSE | Live project introspection (pages, components, auto-imports, config) — requires `bun dev` |
-| `drizzle` | Local stdio | Schema introspection against `server/db/schema.ts` |
-
-**Setup notes:**
-- `cloudflare-*` and `nuxt-ui` work with no credentials — always available.
-- For GitHub MCP: set `GITHUB_TOKEN` in your shell (a PAT with repo read scope is enough).
-- For live Nuxt introspection: start `bun dev` before opening Claude Code. The `nuxt` server URL in `.mcp.json` is `https://<portless-name>.localhost/__mcp/sse` and must match the `portless.name` in `package.json`. Rename both when you fork.
-- **In a linked worktree the dev host is different**, so that committed URL is wrong there by design — see the worktree section below. `bun dev` prints the host it's using, and `nuxt-mcp` repoints `.mcp.json` at it on boot so introspection keeps working. That leaves a modified `.mcp.json` in the worktree: expected, and **not something to commit**.
-- Drizzle MCP works automatically via `bunx`.
-
-### NuxtUI Skill (`.claude/skills/nuxt-ui/`)
-
-Installed via `npx skills add nuxt/ui --agent claude-code`. Provides Claude with deep knowledge of NuxtUI's component patterns, theming system, and composables. Complements the `nuxt-ui` MCP server (which provides live API lookups).
-
-### Slash Commands (`.claude/commands/`)
-
-| Command | Usage | Purpose |
-| --- | --- | --- |
-| `/scaffold-component` | `/scaffold-component Feature/Name` | Generate a Vue component following project conventions |
-| `/design-sync` | `/design-sync [brief\|url]` | Compile `DESIGN.md` into the NuxtUI token layer, then verify |
-| `/logo-sync` | `/logo-sync [brief\|path.svg]` | Design the brand mark from `DESIGN.md`, then generate every icon from it |
-| `/scaffold-api` | `/scaffold-api [path] [method]` | Generate an API route with Zod + auth |
-| `/db-migrate` | `/db-migrate` | Run the full Drizzle migration workflow |
-| `/new-feature` | `/new-feature FeatureName` | Full stack scaffold: component + API routes + schema |
-| `/routines` | `/routines sync\|status\|enable\|disable\|run` | Manage the cloud operations routines defined in `.claude/routines/` |
-
-### Operations Routines (`.claude/routines/`)
-
-Repo-shipped definitions for cloud agents that run the commercial side of a fork semi-autonomously:
-GitHub issue triage, bug-fix PRs, in-app feedback triage, support-inbox drafting, weekly
-analytics review, marketing drafts, and a single daily digest email to the owner. **All ship default-inactive** — `/routines
-sync` registers them (disabled) in your claude.ai account, and each one is enabled explicitly.
-Routines coordinate through an `ops-journal` branch (never merged to `main`, so journal commits
-don't trigger deploys). When forking: fill in `.claude/routines/routines.config.md`, connect
-GitHub + Gmail at claude.ai/customize/connectors, then `/routines sync`. Full docs in
-[.claude/routines/README.md](.claude/routines/README.md).
 
 ---
 
-## Gotchas
+## Agent tooling
 
-Sharp edges that have bitten this template before — read before forking or before debugging "why doesn't this work."
+MCP servers, the NuxtUI skill, slash commands, and the cloud operations routines are
+documented in [`.claude/docs/agent-setup.md`](.claude/docs/agent-setup.md).
 
-### Local D1 lives in two places — only one is real
-
-NuxtHub serves the dev DB from `.data/db/sqlite.db`. Wrangler's own local D1 sandbox lives at `.wrangler/state/v3/d1/`. Migrations applied via `wrangler d1 execute --local` or direct writes via `wrangler d1 execute --local` land in the **wrangler** path, which the dev server does NOT read. Seed via `bun seed` (see `scripts/seed.ts`), which uses `bun:sqlite` against the NuxtHub path directly. The two only converge in production.
-
-### Nothing applies migrations to production D1 — you have to
-
-Locally this is invisible: NuxtHub's dev plugin (`applyMigrationsDuringDev`) applies
-`server/db/migrations/` to `.data/db/sqlite.db` on every dev boot, so schema changes just
-appear. Production has no equivalent.
-
-`wrangler deploy` does not apply D1 migrations, and NuxtHub's `applyMigrationsDuringBuild`
-step runs against the **libsql driver's local file on the build machine** (`hub.db` resolves
-to `sqlite`/`libsql` here, not the `d1` driver), so it never touches your remote database.
-The `.sql` files are copied into `.output/server/db/migrations/` and the generated
-`wrangler.json` points `migrations_dir` at them — but nothing ever runs them.
-
-So a deploy that adds a table ships a Worker querying a table that does not exist, and the
-failure surfaces as a 500 on a route that worked perfectly in dev. Run it yourself, after
-the first deploy and after every schema change:
-
-```bash
-bun run db:migrate:remote
-```
-
-One wrinkle if you script it: the root `wrangler.toml` sets no `migrations_table`, so that
-command tracks state in wrangler's default `d1_migrations`, while the generated
-`.output/server/wrangler.json` sets `migrations_table = "_hub_migrations"`. Both work; pick
-one and stay on it, because alternating makes each think nothing has been applied.
-
-The **preview** D1 is a second database with the same problem: `bun run db:migrate:preview`.
-
-### NuxtHub deletes `env` from the generated wrangler config
-
-`wrangler.toml` is an input, not the deployed config. `nuxt build` writes
-`.output/server/wrangler.json` and wrangler deploys that. Nitro copies your `wrangler.toml`
-into it verbatim — bindings, `[triggers]`, `[[queues.*]]` all survive, verified — and then
-`@nuxthub/core` rewrites the file on Nuxt's `close` hook (`processWranglerConfigFile`):
-
-- `CLOUDFLARE_ENV=<name>` set → **flattens** `env.<name>` onto the top level (dropping the
-  top-level non-inheritable keys, spreading the environment's over what remains), then
-  deletes `env`.
-- unset → deletes `env`, keeping production's bindings.
-
-Either way **the generated config contains no environments**. So the obvious command,
-`wrangler --cwd .output deploy --env preview`, cannot work — there is nothing named
-`preview` in the file wrangler reads. The environment is selected **at build time**:
-`bun run build:preview` / `bun run deploy:preview`, and in Workers Builds a
-`CLOUDFLARE_ENV=preview` *build variable* on the non-production trigger, with the deploy
-command left as a plain `wrangler versions upload`.
-
-Two consequences when editing `[env.preview]`:
-
-- **`name` must be set there.** It is inheritable, so without it a preview build produces a
-  config still named `my-app` — preview bindings on the production Worker, sharing its
-  secrets.
-- **NuxtHub's non-inheritable list is not wrangler's.** `ratelimits` is absent from it, so an
-  environment that omits `[[env.preview.ratelimits]]` silently inherits production's
-  `namespace_id` and shares its counters. The block is required, not optional.
-
-### A cron task needs the same string in two files
-
-`nitro.scheduledTasks` (nuxt.config.ts) maps a cron expression to task names; `[triggers]
-crons` (wrangler.toml) tells Cloudflare when to fire. The join is an **exact string match**
-on the expression, so `"0 4 * * *"` and `"0 04 * * *"` are different keys — Cloudflare wakes
-the Worker on schedule, `runCronTasks` finds nothing, and the handler returns success. No
-error, no log line. If a task never runs, compare those two strings before anything else.
-
-No custom Worker entry is needed for either background surface: the `cloudflare_module`
-preset already exports `scheduled()` (which calls `runCronTasks` when
-`nitro.experimental.tasks` is on) and `queue()` (which dispatches the `cloudflare:queue`
-Nitro hook), plus `email`, `tail` and `trace`. Hook them from `server/plugins/`; do not
-hand-write an entry that re-exports `fetch`, because it will rot the next time Nitro changes
-one of them.
-
-Note that Nitro **skips scheduled tasks under vitest** (`isTest` in its task runtime). Put
-the logic in a `server/utils/` function that takes `db` (and any binding it needs) as an
-argument and test that, as `server/utils/purge.ts` does — a test driving the task wrapper
-tests the shim. For the same reason, a task must import `db`/`blob` **explicitly** from
-`@nuxthub/db` / `@nuxthub/blob` rather than relying on the auto-imports: a task is an
-untested bundling surface that runs unattended, and the `kv is not defined` failure in
-the gotcha above would surface as a cron event failing nightly with nobody watching.
-
-Anything the sweep filters on needs an **index**. `purge.ts` matches `expires_at` /
-`used_at` / `status`, and a `LIMIT` bounds rows *deleted*, not rows *examined* — so an
-unindexed predicate full-scans the table on every tick and gets slower as the product
-grows. Both credential tables got theirs in migration 0012.
-
-### @nuxt/content's default SQLite driver crashes `bun run` in postinstall
-
-Content v3 needs a local SQLite for parsing and for `nuxt dev`, and its default connector is
-`better-sqlite3` — a native module this repo does not depend on. When it is missing, the module
-does not fail; it **prompts on stdin** to install it. Under `bun run` there is no usable TTY,
-so consola throws `uv_tty_init returned EINVAL` and `nuxt prepare` dies during postinstall.
-Observed on a clean `bun install` before `content.experimental.sqliteConnector` was set.
-
-`nuxt.config.ts` pins `sqliteConnector: 'native'` — Node's built-in `node:sqlite`, hence the
-`node >= 22.13` line in `engines`. **22.13**, not the 22.5.0 that first shipped `node:sqlite`:
-it was behind `--experimental-sqlite` until 22.13.0 / 23.4.0, and on 22.5–22.12 the module's
-availability probe returns false and falls straight back to the better-sqlite3 prompt — so the
-wrong Node reads as the same confusing crash rather than as a version error.
-Note the module's own Bun detection cannot help here either:
-`bun run dev` and `bun run build` both shell out to the `nuxt` bin, which has a node shebang,
-so `process.versions.bun` is undefined by the time the connector is chosen.
-
-That makes the Node version a **deploy-environment** constraint, not just a local one: CI runs
-`bun run ci`, which runs `nuxt build`, which is Node. Workers Builds defaults to Node 24 and
-preinstalls 22 and 24, so it passes today. The committed `.node-version` pins it anyway, so
-that a future image default — or someone setting `NODE_VERSION=20` for an unrelated reason —
-cannot quietly reintroduce the prompt. `engines` is documentation here, not a gate: bun warns
-on a mismatch rather than refusing to install. Workers Builds reads `.node-version`, `.nvmrc`,
-or a `NODE_VERSION` build variable.
-
-Production is unaffected — there the store is D1 (`content.database`), not a file.
-
-### The dev server caches its DB connection — external writes need a restart
-
-`bun seed` (and anything else writing to `.data/db/sqlite.db` with `bun:sqlite`) writes the file
-correctly, but a **running** dev server keeps its own libsql connection and will keep returning
-the old rows. Observed directly: insert an entitlement while `bun dev` is up and
-`/api/billing/entitlement` still reports `active: false`, with the row plainly visible in the
-file. Restart the dev server (or touch `nuxt.config.ts`) and it appears immediately.
-
-So: seed before starting the dev server, or restart after seeding. Don't go debugging the query.
-
-### nuxt-auth-utils uses `/api/_auth/session` (underscore)
-
-`useUserSession()`'s `fetch()` and `clear()` calls hit `/api/_auth/session` — note the underscore. The global auth middleware allowlist must include `/api/_auth/` or sign-out and session refresh will 401. OAuth callback routes you write yourself live under `/api/auth/` (no underscore) and need their own allowlist entry.
-
-### NuxtHub's `kv` auto-import doesn't reach every file at runtime
-
-`kv` (the unstorage handle for the KV binding) is declared in `.nuxt/types/nitro-imports.d.ts`, so
-it **typechecks** anywhere in `server/`. It is not always **injected** at runtime: in
-`server/utils/rate-limit.ts` it resolved to `ReferenceError: kv is not defined` while the build,
-typecheck, and lint were all green. Because the rate limiter fails open by design, the only symptom
-was a `rate_limit_unavailable` line in the logs — the feature was simply off.
-
-Import it explicitly (`import { kv } from '@nuxthub/kv'`) in server utils. More generally: when a
-NuxtHub auto-import is load-bearing, check the running logs, not just the type checker.
-
-### Custom `definePageMeta` keys need two opt-ins, and fail silently without them
-
-`sitemap.xml` and `llms.txt` are built from `definePageMeta({ publicPage: … })`, collected by
-a hook in `nuxt.config.ts`. Three things have to be right, and getting any of them wrong
-produces an **empty sitemap** rather than an error:
-
-1. **`experimental.extraPageMetaExtractionKeys: ['publicPage']`.** Nuxt's build-time
-   `definePageMeta` scanner only extracts a fixed allowlist (`name`, `path`, `middleware`, …).
-   Without this, a custom key is discarded and replaced with a `__nuxt_dynamic_meta_key`
-   marker — the hook then sees every page as unmarked.
-2. **Collect in `pages:resolved`, not `pages:extend`.** Extraction happens *between* the two
-   hooks. In `pages:extend`, `page.meta` is still `null` for every page.
-3. **Write to the Nitro instance too.** Nitro is already initialised by `pages:resolved`, so
-   `nuxt.options.runtimeConfig` alone is too late; `useNitro().options.runtimeConfig` is what
-   ends up in the bundle. `nuxt.config.ts` sets both.
-
-Also: values must be JSON-serializable *literals*. An interpolated string or a referenced
-constant fails `isSerializable` and is dropped, silently, the same way.
-
-### NuxtUI v4 needs an explicit CSS entry
-
-`app/assets/css/main.css` must contain `@import "tailwindcss"; @import "@nuxt/ui";` and be listed under `css:` in `nuxt.config.ts`. Without this, NuxtUI's generated theme (`.nuxt/ui.css`) doesn't get bundled — pages render in browser default fonts/colors with no Tailwind utilities working. Already wired up in this template; don't remove either piece.
-
-### Parallel agent worktrees are supported — keep them that way
-
-Agents can work in isolated git worktrees under `.claude/worktrees/<name>` (gitignored), several
-at once. Everything in `bun run ci` is scoped to the checkout it runs in, so a sibling worktree
-full of half-finished or deleted code cannot contaminate your run. That is a property worth
-stating, because it is easy to break and the breakage is confusing rather than loud.
-
-How each gate stays scoped — **match this when you add a gate**:
-
-| Gate | Why a sibling worktree can't reach it |
-| --- | --- |
-| `lint` | `.oxlintrc.json` › `ignorePatterns` lists `.claude/**` |
-| `design:check` / `seo:check` / `brand:check` | Walk `ROOT/app`, `ROOT/app/pages`, `ROOT/content/blog`, and fixed root-relative asset paths |
-| `test` | `vitest.config.ts` › `include` is `test/**` + `server/**`, relative to the checkout |
-| `typecheck` | Nuxt's generated `.nuxt/tsconfig.*` use scoped includes (`../app/**/*`, `../server/**/*`), not a root glob |
-| `test:a11y` | Per-checkout port — see below |
-| `build` | Nuxt only reads `app/`, `server/`, `shared/` |
-
-Three rules follow, and each one exists because something broke it:
-
-1. **A gate takes its scan root from the checkout** — not a walk upward, not a bare `**/*` glob.
-2. **A gate that binds a port derives it** via `scripts/worktree-port.ts`. Never hardcode one.
-3. **A gate never writes to a tracked file.** `nuxt-mcp` rewrites `.mcp.json` with the live dev
-   server URL on every boot, and `test:a11y` boots one — so a green run used to end with a dirty
-   tree, and `git add -A` would commit a throwaway port. It's now disabled whenever
-   `NUXT_DEVTOOLS=false` (`nuxt.config.ts` › `modules`), which is exactly the automated case.
-
-### `bun dev` gets a per-worktree hostname
-
-`bun dev` runs `scripts/dev.ts`, which hands portless an explicit hostname instead of letting it
-infer one: the bare configured name in the main checkout (`my-app.localhost` — unchanged), and
-`<worktree-dir>.my-app.localhost` in a linked worktree. It prints the host on startup.
-
-The wrapper exists because portless's own worktree prefix is derived from the **branch**, and a
-branch is not a unique key for a worktree. Three ways that collides, all of them silent:
-
-| Case | portless alone | Why it happens |
-| --- | --- | --- |
-| Worktree checked out on `main` | `my-app.localhost` — same as the main checkout | `main`/`master` are treated as default branches and skipped |
-| Detached-HEAD worktree | `my-app.localhost` | Branch reads as `HEAD`, also skipped — and Claude Code creates detached worktrees |
-| `feat/magic-link` vs `claude/magic-link` | both `magic-link.my-app.localhost` | The prefix is only the branch's last path segment |
-
-The worktree *directory* has none of those problems: git won't create two worktrees at one path,
-so it's unique by construction and — unlike the branch — doesn't change under you. That's what
-keeps the URL stable when you switch branches inside a worktree.
-
-`scripts/dev.ts` uses the positional `portless <name> <cmd>` form, which takes the name verbatim.
-`portless run --name` would stack its branch prefix on top: still unique, but the hostname would
-move every time the branch did. `bun dev:app` bypasses the proxy entirely.
-
-> **Historical note.** This section used to warn that `vue-tsc` picked up `.claude/worktrees/`
-> and to fix it with `rm -rf .claude/worktrees/<old>`. That is no longer true on Nuxt 4.5: the
-> generated tsconfigs scope their includes, and a worktree containing deliberately unbuildable
-> code now passes `bun typecheck` untouched. Believing the old note is the more expensive
-> mistake, because it argues against running agents in parallel at all.
-
-### Workers Builds: dashboard Worker name must match `wrangler.toml`
-
-CI/CD runs on Cloudflare Workers Builds (repo connected in the dashboard under Worker → Settings → Build). The Worker's name in the dashboard must exactly match `name` in the root `wrangler.toml`, or every build fails before it starts. When you fork and rename the project, reconnect the repo to a Worker with the new name. Build settings live in the dashboard, not in the repo: build command `bun run ci`, deploy command `bunx wrangler --cwd .output deploy`, preview deploy command (non-production branches) `bunx wrangler --cwd .output versions upload`. `NUXT_SESSION_PASSWORD` must be set as a build variable there too — the old GitHub Actions secrets are gone.
-
-### The a11y suite needs a browser, and CI installs it inside `bun run ci`
-
-`bun run test:a11y` runs axe through Playwright/Chromium, so CI needs a browser binary.
-Rather than change the Workers Builds *build command* (which lives in the dashboard, not the
-repo — so every fork would have to edit it), `bun run ci` calls `bun run playwright:install`
-itself. It's idempotent and a no-op once the download is cached.
-
-Two things to know when it breaks:
-
-- **Missing system libraries.** The headless shell needs `libnss3`, `libatk-1.0`, and
-  friends. Most Ubuntu-based images have them; if the build fails with a linker error, the
-  fix is `playwright install --with-deps chromium`, which needs root and may not be
-  available on Workers Builds. The fallback is to drop `test:a11y` from `ci` and run it in a
-  GitHub Action instead — the suite doesn't care what runs it. **Note what else that drops:**
-  `test:a11y` runs the CSP spec (`test/csp/`) as well as the axe sweep, so removing it takes
-  the security-header gate with it — and a broken CSP fails silently in exactly the way that
-  gate exists to catch. Move both to the Action, not just the one you were thinking about.
-- **The suite starts its own dev server** (`playwright.config.ts` → `webServer`) with
-  `reuseExistingServer: false`. That is deliberate: it only produces valid results against a
-  server started with `NUXT_DEVTOOLS=false`, and reusing a dev server you already had running
-  reports the devtools panel's own markup as your app's violations. So a stale process on the
-  suite's port makes the run fail to boot rather than silently lie — kill it, don't flip
-  `reuseExistingServer`.
-- **The port is derived from the checkout path**, not fixed (`scripts/worktree-port.ts`,
-  range 3100–3899). Every worktree gets its own, so parallel agents don't collide and a
-  `bun run dev:app` on 3000 doesn't either. It's deterministic, so the same checkout always
-  gets the same port and you can open it by hand mid-run — `bun run test:a11y` prints it.
-  Set `A11Y_PORT` to pin a value. Any future suite that binds a port must use this helper.
-- **The `webServer.timeout` is sized for a cold cache, not your machine.** A cold `nuxt dev`
-  builds the whole app before it listens; anything that invalidates the Nuxt build cache
-  (editing `nuxt.config.ts`, a merge that touches it) puts you back on that path. Observed:
-  a 120s budget timed out on the first run after such a merge, and the very next warm boot
-  took 2s. CI is *always* cold, so the budget is 300s and the server runs with
-  `NUXT_TYPECHECK=false` to keep vue-tsc off the critical path — `bun run ci` has already
-  typechecked by then.
-
-### Don't add `nuxt-mcp-toolkit` config under `mcp:` in `nuxt.config.ts`
-
-If you ever pull in `@nuxtjs/mcp-toolkit` (not currently installed), its `ModuleOptions` augmentation doesn't surface as a top-level `mcp:` key in `defineNuxtConfig` — TypeScript will reject it. Configure via `defineMcpHandler` in `server/mcp/index.ts` instead.
+Parallel agent worktrees under `.claude/worktrees/<name>` are supported and every gate in
+`bun run ci` is scoped to its own checkout. The rules that keep it that way — and the three
+things that have broken it — are in
+[`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).

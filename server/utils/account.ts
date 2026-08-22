@@ -7,7 +7,7 @@
 // the auto-imported `db`, so test/account.test.ts can drive it against a real
 // D1 binding without booting Nitro. For the same reason, anything this file
 // calls that Nitro would normally auto-inject (`blob`) is imported explicitly
-// — nothing is injected outside a real Nitro request (see CLAUDE.md › Gotchas
+// — nothing is injected outside a real Nitro request (see .claude/docs/gotchas.md
 // on `kv`, which has the identical failure mode).
 //
 // ── Anonymize the row, don't erase it ────────────────────────────────────────

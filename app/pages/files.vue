@@ -198,16 +198,42 @@ useSeo({
             <tbody class="divide-y divide-default">
               <tr v-for="file in files" :key="file.id">
                 <td class="px-4 py-3 text-default">
-                  <a
-                    v-if="file.status === 'uploaded'"
-                    :href="`/api/files/${file.id}`"
-                    target="_blank"
-                    rel="noopener"
-                    class="text-primary underline underline-offset-2"
-                  >
-                    {{ file.filename }}
-                  </a>
-                  <span v-else>{{ file.filename }}</span>
+                  <div class="flex items-center gap-3">
+                    <!--
+                      A plain img element, deliberately NOT NuxtImg — and that
+                      is the whole lesson of this row. NuxtImg would rewrite the
+                      src into a /cdn-cgi/image/ URL, which Cloudflare's edge
+                      resolves by fetching the source itself with no session
+                      cookie: a 401, every time. Private objects carry their
+                      transform in the query string and resize inside the
+                      worker instead. See .claude/docs/images.md.
+
+                      w=64 is snapped server-side to the same ladder
+                      @nuxt/image uses; format=auto negotiates AVIF/WebP off
+                      the Accept header. With no IMAGES binding both are
+                      ignored and the original streams — bigger, still correct.
+                    -->
+                    <img
+                      v-if="file.status === 'uploaded' && isPreviewableImage(file.mimeType)"
+                      :src="`/api/files/${file.id}?w=64&format=auto`"
+                      :alt="`Preview of ${file.filename}`"
+                      width="32"
+                      height="32"
+                      loading="lazy"
+                      decoding="async"
+                      class="size-8 shrink-0 rounded border border-default object-cover"
+                    />
+                    <a
+                      v-if="file.status === 'uploaded'"
+                      :href="`/api/files/${file.id}`"
+                      target="_blank"
+                      rel="noopener"
+                      class="text-primary underline underline-offset-2"
+                    >
+                      {{ file.filename }}
+                    </a>
+                    <span v-else>{{ file.filename }}</span>
+                  </div>
                 </td>
                 <td class="px-4 py-3">
                   <UBadge

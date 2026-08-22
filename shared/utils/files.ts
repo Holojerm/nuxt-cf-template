@@ -85,6 +85,23 @@ export function isAllowedFileType(mimeType: string): mimeType is AllowedFileType
   return (ALLOWED_FILE_TYPES as readonly string[]).includes(mimeType)
 }
 
+/**
+ * Can a thumbnail be rendered for this upload?
+ *
+ * Derived from ALLOWED_FILE_TYPES rather than listed separately, so adding a
+ * raster type above makes it previewable with no second edit — and adding a
+ * non-image one cannot accidentally make it previewable.
+ *
+ * Note this is the CLIENT's question and is narrower than the server's
+ * `isTransformableImage()` (server/utils/images.ts), which also accepts AVIF
+ * and GIF because the transform can OUTPUT them. Neither list is a subset of
+ * the other by accident: one is about what may be uploaded, the other about
+ * what may be transformed.
+ */
+export function isPreviewableImage(mimeType: string): boolean {
+  return isAllowedFileType(mimeType) && mimeType.startsWith('image/')
+}
+
 /** `1.4 MB`, `812 KB`, `3 B` — for the file list and the pre-check hint. */
 export function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '0 B'

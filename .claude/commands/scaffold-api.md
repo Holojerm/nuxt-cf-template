@@ -120,7 +120,7 @@ Handlers stay thin: gate, validate, call, shape.
 
 - **File naming**: `[path].[method].ts` — the method suffix IS the HTTP method
 - **Pick a gate deliberately** — `requireSubscription()` for anything you sell
-- **`db` and `schema` are auto-imported** — never `useDB()`, never `hubDatabase()`,
+- **`db` and `schema` are auto-imported** — never `useDB()`, never `hubDatabase()`, <!-- refs-check-ignore: names the deprecated APIs a fork must NOT use -->
   never a manual `drizzle()` call
 - **Reference tables as `schema.<table>`** in routes (server utils that import
   the schema module directly use `tables.<table>` — follow the file you're in)

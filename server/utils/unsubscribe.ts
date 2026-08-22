@@ -5,7 +5,7 @@
 // it runs identically on Cloudflare Workers and in local dev.
 //
 // ── Why no new secret ─────────────────────────────────────────────────────
-// CLAUDE.md is explicit that a new secret is a human gate — every fork of
+// .claude/docs/billing.md is explicit that a new secret is a human gate — every fork of
 // this template would have to go set one before this feature worked at all.
 // `sessionPassword` is the one secret guaranteed to exist (nuxt-auth-utils
 // refuses to boot without it), so the unsubscribe key is DERIVED from it via

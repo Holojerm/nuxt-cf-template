@@ -1,5 +1,17 @@
 // Mirror gate — run with `bun run mirror:check`, wired into `bun run ci`.
 //
+// Two passes, one theme: promises that nothing enforces.
+//
+//   1. BEHAVIOURAL mirrors — rules deliberately written twice because the MCP
+//      worker cannot import the app's TypeScript. Both copies are run over a
+//      shared table of inputs and must agree.
+//   2. REFERENCE resolution — every file, symbol, and variable a comment or doc
+//      names must still exist. See scripts/lib/check-references.ts for why this
+//      is narrow on purpose.
+//
+// Both fail the build. A stale cross-reference is not a style problem: an agent
+// reads it, trusts it, and goes looking for something that is not there.
+//
 // Some rules are written twice on purpose. `mcp/` is a separate Cloudflare
 // Worker with its own build and its own package.json; it cannot import the
 // app's TypeScript, so the handful of rules both sides must agree on exist as
@@ -22,6 +34,7 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { extractFunction as sliceFunction } from './lib/brace-match'
+import { findDeadReferences } from './lib/check-references'
 
 const ROOT = resolve(import.meta.dir, '..')
 
@@ -127,13 +140,37 @@ for (const mirror of MIRRORS) {
   }
 }
 
-if (problems.length === 0) {
-  console.info(`mirror:check — ${MIRRORS.length} mirrored rule(s) agree`)
+// ── Pass 2: reference resolution ────────────────────────────────────────────
+
+const dead = findDeadReferences(ROOT)
+
+// ── Report ──────────────────────────────────────────────────────────────────
+
+if (problems.length === 0 && dead.length === 0) {
+  console.info(
+    `mirror:check — ${MIRRORS.length} mirrored rule(s) agree, every named reference resolves`,
+  )
   process.exit(0)
 }
 
-console.error(`\nmirror:check failed — ${problems.length} problem(s)\n`)
-for (const problem of problems) console.error(`  ${problem}\n`)
-console.error('These rules are deliberately written twice because the MCP worker cannot')
-console.error('import the app. Change one, change the other.\n')
+if (problems.length > 0) {
+  console.error(`\nmirror:check failed — ${problems.length} mirror problem(s)\n`)
+  for (const problem of problems) console.error(`  ${problem}\n`)
+  console.error('These rules are deliberately written twice because the MCP worker cannot')
+  console.error('import the app. Change one, change the other.\n')
+}
+
+if (dead.length > 0) {
+  console.error(`\nmirror:check failed — ${dead.length} dead reference(s)\n`)
+  for (const ref of dead) {
+    console.error(`  ${ref.file}:${ref.line}  \`${ref.token}\` — ${ref.why}`)
+  }
+  console.error(
+    '\nA comment or doc names something this repo no longer contains. Fix the name,\n' +
+      'or drop the reference — a confident pointer to nothing costs the next agent\n' +
+      'more than no pointer at all. Deliberate exception: add `refs-check-ignore` to\n' +
+      'the line.\n',
+  )
+}
+
 process.exit(1)

@@ -72,6 +72,19 @@ name = "RATE_LIMITER"
 namespace_id = "1001"
 simple = { limit = 30, period = 60 }
 
+# ─── Images ──────────────────────────────────────────────────────────────────
+# Resizes a private R2 object INSIDE the worker, after the ownership check in
+# server/api/files/[id].get.ts has already passed. Public images do not use this
+# — they go through `/cdn-cgi/image/` at the edge (@nuxt/image in nuxt.config.ts),
+# which cannot see a session cookie and so cannot serve anything gated.
+#
+# Optional. server/utils/images.ts feature-detects the binding and streams the
+# original when it is absent, so a fork that has not enabled Images serves
+# full-size uploads rather than 500s. Enable Images on the account to turn it on;
+# there is no id to paste.
+[images]
+binding = "IMAGES"
+
 # ─── Transactional email queue ───────────────────────────────────────────────
 # server/utils/email.ts hands the built Resend request to this queue instead of
 # POSTing it on the request path; server/plugins/email-queue-consumer.ts
@@ -245,6 +258,13 @@ bucket_name = "my-app-blob-preview"
 name = "RATE_LIMITER"
 namespace_id = "1002"
 simple = { limit = 30, period = 60 }
+
+# Repeated for preview for the same reason `ratelimits` is: NuxtHub flattens
+# `env.preview` onto the top level and deletes `env`, so anything this
+# environment does not state for itself is whatever survived from production.
+# An `images` block is cheap; discovering it was missing costs a preview deploy.
+[env.preview.images]
+binding = "IMAGES"
 
 [[env.preview.queues.producers]]
 binding = "EMAIL_QUEUE"

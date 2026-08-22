@@ -164,7 +164,7 @@ export async function resolveTurnstile(input: TurnstileInput): Promise<Turnstile
  * never pulls the module in at all.
  *
  * Explicit rather than the Nitro auto-import the module also registers:
- * CLAUDE.md › Gotchas has the story of an auto-import that typechecked
+ * .claude/docs/gotchas.md has the story of an auto-import that typechecked
  * everywhere and was not injected at runtime, and that one only disabled a rate
  * limit. This guards a bot check.
  */

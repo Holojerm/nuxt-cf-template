@@ -30,7 +30,7 @@ import { z } from 'zod'
 
 // Everything from server/utils is imported by path rather than left to Nitro's
 // auto-import. The auto-import typechecks everywhere and is not always injected
-// at runtime (CLAUDE.md › Gotchas), and on this route a symbol resolving to
+// at runtime (.claude/docs/gotchas.md), and on this route a symbol resolving to
 // `undefined` would be a sign-in that silently stops working.
 import { ATTRIBUTION_COOKIE, readAttributionCookie } from '#shared/utils/attribution'
 import { REDIRECT_COOKIE, safeRedirectPath } from '../../utils/auth'

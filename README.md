@@ -176,11 +176,11 @@ bun dev            # Start dev server at https://my-app.localhost (via portless)
 NuxtHub applies everything in `server/db/migrations/` to its local database
 (`.data/db/sqlite.db`) when the dev server boots, so there is no local migrate step.
 `bun db:migrate` targets wrangler's *separate* local sandbox, which the dev server does
-not read — see CLAUDE.md › Gotchas.
+not read — see .claude/docs/gotchas.md.
 
 > **First-run note:** `bun dev` runs through [portless](https://portless.sh) so multiple Nuxt projects (and AI agents) can run side-by-side without colliding on port 3000. The first invocation will request `sudo` once to bind port 443 and trust a local CA for HTTPS. Subsequent runs are silent. **macOS / Linux only — no Windows support.**
 >
-> Each git worktree gets its own hostname (`<worktree-dir>.my-app.localhost`), printed on startup, so several checkouts — or several agents — can run `bun dev` at once. See CLAUDE.md › Gotchas for why the worktree directory is the key rather than the branch.
+> Each git worktree gets its own hostname (`<worktree-dir>.my-app.localhost`), printed on startup, so several checkouts — or several agents — can run `bun dev` at once. See .claude/docs/gotchas.md for why the worktree directory is the key rather than the branch.
 
 Push to `main` to trigger a production deploy via Workers Builds, or deploy manually:
 
@@ -266,7 +266,9 @@ bun run deploy:preview # Same, then deploy — creates/updates the my-app-previe
 ├── DESIGN.md           # Visual design system — the source of truth, see /design-sync
 ├── brand.lock.json     # Fingerprint of the generated brand assets (see brand:check)
 ├── wrangler.toml       # Cloudflare config (rename project here)
-└── CLAUDE.md           # AI development guide
+├── CLAUDE.md           # AI development guide — the index, kept small
+├── TEARDOWN.md         # How to remove billing / referrals / the MCP worker
+└── .claude/docs/       # Per-subsystem detail, loaded on demand by agents
 ```
 
 ---
@@ -314,7 +316,7 @@ server — the a11y and CSP suites only ever look at signed-out routes, so this 
 | [`cancel-lose-access.spec.ts`](./test/e2e/cancel-lose-access.spec.ts) | Cancelling a subscription revokes access (`/dashboard` → `/pricing`, `/account` shows the ended state). A `past_due` subscription routes to `/account` instead — the dunning alert, not a re-sell. |
 
 **State is driven through the server, not around it.** `bun seed`'s `bun:sqlite` writes are invisible
-to an already-running dev server (see CLAUDE.md › Gotchas › "The dev server caches its DB
+to an already-running dev server (see .claude/docs/gotchas.md › "The dev server caches its DB
 connection"), so these specs sign in via
 `POST /api/auth/dev` — the same dev-only shortcut described under [Auth](#auth) — and then create or
 end entitlements by POSTing **signed Paddle webhooks** to `/paddle/webhook`, exactly as a real
@@ -834,6 +836,44 @@ Cloudflare R2 was wired (`hub.blob: true`) but had no upload path — this is th
 
 ---
 
+## Images
+
+Two transform paths, split by whether the image is behind a session — because one of them
+physically cannot serve the other's images.
+
+**Public images go through the edge.** `@nuxt/image` is configured with the `cloudflare`
+provider, so `<NuxtImg src="/og.png" width="640" />` renders
+`/cdn-cgi/image/w=640,f=auto,q=85/og.png` and Cloudflare resizes and re-encodes it on the
+way out. No build step, no image binary in the bundle, srcset and AVIF/WebP negotiation for
+free. `f=auto` and the width ladder are set globally in `nuxt.config.ts` rather than per
+call site, so forgetting them once cannot quietly ship a 400 kB PNG.
+
+> **`/cdn-cgi/image/` is a zone feature, not a Worker one.** It needs a custom domain with
+> Images › Transformations enabled; on `*.workers.dev` and under `bun dev` the path 404s.
+> `nuxt.config.ts` carries a `$development` override that swaps in the `none` provider, so
+> local pages render originals rather than broken images. If images break locally, check
+> that override before anything else.
+
+**Private uploads transform inside the Worker.** The edge resolves a `/cdn-cgi/image/` URL
+by fetching the source itself, with no cookie — so against `GET /api/files/:id`, which is
+gated by `requireSubscription()` plus an ownership check, it would fetch a 401. Those
+images use the `IMAGES` binding instead, *after* both checks have passed:
+
+```
+GET /api/files/<id>?w=512&format=auto
+```
+
+`w` is snapped up to a fixed ladder rather than honoured verbatim — a free integer lets one
+account ask for 4,000 distinct widths of one file and get 4,000 transforms out of it. The
+binding is feature-detected: unset, or throwing, and the original streams instead, the same
+"runs without an account" posture as Resend and Turnstile. Every transformed response
+carries `Cache-Control: private`, because those bytes passed an ownership check scoped to
+one user.
+
+Full contract in [`.claude/docs/images.md`](.claude/docs/images.md).
+
+---
+
 ## Pages
 
 | Route | Access | Notes |
@@ -1092,7 +1132,7 @@ own tables. Drizzle never sees them: `drizzle-kit generate` diffs `schema.ts` ag
 snapshot rather than the live database, and `wrangler d1 migrations apply` only runs the files
 in `server/db/migrations` and tracks them in its own table. (`drizzle-kit push` *does* diff
 against a live database and is deliberately not wired up — keep it that way, or exclude
-`_content_*`.) The alternative — a second `CONTENT_DB` binding — buys isolation at the cost of
+`_content_*`.) The alternative — a second `CONTENT_DB` binding — buys isolation at the cost of <!-- refs-check-ignore: names a binding this repo deliberately does not create -->
 a placeholder database id that every fork must replace before `wrangler deploy` will accept the
 config. To take it anyway: create the database, add the `[[d1_databases]]` block, and change
 `bindingName` in `nuxt.config.ts`. Nothing else reads these tables.
@@ -1204,6 +1244,8 @@ This template ships with Claude Code configuration out of the box:
 - **MCP servers** (`.mcp.json`): Cloudflare docs, NuxtUI docs, Drizzle schema introspection, Nuxt live introspection, GitHub
 - **Slash commands** (`.claude/commands/`): `/new-feature`, `/scaffold-component`, `/scaffold-api`, `/db-migrate`
 - **Skills** (`.claude/skills/`): NuxtUI, frontend design, theming, and more
-- **AI guide** (`CLAUDE.md`): stack conventions, patterns, and rules for AI-assisted development
+- **AI guide** (`CLAUDE.md`): stack conventions, styling rules, commands, and an index into `.claude/docs/` — kept small on purpose, since it loads into every agent session
+- **Subsystem docs** (`.claude/docs/`): auth, billing, email, SEO, patterns, brand, agent tooling, and the gotchas list — read on demand, not all at once
+- **Teardown guide** (`TEARDOWN.md`): ordered removal steps for billing, referrals, and the MCP worker
 
 The Nuxt MCP server requires `bun dev` to be running — its URL in `.mcp.json` is `https://<your-portless-name>.localhost/__mcp/sse` (defaults to `my-app`; rename when you fork). Everything else works without any extra setup.

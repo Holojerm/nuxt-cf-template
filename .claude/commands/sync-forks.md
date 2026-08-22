@@ -78,7 +78,7 @@ Copied files routinely need editing to fit the fork. Things that have needed it 
   `owner | user`; another uses `role` for the practitioner's *professional* role, where setting
   someone to 'admin' would lock them out of their own data. Read the fork's model and pick a
   gate that fits — configured allowlist, different role value, whatever is coherent there.
-- **DB access.** The template uses the auto-imported `db`. Some forks use a `useDb()` accessor
+- **DB access.** The template uses the auto-imported `db`. Some forks use a `useDb()` accessor <!-- refs-check-ignore: names a dead API found in forks -->
   and their own `Db` type. Match the fork.
 - **Bindings.** The template's example test asserts D1 + KV + R2. A fork that doesn't bind KV
   needs that case replaced, not left red.

@@ -412,7 +412,10 @@ export async function legacyWelcomeRefForEmail(
  * compromise, and rotating it recomputes every mailbox's ref and silently
  * re-arms every spent trial. server/utils/identity.ts has the full argument,
  * including why a `NUXT_IDENTITY_SALT` env var is the wrong shape for a
- * template. `sessionPassword` is still passed in, for one job only: recognising
+ * template. That name is the road not taken and exists nowhere in this repo
+ * on purpose — refs-check-ignore.
+ *
+ * `sessionPassword` is still passed in, for one job only: recognising
  * refs minted under the previous construction.
  *
  * Re-resolves the referrer rather than trusting `users.referred_by` to still

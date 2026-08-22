@@ -208,6 +208,22 @@ export default defineNuxtConfig({
     // Prose* components globally, which is what gives rendered markdown the
     // DESIGN.md type scale without a stylesheet of our own.
     '@nuxt/content',
+    // Images. `<NuxtImg>`/`<NuxtPicture>` emit `/cdn-cgi/image/w=…,f=auto/<src>`
+    // URLs that Cloudflare's edge rewrites — resize, format negotiation, and
+    // srcset for free, with no build step and no image binary in the bundle.
+    //
+    // Two things about that URL are worth knowing before you debug it:
+    //
+    //   1. It is a ZONE feature, not a Worker one. It needs a custom domain
+    //      with Images › Transformations enabled; on `*.workers.dev` and under
+    //      `bun dev` the path simply 404s. Hence the `$development` override
+    //      below, which swaps in the `none` provider so local pages render the
+    //      original file instead of a broken image.
+    //   2. It cannot serve anything behind a session. The edge fetches the
+    //      source itself, with no cookie, so a private R2 object comes back
+    //      401. Those transform inside the worker instead — see
+    //      server/utils/images.ts.
+    '@nuxt/image',
     'nuxt-auth-utils',
     // nuxt-mcp rewrites `.mcp.json` — a *tracked* file — with the live dev
     // server URL every time a dev server boots. Helpful when you started that
@@ -357,6 +373,43 @@ export default defineNuxtConfig({
   },
 
   // NuxtUI v4 + Tailwind v4
+  image: {
+    // The edge does the work; nothing here runs at build time.
+    provider: 'cloudflare',
+
+    // The width ladder. Kept identical to IMAGE_WIDTHS in server/utils/images.ts
+    // on purpose — that file snaps `?w=` to these rungs so a private upload and
+    // a public asset are cached at the same handful of sizes rather than at two
+    // overlapping sets. Change one, change the other.
+    screens: {
+      xs: 64,
+      sm: 128,
+      md: 256,
+      lg: 384,
+      xl: 512,
+      xxl: 768,
+      '3xl': 1024,
+      '4xl': 1536,
+      '5xl': 2048,
+    },
+
+    // `f=auto` lets Cloudflare pick AVIF or WebP from the request's Accept
+    // header. It is set here rather than per-call site so that forgetting it on
+    // one `<NuxtImg>` cannot quietly ship a 400 kB PNG to a browser that would
+    // have taken a 40 kB AVIF.
+    format: ['avif', 'webp'],
+    quality: 85,
+  },
+
+  // `/cdn-cgi/image/` is a ZONE feature. There is no zone under `bun dev`, so
+  // every transformed URL would 404 and every image on every local page would
+  // be broken — which reads as "I broke the images" rather than as "this needs
+  // a custom domain." The `none` provider hands the raw src straight through,
+  // so dev renders originals and production transforms them.
+  $development: {
+    image: { provider: 'none' },
+  },
+
   ui: {
     // Customize your design system here
     // colors: { primary: 'blue', neutral: 'slate' }
