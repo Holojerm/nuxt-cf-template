@@ -20,7 +20,6 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import { withReferralCode } from '../shared/utils/attribution'
 import {
   attributionFromRecord,
   consumeMagicLinkToken,
@@ -34,30 +33,44 @@ import {
   referralShareUrl,
 } from '../shared/utils/referral'
 import {
-  REFERRAL_REVOKED_STATUS,
   countReferralRewards,
+  countStandingReferralRewards,
   ensureReferralCode,
   getReferralSummary,
   grantRefereeWelcome,
-  revokeReferralRewardForReferee,
+  recordReferralCascade,
   rewardReferrerForFirstPurchase,
   welcomeRefForEmail,
 } from '../server/utils/referral'
 import { COMP_REVOKED_STATUS } from '../server/utils/admin-grants'
 import { deleteAccount } from '../server/utils/account'
-import { revokeForAdjustment } from '../server/utils/entitlements'
-import { PASS_DAYS, findActiveEntitlement, grantPass } from '../server/utils/entitlements'
+import {
+  DERIVED_REVOKED_STATUS,
+  PASS_DAYS,
+  findActiveEntitlement,
+  grantPass,
+  revokeForAdjustment,
+} from '../server/utils/entitlements'
 import { buildEntitlementView } from '../server/utils/entitlement-view'
 import { isReferralRef, referralRewardRef, referralWelcomeRef } from '../server/utils/paddle-refs'
 import { generateReferralCode, upsertOAuthUser } from '../server/utils/users'
+import { getIdentitySalt } from '../server/utils/identity'
+import { saltedHash } from '../server/utils/hash'
+import { legacyWelcomeRefForEmail } from '../server/utils/referral'
 
 const db = drizzle(env.DB, { schema })
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const REFERRER_CODE = 'AB2CD3EF'
 
-/** Stands in for `sessionPassword` — the welcome ref is a salted mailbox hash. */
-const SALT = 'test-session-password'
+/**
+ * The welcome ref is a salted hash of the mailbox, and the salt is provisioned
+ * in D1 rather than configured — so tests read the real one the same way
+ * production does. `LEGACY_SALT` stands in for the sessionPassword the previous
+ * construction used, which grantRefereeWelcome still checks during transition.
+ */
+const LEGACY_SALT = 'test-session-password'
+let SALT = ''
 
 /** The referee as grantRefereeWelcome takes it: id, address, and the claim. */
 const REFEREE = {
@@ -89,6 +102,8 @@ async function makeUser(
 }
 
 beforeEach(async () => {
+  // Provisioned once per file, then stable — the whole point of the column.
+  SALT ||= await getIdentitySalt(db)
   await env.DB.exec('DELETE FROM audit_log')
   await env.DB.exec('DELETE FROM entitlements')
   await env.DB.exec('DELETE FROM users')
@@ -245,7 +260,7 @@ describe('a magic link opened on another device', () => {
 
     // The welcome grant follows from that column alone, so the referee gets
     // their days on a device that never saw the link they arrived through.
-    const welcome = await grantRefereeWelcome(db, user, { salt: SALT })
+    const welcome = await grantRefereeWelcome(db, user, { sessionPassword: LEGACY_SALT })
     expect(welcome.outcome).toBe('granted')
     expect(welcome.days).toBe(REFERRAL_WELCOME_DAYS)
   })
@@ -284,16 +299,28 @@ describe('a magic link opened on another device', () => {
     expect(user.referredBy).toBeNull()
   })
 
-  it('never overwrites the row’s code with the redeeming browser’s', () => {
-    // The fill-only rule, stated as the attack it prevents: a borrowed or
-    // shared browser must not be able to re-credit somebody else's invite onto
-    // a link that already names a referrer.
-    const rowCarried = { source: 'referral', medium: 'invite', referralCode: REFERRER_CODE }
-    expect(withReferralCode(rowCarried, 'ZZ9YY8XX')?.referralCode).toBe(REFERRER_CODE)
+  it('adopts NOTHING from the redeeming machine when the row carries no attribution', async () => {
+    // The kiosk case. A token minted with no attribution used to let
+    // establishSession fall back to the `attr` cookie on the REDEEMING browser
+    // — which on a shared machine is a stranger's, complete with their `?ref=`.
+    // verify.post.ts now passes `?? null`, which asserts "there is none".
+    const { token } = await createMagicLinkToken(db, { email: 'kiosk@example.com' })
+    const consumed = await consumeMagicLinkToken(db, token)
+    if (!consumed.ok) throw new Error('token should have been consumable')
 
-    // A pre-column row carries null, and there the cookie is the last copy.
-    const legacyRow = { source: 'referral', medium: 'invite' }
-    expect(withReferralCode(legacyRow, REFERRER_CODE)?.referralCode).toBe(REFERRER_CODE)
+    expect(attributionFromRecord(consumed.record)).toBeUndefined()
+
+    // What verify.post.ts hands establishSession, and what it must mean.
+    const carried = attributionFromRecord(consumed.record) ?? null
+    expect(carried).toBeNull()
+
+    const { user } = await upsertOAuthUser(
+      db,
+      { provider: 'email', email: 'kiosk@example.com' },
+      carried,
+    )
+    expect(user.referredBy).toBeNull()
+    expect(user.signupSource).toBeNull()
   })
 })
 
@@ -306,7 +333,7 @@ describe('grantRefereeWelcome', () => {
   })
 
   it('grants the welcome days to the referee, not the referrer', async () => {
-    const result = await grantRefereeWelcome(db, REFEREE, { salt: SALT })
+    const result = await grantRefereeWelcome(db, REFEREE, { sessionPassword: LEGACY_SALT })
 
     expect(result.outcome).toBe('granted')
     expect(result.days).toBe(REFERRAL_WELCOME_DAYS)
@@ -320,8 +347,8 @@ describe('grantRefereeWelcome', () => {
   })
 
   it('grants once per account, however many times it is called', async () => {
-    const first = await grantRefereeWelcome(db, REFEREE, { salt: SALT })
-    const second = await grantRefereeWelcome(db, REFEREE, { salt: SALT })
+    const first = await grantRefereeWelcome(db, REFEREE, { sessionPassword: LEGACY_SALT })
+    const second = await grantRefereeWelcome(db, REFEREE, { sessionPassword: LEGACY_SALT })
 
     expect(first.outcome).toBe('granted')
     expect(second.outcome).toBe('already_granted')
@@ -338,7 +365,7 @@ describe('grantRefereeWelcome', () => {
     const result = await grantRefereeWelcome(
       db,
       { id: 'organic', email: 'organic@example.com', referredBy: null },
-      { salt: SALT },
+      { sessionPassword: LEGACY_SALT },
     )
     expect(result.outcome).toBe('no_referrer')
     expect(await findActiveEntitlement(db, 'organic')).toBeNull()
@@ -349,7 +376,7 @@ describe('grantRefereeWelcome', () => {
     const result = await grantRefereeWelcome(
       db,
       { id: 'orphan', email: 'orphan@example.com', referredBy: 'ZZ9YY8XX' },
-      { salt: SALT },
+      { sessionPassword: LEGACY_SALT },
     )
     expect(result.outcome).toBe('referrer_unresolved')
     expect(await findActiveEntitlement(db, 'orphan')).toBeNull()
@@ -360,7 +387,7 @@ describe('grantRefereeWelcome', () => {
     const result = await grantRefereeWelcome(
       db,
       { id: 'narcissus', email: 'narcissus@example.com', referredBy: 'TT2VV3WW' },
-      { salt: SALT },
+      { sessionPassword: LEGACY_SALT },
     )
     expect(result.outcome).toBe('self_referral')
     expect(await findActiveEntitlement(db, 'narcissus')).toBeNull()
@@ -472,9 +499,18 @@ describe('rewardReferrerForFirstPurchase', () => {
     // The property that makes the clawback worth having. If the cap only
     // counted live rows, buy → collect → refund would return the budget slot
     // and the ceiling would be unreachable by construction.
-    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW })
-    await revokeReferralRewardForReferee(db, 'referee', { now: NOW })
+    await grantPass(db, { userId: 'referee', transactionId: 'txn_churn', billedAt: NOW })
+    await rewardReferrerForFirstPurchase(db, 'referee', {
+      now: NOW,
+      earnedFromRef: 'txn_churn',
+    })
+    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'txn_churn' })
+
+    // Spent is spent…
     expect(await countReferralRewards(db, 'referrer')).toBe(1)
+    // …but it is not days anybody has, so the share card must not claim it.
+    expect(await countStandingReferralRewards(db, 'referrer')).toBe(0)
+    expect((await getReferralSummary(db, 'referrer'))?.rewardedCount).toBe(0)
   })
 
   it('pays nothing for a self-referral', async () => {
@@ -546,6 +582,48 @@ describe('rewardReferrerForFirstPurchase', () => {
     expect(view.cancellable).toBe(1)
     // …and the earned days are visible in history, labelled as what they are.
     expect(view.history.some((row) => row.referral)).toBe(true)
+    // A live subscription still owns the top-level description, so nothing here
+    // reads as referral days.
+    expect(view.referralKind).toBeNull()
+  })
+})
+
+// ── What /account says the access IS ────────────────────────────────────────
+// A referral grant is a pass by SHAPE and not by story, and the summary used to
+// tell somebody whose only access came from a friend's invite "You have a
+// one-time pass. It will not renew." — describing a purchase they never made.
+
+describe('buildEntitlementView on referral access', () => {
+  beforeEach(async () => {
+    await makeUser('referrer', { referralCode: REFERRER_CODE })
+    await makeUser('referee', { referredBy: REFERRER_CODE })
+  })
+
+  it('calls a welcome grant what it is', async () => {
+    await grantRefereeWelcome(db, REFEREE, { sessionPassword: LEGACY_SALT })
+
+    const view = await buildEntitlementView(db, 'referee', { portalConfigured: false })
+    expect(view.active).toBe(true)
+    expect(view.kind).toBe('pass')
+    expect(view.referralKind).toBe('welcome')
+    // Not a comp — different provenance, and only one of the two is revocable
+    // from the admin console.
+    expect(view.comped).toBe(false)
+  })
+
+  it('distinguishes an EARNED reward from a welcome grant', async () => {
+    await grantPass(db, { userId: 'referee', transactionId: 'txn_paid', billedAt: NOW })
+    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW, earnedFromRef: 'txn_paid' })
+
+    const view = await buildEntitlementView(db, 'referrer', { portalConfigured: false })
+    expect(view.referralKind).toBe('reward')
+  })
+
+  it('says nothing about referrals for ordinary paid access', async () => {
+    await grantPass(db, { userId: 'referee', transactionId: 'txn_paid', billedAt: NOW })
+    const view = await buildEntitlementView(db, 'referee', { portalConfigured: false })
+    expect(view.kind).toBe('pass')
+    expect(view.referralKind).toBeNull()
   })
 
   it('does nothing at all for a customer nobody referred', async () => {
@@ -562,125 +640,253 @@ describe('rewardReferrerForFirstPurchase', () => {
   })
 })
 
-// ── Refund clawback ─────────────────────────────────────────────────────────
-// The hole that made the loop's cost story false. revokeForAdjustment matches
-// Paddle's own transaction and subscription ids; the referrer's reward carries
-// neither, so refunded money still bought 30 days. Buy → collect → refund, on
-// repeat, was unlimited free access.
+// ── Refund clawback, keyed on the PURCHASE ────────────────────────
+// The cascade lives in revokeForAdjustment (server/utils/entitlements.ts) so
+// every caller gets it, and it is keyed on `earned_from_ref` — the transaction
+// that earned the reward — rather than on the person who made it. Keyed on the
+// person it was wrong three ways at once: a refund of somebody's SECOND
+// purchase clawed back the reward their first one earned, a $2 goodwill credit
+// destroyed a reward the money had not reversed, and a chargeback the merchant
+// WON left the referrer revoked forever.
 
-describe('revokeReferralRewardForReferee', () => {
+describe('the refund cascade', () => {
   beforeEach(async () => {
     await makeUser('referrer', { referralCode: REFERRER_CODE })
     await makeUser('referee', { referredBy: REFERRER_CODE })
   })
 
-  it('takes the days back, and says so in the audit trail', async () => {
-    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW })
-    expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
+  /** Referee buys a pass and the referrer is paid for that exact transaction. */
+  async function purchaseAndReward(txn: string): Promise<void> {
+    await grantPass(db, { userId: 'referee', transactionId: txn, billedAt: NOW })
+    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW, earnedFromRef: txn })
+  }
 
-    const result = await revokeReferralRewardForReferee(db, 'referee', { now: NOW })
-    expect(result.outcome).toBe('revoked')
-    expect(result.referrerId).toBe('referrer')
-
-    // Both halves, exactly as revokeForAdjustment and revokeCompPass write
-    // them: the status is what the app's allowlist reads, the date is what
-    // anything checking only the window reads, and they must agree.
+  it('records which purchase earned the reward', async () => {
+    await purchaseAndReward('txn_first')
     const [row] = await db
       .select()
       .from(schema.entitlements)
       .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
-    expect(row?.status).toBe(REFERRAL_REVOKED_STATUS)
-    expect(row?.currentPeriodEnd?.getTime()).toBeLessThanOrEqual(NOW.getTime())
-    expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
-
-    const revokedAudit = (await db.select().from(schema.auditLog)).find(
-      (entry) => entry.action === 'referral.revoked',
-    )
-    expect(revokedAudit?.actorType).toBe('system')
-    expect(revokedAudit?.targetId).toBe('referrer')
+    expect(row?.earnedFromRef).toBe('txn_first')
   })
 
-  it('closes the buy-collect-refund loop end to end, through the real adjustment path', async () => {
-    // The scenario in full: the referee buys a pass, the referrer is paid, the
-    // referee refunds the same day. Driven through revokeForAdjustment so the
-    // wiring in the webhook is the only thing not exercised here.
-    await grantPass(db, { userId: 'referee', transactionId: 'txn_refunded', billedAt: NOW })
-    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW })
+  it('revokes the reward when that purchase is fully refunded', async () => {
+    await purchaseAndReward('txn_first')
     expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
 
-    const adjustment = await revokeForAdjustment(db, {
+    const result = await revokeForAdjustment(db, {
       action: 'refund',
       status: 'approved',
-      transactionId: 'txn_refunded',
+      type: 'full',
+      transactionId: 'txn_first',
     })
-    expect(adjustment).toMatchObject({ outcome: 'revoked', userId: 'referee' })
 
-    // …which is the exact hand-off the webhook makes.
-    await revokeReferralRewardForReferee(db, adjustment.userId!, { now: NOW })
+    expect(result.outcome).toBe('revoked')
+    expect(result.derived?.map((change) => change.ref)).toEqual([referralRewardRef('referee')])
+    expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
 
-    expect(await findActiveEntitlement(db, 'referee')).toBeNull()
+    const [row] = await db
+      .select()
+      .from(schema.entitlements)
+      .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
+    expect(row?.status).toBe(DERIVED_REVOKED_STATUS)
+    // Kept so the reversal below can put the window back.
+    expect(row?.restorePeriodEnd).not.toBeNull()
+  })
+
+  it('leaves the reward alone when a LATER purchase is refunded', async () => {
+    // The reward was earned by the first pass. Refunding the second reverses
+    // money that bought nothing for anybody but the referee.
+    await purchaseAndReward('txn_first')
+    await grantPass(db, { userId: 'referee', transactionId: 'txn_second', billedAt: NOW })
+
+    const result = await revokeForAdjustment(db, {
+      action: 'refund',
+      status: 'approved',
+      type: 'full',
+      transactionId: 'txn_second',
+    })
+
+    expect(result.outcome).toBe('revoked')
+    expect(result.derived).toEqual([])
+    expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
+  })
+
+  it('leaves the reward alone on a PARTIAL refund', async () => {
+    // A goodwill credit is not a reversal of the sale. The referee's own access
+    // still ends — that policy is deliberate and unchanged — but destroying a
+    // reward somebody earned over a $2 gesture is not the same decision.
+    await purchaseAndReward('txn_first')
+
+    const result = await revokeForAdjustment(db, {
+      action: 'refund',
+      status: 'approved',
+      type: 'partial',
+      transactionId: 'txn_first',
+    })
+
+    expect(result.outcome).toBe('revoked')
+    expect(result.derived).toEqual([])
+    expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
+  })
+
+  it('revokes on a chargeback, whatever its type says', async () => {
+    await purchaseAndReward('txn_first')
+    const result = await revokeForAdjustment(db, {
+      action: 'chargeback',
+      transactionId: 'txn_first',
+    })
+    expect(result.derived).toHaveLength(1)
     expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
   })
 
-  it('is idempotent across a redelivered adjustment', async () => {
-    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW })
-    expect((await revokeReferralRewardForReferee(db, 'referee', { now: NOW })).outcome).toBe(
-      'revoked',
-    )
-    expect((await revokeReferralRewardForReferee(db, 'referee', { now: NOW })).outcome).toBe(
-      'already_revoked',
-    )
+  it('RESTORES the reward when the chargeback is reversed', async () => {
+    // The merchant won the dispute. Nothing reached the old clawback on this
+    // path — not a revoking action, not a final status — so the referrer stayed
+    // punished for a chargeback that never stood.
+    await purchaseAndReward('txn_first')
+    const [before] = await db
+      .select()
+      .from(schema.entitlements)
+      .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
+
+    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'txn_first' })
+    expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
+
+    const reversal = await revokeForAdjustment(db, {
+      action: 'chargeback',
+      status: 'reversed',
+      transactionId: 'txn_first',
+    })
+
+    expect(reversal.outcome).toBe('reversed')
+    expect(reversal.derived).toHaveLength(1)
+
+    const [after] = await db
+      .select()
+      .from(schema.entitlements)
+      .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
+    expect(after?.status).toBe('active')
+    // The original window, not a fresh one starting today.
+    expect(after?.currentPeriodEnd?.getTime()).toBe(before?.currentPeriodEnd?.getTime())
+    // Cleared, so a redelivered reversal finds nothing to restore.
+    expect(after?.restorePeriodEnd).toBeNull()
+    expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
   })
 
-  it('leaves an already-expired reward completely alone', async () => {
+  it('handles the distinct chargeback_reverse action too', async () => {
+    await purchaseAndReward('txn_first')
+    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'txn_first' })
+
+    const reversal = await revokeForAdjustment(db, {
+      action: 'chargeback_reverse',
+      transactionId: 'txn_first',
+    })
+    expect(reversal.outcome).toBe('reversed')
+    expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
+  })
+
+  it('is idempotent in both directions', async () => {
+    await purchaseAndReward('txn_first')
+    const refund = {
+      action: 'refund',
+      status: 'approved',
+      type: 'full',
+      transactionId: 'txn_first',
+    }
+
+    await revokeForAdjustment(db, refund)
+    // A redelivered refund finds the row already non-granting and writes
+    // nothing — which matters, because a second write would stamp the revoked
+    // date into restore_period_end and make the row unrestorable.
+    const again = await revokeForAdjustment(db, refund)
+    expect(again.derived).toEqual([])
+
+    await revokeForAdjustment(db, {
+      action: 'chargeback',
+      status: 'reversed',
+      transactionId: 'txn_first',
+    })
+    const reversedAgain = await revokeForAdjustment(db, {
+      action: 'chargeback',
+      status: 'reversed',
+      transactionId: 'txn_first',
+    })
+    expect(reversedAgain.derived).toEqual([])
+  })
+
+  it('leaves an already-expired reward alone', async () => {
     // Writing `current_period_end = now` on a window that closed months ago
-    // would drag a past date FORWARD — rewriting history to say the referrer
-    // had access longer than they did. It also gives the policy a sensible
-    // edge: a chargeback on month seven does not punish the referrer.
+    // would drag a past date FORWARD. It also gives the policy a sensible edge:
+    // a chargeback on month seven does not punish the referrer for days long
+    // since spent.
+    await grantPass(db, { userId: 'referee', transactionId: 'txn_old', billedAt: NOW })
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
       paddleSubscriptionId: referralRewardRef('referee'),
       status: 'active',
       currentPeriodEnd: new Date(atSecond(NOW.getTime() - 200 * DAY_MS)),
+      earnedFromRef: 'txn_old',
     })
 
-    const result = await revokeReferralRewardForReferee(db, 'referee', { now: NOW })
-    expect(result.outcome).toBe('already_expired')
+    const result = await revokeForAdjustment(db, {
+      action: 'chargeback',
+      transactionId: 'txn_old',
+    })
+    expect(result.derived).toEqual([])
 
     const [row] = await db
       .select()
       .from(schema.entitlements)
       .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
-    expect(row?.currentPeriodEnd?.getTime()).toBe(atSecond(NOW.getTime() - 200 * DAY_MS))
     expect(row?.status).toBe('active')
+    expect(row?.currentPeriodEnd?.getTime()).toBe(atSecond(NOW.getTime() - 200 * DAY_MS))
   })
 
-  it('says nothing happened when there was no reward to take back', async () => {
-    // A refund from a customer nobody referred — the common case by far.
-    expect((await revokeReferralRewardForReferee(db, 'referee', { now: NOW })).outcome).toBe(
-      'not_found',
-    )
+  it('never touches a row of unknown provenance', async () => {
+    // A reward granted before `earned_from_ref` existed carries NULL, and a
+    // missed clawback is recoverable while clawing back a legitimately earned
+    // reward is a conversation with an honest customer.
+    await grantPass(db, { userId: 'referee', transactionId: 'txn_first', billedAt: NOW })
+    await db.insert(schema.entitlements).values({
+      userId: 'referrer',
+      paddleSubscriptionId: referralRewardRef('referee'),
+      status: 'active',
+      currentPeriodEnd: new Date(atSecond(NOW.getTime() + 30 * DAY_MS)),
+    })
+
+    const result = await revokeForAdjustment(db, {
+      action: 'chargeback',
+      transactionId: 'txn_first',
+    })
+    expect(result.derived).toEqual([])
+    expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
   })
 
-  it('never touches a Paddle row', async () => {
-    // Only ever `referral_<refereeId>`. A `sub_`/`txn_` row is money Paddle
-    // owns: a local status on one is either overwritten by the next webhook or
-    // takes away access somebody paid for.
-    await grantPass(db, { userId: 'referee', transactionId: 'txn_kept', billedAt: NOW })
-    await revokeReferralRewardForReferee(db, 'referee', { now: NOW })
+  it('writes an audit row for each side of the cascade', async () => {
+    await purchaseAndReward('txn_first')
+    const revoked = await revokeForAdjustment(db, {
+      action: 'chargeback',
+      transactionId: 'txn_first',
+    })
+    await recordReferralCascade(db, revoked)
 
-    const [paid] = await db
-      .select()
-      .from(schema.entitlements)
-      .where(eq(schema.entitlements.paddleSubscriptionId, 'txn_kept'))
-    expect(paid?.status).toBe('active')
+    const restored = await revokeForAdjustment(db, {
+      action: 'chargeback',
+      status: 'reversed',
+      transactionId: 'txn_first',
+    })
+    await recordReferralCascade(db, restored)
+
+    const actions = (await db.select().from(schema.auditLog)).map((row) => row.action)
+    expect(actions).toContain('referral.revoked')
+    expect(actions).toContain('referral.restored')
   })
 
-  it('spells its status the same way a revoked comp does', () => {
-    // Two declarations, one value, on purpose — /account renders a single
-    // `revoked` badge for both, and a second spelling would surface a bare
-    // status word nobody has seen before.
-    expect(REFERRAL_REVOKED_STATUS).toBe(COMP_REVOKED_STATUS)
+  it('spells its revoked status the same way a comp does', () => {
+    // /account renders one `revoked` badge for both; a second spelling would
+    // surface a status word the UI has never seen.
+    expect(DERIVED_REVOKED_STATUS).toBe(COMP_REVOKED_STATUS)
   })
 })
 
@@ -713,7 +919,7 @@ describe('self-referral by sub-address', () => {
     const welcome = await grantRefereeWelcome(
       db,
       { id: 'alias', email: 'me+1@gmail.com', referredBy: REFERRER_CODE },
-      { salt: SALT },
+      { sessionPassword: LEGACY_SALT },
     )
     expect(welcome.outcome).toBe('self_referral')
   })
@@ -740,7 +946,9 @@ describe('deleting an account does not refill the welcome trial', () => {
       { provider: 'email', email: 'boomerang@example.com' },
       { referralCode: REFERRER_CODE },
     )
-    expect((await grantRefereeWelcome(db, first.user, { salt: SALT })).outcome).toBe('granted')
+    expect(
+      (await grantRefereeWelcome(db, first.user, { sessionPassword: LEGACY_SALT })).outcome,
+    ).toBe('granted')
 
     // Deletion anonymizes the row and frees the address, so the next sign-in
     // takes the INSERT branch and mints a brand-new user id. Keyed on that id,
@@ -756,7 +964,7 @@ describe('deleting an account does not refill the welcome trial', () => {
     expect(second.created).toBe(true)
     expect(second.user.id).not.toBe(first.user.id)
 
-    const again = await grantRefereeWelcome(db, second.user, { salt: SALT })
+    const again = await grantRefereeWelcome(db, second.user, { sessionPassword: LEGACY_SALT })
     expect(again.outcome).toBe('already_granted')
     expect(await findActiveEntitlement(db, second.user.id)).toBeNull()
   })
@@ -780,12 +988,42 @@ describe('deleting an account does not refill the welcome trial', () => {
     expect(await welcomeRefForEmail('ada@example.com', '')).toBeNull()
   })
 
-  it('refuses the grant rather than degrading when there is no salt', async () => {
+  it('needs no configuration at all — the salt provisions itself', async () => {
+    // The whole reason the salt is a generated row rather than an env var: a
+    // fork that sets nothing still gets the once-per-mailbox invariant, and
+    // there is no secret anybody can rotate to reset it. sessionPassword is
+    // passed only for the legacy-ref check and may be empty.
     await makeUser('referrer', { referralCode: REFERRER_CODE })
     await makeUser('referee', { referredBy: REFERRER_CODE })
-    const result = await grantRefereeWelcome(db, REFEREE, { salt: '' })
-    expect(result.outcome).toBe('unconfigured')
-    expect(await findActiveEntitlement(db, 'referee')).toBeNull()
+    const result = await grantRefereeWelcome(db, REFEREE, { sessionPassword: '' })
+    expect(result.outcome).toBe('granted')
+  })
+
+  it('refuses a mailbox that spent its trial under the OLD ref construction', async () => {
+    // Introducing the identity salt and the domain prefix recomputes every
+    // mailbox's ref, which is itself the reset event this design exists to
+    // prevent — once, at deploy. Checking the legacy ref closes that window.
+    await makeUser('referrer', { referralCode: REFERRER_CODE })
+    await makeUser('referee', { referredBy: REFERRER_CODE })
+
+    const legacyRef = await legacyWelcomeRefForEmail('referee@example.com', LEGACY_SALT)
+    await db.insert(schema.entitlements).values({
+      userId: 'referee',
+      paddleSubscriptionId: legacyRef!,
+      status: 'active',
+      currentPeriodEnd: new Date(atSecond(NOW.getTime() - DAY_MS)),
+    })
+
+    const result = await grantRefereeWelcome(db, REFEREE, { sessionPassword: LEGACY_SALT })
+    expect(result.outcome).toBe('already_granted')
+  })
+
+  it('domain-separates the digest from the rate-limiter key', async () => {
+    // Unprefixed, this was byte-identical to the magic-link per-address KV key
+    // — one value meaning two things, one of them rendered in the admin console
+    // and exported in "download your data".
+    const bare = await saltedHash('referee@example.com', SALT)
+    expect(await welcomeRefForEmail('referee@example.com', SALT)).not.toContain(bare!)
   })
 })
 

@@ -267,21 +267,33 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
   referrer's trigger to signup, and never raise the welcome grant to a full pass.
 - **Three things hold that cost story up, and all three are load-bearing.**
   Remove any one and farming the loop becomes cheaper than buying the product:
-  1. **The reward is revoked when the referee's purchase reverses**
-     (`revokeReferralRewardForReferee`, hooked to the adjustment path in the
-     webhook). Paddle's own `revokeForAdjustment` cannot reach it — it matches
-     Paddle ids and the reward's ref is `referral_<refereeId>`. Without the
-     clawback, buy-collect-refund was unlimited free days.
+  1. **The reward is revoked when the PURCHASE behind it reverses.** Keyed on
+     `entitlements.earned_from_ref` — the transaction, never the person, or a
+     refund of somebody's second pass claws back the reward their first earned.
+     Only a **full** refund or a chargeback counts; a partial refund is a
+     goodwill gesture, not a reversed sale. A chargeback the merchant later
+     **wins** RESTORES the reward from `restore_period_end`. The cascade lives
+     inside `revokeForAdjustment` (`server/utils/entitlements.ts` ›
+     `revokeDerivedEntitlements`), not in the webhook route, so every caller
+     gets it; the route only writes the audit rows.
   2. **The cap counts revoked rows.** Refund-churn burns budget instead of
      recycling it; counting only live rows would make the ceiling unreachable.
   3. **Self-referral is judged by mailbox, not address** (`isSameMailbox`), so
      `me+1@gmail.com` on `me@gmail.com`'s code is refused.
 - **The welcome grant is once per MAILBOX, not once per account.** Its ref is
-  `welcome_<saltedHash(canonical mailbox)>`. Keyed on the user id it was
-  renewable forever by deleting the account and signing up again on the same
-  address. A missing session password refuses the grant rather than falling back
-  to an unsalted digest (which would put a reversible email hash in a table that
-  is exported) or to the user id (which reopens the hole).
+  `welcome_<saltedHash('referral-welcome:v1:' + canonical mailbox)>`. Keyed on
+  the user id it was renewable forever by deleting the account and signing up
+  again on the same address.
+- **That salt is provisioned, never configured** (`server/utils/identity.ts`,
+  `instance_secrets`): 32 random bytes written to D1 on first use and never
+  rotated. It is deliberately not `sessionPassword` — an operator may rotate
+  that after a compromise, and rotating it would recompute every mailbox's ref
+  and silently re-arm every spent trial. It is deliberately not a new env var
+  either, for the reason `unsubscribe.ts` gives: a new secret is a human gate,
+  and the fork that never sets it is the fork that gets the bug. The digest is
+  domain-separated because unprefixed it was byte-identical to the magic-link
+  per-address rate-limit key. `grantRefereeWelcome` also checks the pre-2026-08-22
+  ref during transition; delete that once no legacy row can still be granting.
 - **Idempotency is structural.** There is no ledger table and no "already paid"
   flag, because both need a read-then-write a webhook redelivery can race.
   Each grant derives a deterministic ref (`server/utils/paddle-refs.ts`) and the
@@ -292,6 +304,12 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
 - **The two prefixes are counted differently.** `REFERRAL_MAX_REWARDS` counts
   `referral_` rows only; a person's own `welcome_` row must not eat the budget
   they earn with. That is the whole reason they are not one prefix.
+- **`rewardedCount` on the share card counts rewards that still STAND**
+  (`countStandingReferralRewards`), while the cap counts every payout ever
+  triggered including revoked ones (`countReferralRewards`). Two queries on
+  purpose: showing a clawed-back reward as "earned you days" sends somebody
+  looking for days that are not there, and letting a refund refund the budget
+  slot makes the cap unreachable.
 - **A live subscriber IS paid** — unlike a comp, which still refuses. A comp is
   an apology an operator chooses to send; a referral reward was earned by
   somebody the product already promised. The days stack from the renewal date

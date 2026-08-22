@@ -413,6 +413,23 @@ useSeo({
                   >
                     comped
                   </UBadge>
+                  <!-- Support's first question about unpaid access is "where
+                       did this come from", and "time-limited access" alone
+                       sends them looking for a payment that never existed.
+                       Welcome and reward are different answers to that. -->
+                  <UBadge
+                    v-else-if="data.billing.referralKind"
+                    class="ml-2"
+                    color="info"
+                    variant="subtle"
+                    icon="i-lucide-users"
+                  >
+                    {{
+                      data.billing.referralKind === 'welcome'
+                        ? 'referral welcome'
+                        : 'referral reward'
+                    }}
+                  </UBadge>
                 </dd>
               </div>
               <div>

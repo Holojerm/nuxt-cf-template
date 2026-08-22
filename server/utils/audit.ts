@@ -150,6 +150,16 @@ export const AUDIT_ACTIONS = [
    * one is the one somebody reads at speed when a refund pattern shows up.
    */
   'referral.revoked',
+  /**
+   * A clawed-back referral reward was PUT BACK, because the chargeback behind
+   * the clawback was reversed — the merchant won the dispute.
+   *
+   * Its own verb rather than a second `referral.rewarded`, because the two are
+   * different events with different causes and only this one implies a dispute
+   * happened at all. Reading the pair `revoked` → `restored` on one account is
+   * the whole story of a chargeback that came to nothing.
+   */
+  'referral.restored',
 ] as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]

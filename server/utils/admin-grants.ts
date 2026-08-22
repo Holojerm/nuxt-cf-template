@@ -45,6 +45,7 @@ import {
   findActiveEntitlement,
   getBillingOverview,
   passEndDates,
+  stackingBase,
 } from './entitlements'
 import type { EntitlementDb } from './entitlements'
 import { COMP_REF_PREFIX, compRef, isCompRef } from './paddle-refs'
@@ -207,9 +208,11 @@ export async function grantCompPasses(
   // What they had before the first pass landed. Read up front because every
   // pass stacks on the one before it, and by the end the original expiry is no
   // longer recoverable from the table.
-  const before = overview.active
-  const stackedOn =
-    before?.currentPeriodEnd && before.currentPeriodEnd > now ? before.currentPeriodEnd : null
+  // The shared rule, not a second copy of it — referral grants stack with the
+  // same helper (server/utils/entitlements.ts › stackingBase), and "nobody
+  // loses days they already have" must not be able to differ between two ways
+  // of granting.
+  const stackedOn = stackingBase(overview.active, now)
 
   // ── One batch, not N sequential inserts ────────────────────────────────────
   // The loop this replaces called grantPass() per pass, each re-reading the row

@@ -93,21 +93,26 @@ export default defineEventHandler(async (event) => {
     (outcome.previousStatus === null || outcome.previousStatus === 'trialing')
 
   if (outcome.kind === 'pass' || firstSubscriptionPayment) {
-    await rewardReferrerForFirstPurchase(db, outcome.userId)
+    // `data.id` is the ref of the entitlement row this purchase created — the
+    // transaction id for a pass, the subscription id for a subscription — and
+    // therefore exactly what a later adjustment will match on. Stored on the
+    // reward so a refund of THIS purchase can find it. Without it the reward
+    // is unreachable by any clawback.
+    await rewardReferrerForFirstPurchase(db, outcome.userId, {
+      earnedFromRef: paddleEvent.data.id,
+    })
   }
 
-  // ── …and the clawback, which is what makes the above safe ──────────────────
-  // revokeForAdjustment() above has already ended the referee's own row, but it
-  // matches on Paddle's transaction and subscription ids and the referrer's
-  // reward carries neither — so without this, refunded money still bought 30
-  // days for somebody. `result.userId` is the referee whose purchase reversed.
-  //
-  // Same never-throws contract; a reward whose clawback failed is repaired by
-  // the next adjustment delivery.
-  if (outcome.kind === 'adjustment' && outcome.result.outcome === 'revoked') {
-    if (outcome.result.userId) {
-      await revokeReferralRewardForReferee(db, outcome.result.userId)
-    }
+  // ── …and the paperwork for the clawback ────────────────────────────────────
+  // The clawback ITSELF is not here any more. It happens inside
+  // revokeForAdjustment (server/utils/entitlements.ts), keyed on the purchase
+  // via `earned_from_ref`, so every caller of that function gets it rather than
+  // just this route — including the reversal that puts a reward back when a
+  // chargeback is won. All that is left here is recording what it did, which is
+  // deliberately the caller's job so the money path cannot fail on an audit
+  // write. Never throws.
+  if (outcome.kind === 'adjustment') {
+    await recordReferralCascade(db, outcome.result)
   }
 
   if (outcome.kind === 'subscription') {

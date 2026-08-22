@@ -246,7 +246,12 @@ NUXT_PUBLIC_INDEXABLE = "false"
 #   wrangler secret put NUXT_SESSION_PASSWORD --env preview
 #
 # The list:
-#   NUXT_SESSION_PASSWORD        32+ char random string for sealed sessions (required)
+#   NUXT_SESSION_PASSWORD        32+ char random string for sealed sessions (required).
+#                                Safe to rotate — signing everyone out is the
+#                                users.sessions_invalid_before watermark, not this — and
+#                                rotating it does NOT re-arm spent referral welcome
+#                                trials, whose salt is a generated row in D1
+#                                (instance_secrets; see server/utils/identity.ts).
 #   NUXT_OAUTH_GITHUB_CLIENT_ID / _SECRET    GitHub sign-in
 #   NUXT_OAUTH_GOOGLE_CLIENT_ID / _SECRET    Google sign-in
 #   NUXT_PADDLE_WEBHOOK_SECRET   Paddle → Developer tools → Notifications

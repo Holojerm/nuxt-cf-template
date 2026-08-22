@@ -107,6 +107,18 @@ export const REFERRAL_REWARD_DAYS = 30
 export const REFERRAL_MAX_REWARDS = 10
 
 /**
+ * How stacking works, in one sentence, written once.
+ *
+ * It appeared freehand in two places — the share card and the billing-history
+ * footer — each carrying a comment claiming it matched the other. They did not
+ * match, which is the ordinary fate of that comment. This is the string both
+ * render, so the promise a subscriber reads before inviting somebody is
+ * character-for-character the one they read afterwards next to the date.
+ */
+export const REFERRAL_STACKING_NOTE =
+  'Referral days stack after whatever you already have — if you’re subscribed, they start when your subscription ends.'
+
+/**
  * The link a person shares. Lands on the home page, where the attribution
  * plugin writes the code into the first-touch cookie
  * (app/plugins/attribution.client.ts) — any public route would work, and `/` is

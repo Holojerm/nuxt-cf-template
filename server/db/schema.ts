@@ -29,108 +29,170 @@ const timestamps = {
 // than minting a row per provider (see server/utils/users.ts for why).
 // `provider` records which one created the account — support context only,
 // never an authorization input.
-export const users = sqliteTable('users', {
-  id: text('id')
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  email: text('email').notNull().unique(),
-  name: text('name').notNull(),
-  avatarUrl: text('avatar_url'),
-  role: text('role').notNull().default('user'),
-  provider: text('provider'),
-  lastLoginAt: integer('last_login_at', { mode: 'timestamp' }),
-  // ── Session revocation ─────────────────────────────────────────────────────
-  // Sessions are self-contained sealed cookies: nothing is stored server-side,
-  // so nothing could previously be taken away. Delete your account from your
-  // laptop and your phone kept full access to the retained entitlements until
-  // the cookie expired, because every check in the app reads the cookie and
-  // stops there.
-  //
-  // This column is the revocation primitive that was missing. Every session
-  // carries the second it was issued (server/utils/auth.ts › establishSession);
-  // a session issued before this instant is dead, checked on every
-  // authenticated request by server/middleware/auth.ts. Deletion sets it, and
-  // it is deliberately a *timestamp* rather than a `deleted_at` flag so the same
-  // column also answers "sign me out everywhere" and "an admin force-logged this
-  // account out" without another migration.
-  //
-  // NULL means nothing has ever been revoked — the state every account is in.
-  // A session with no issued-at that meets a non-null value here is treated as
-  // revoked: it cannot prove it postdates the revocation, and on this column
-  // "cannot prove" has to mean no.
-  sessionsInvalidBefore: integer('sessions_invalid_before', { mode: 'timestamp' }),
-  // ── First-touch attribution ────────────────────────────────────────────────
-  // Written once, at account creation, from the cookie the attribution plugin
-  // set on the visitor's first landing (shared/utils/attribution.ts). Never
-  // updated afterwards — the question these answer is "which channel produced
-  // this customer", and last-touch overwrites destroy that the moment someone
-  // returns via a branded search.
-  //
-  // PostHog already keeps $initial_utm_* on the person, so why duplicate?
-  // Because that record is lossy exactly where it matters: ad blockers drop the
-  // SDK, and the visitors most likely to block are not a random sample. These
-  // columns are first-party, joinable against `entitlements` in one SQL query,
-  // and survive dropping PostHog — the same reasoning as the `feedback` table.
-  signupSource: text('signup_source'),
-  signupMedium: text('signup_medium'),
-  signupCampaign: text('signup_campaign'),
-  signupReferrer: text('signup_referrer'),
-  // ── Referrals ──────────────────────────────────────────────────────────────
-  // The user's own code, minted once at provisioning (server/utils/users.ts).
-  // Nullable because accounts created before this column existed have none, and
-  // backfilling would hand codes to dormant accounts that will never share one.
-  // Unique, and nullable-unique is exactly right here: SQLite treats NULLs as
-  // distinct in a unique index, so every legacy row coexists while every minted
-  // code is still guaranteed to point at one account.
-  referralCode: text('referral_code').unique(),
-  // Who referred this user — the *other* account's referral_code, resolved at
-  // signup. Deliberately NOT a foreign key, for the reasons written out on
-  // `feedback.user_id` below: attribution must never be lost to a constraint
-  // failure, and the answer to "where did this customer come from" has to
-  // survive the referrer's row being deleted. A dangling code is a readable
-  // fact; a blocked signup is a lost customer.
-  referredBy: text('referred_by'),
-  ...timestamps,
-})
+export const users = sqliteTable(
+  'users',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    email: text('email').notNull().unique(),
+    name: text('name').notNull(),
+    avatarUrl: text('avatar_url'),
+    role: text('role').notNull().default('user'),
+    provider: text('provider'),
+    lastLoginAt: integer('last_login_at', { mode: 'timestamp' }),
+    // ── Session revocation ─────────────────────────────────────────────────────
+    // Sessions are self-contained sealed cookies: nothing is stored server-side,
+    // so nothing could previously be taken away. Delete your account from your
+    // laptop and your phone kept full access to the retained entitlements until
+    // the cookie expired, because every check in the app reads the cookie and
+    // stops there.
+    //
+    // This column is the revocation primitive that was missing. Every session
+    // carries the second it was issued (server/utils/auth.ts › establishSession);
+    // a session issued before this instant is dead, checked on every
+    // authenticated request by server/middleware/auth.ts. Deletion sets it, and
+    // it is deliberately a *timestamp* rather than a `deleted_at` flag so the same
+    // column also answers "sign me out everywhere" and "an admin force-logged this
+    // account out" without another migration.
+    //
+    // NULL means nothing has ever been revoked — the state every account is in.
+    // A session with no issued-at that meets a non-null value here is treated as
+    // revoked: it cannot prove it postdates the revocation, and on this column
+    // "cannot prove" has to mean no.
+    sessionsInvalidBefore: integer('sessions_invalid_before', { mode: 'timestamp' }),
+    // ── First-touch attribution ────────────────────────────────────────────────
+    // Written once, at account creation, from the cookie the attribution plugin
+    // set on the visitor's first landing (shared/utils/attribution.ts). Never
+    // updated afterwards — the question these answer is "which channel produced
+    // this customer", and last-touch overwrites destroy that the moment someone
+    // returns via a branded search.
+    //
+    // PostHog already keeps $initial_utm_* on the person, so why duplicate?
+    // Because that record is lossy exactly where it matters: ad blockers drop the
+    // SDK, and the visitors most likely to block are not a random sample. These
+    // columns are first-party, joinable against `entitlements` in one SQL query,
+    // and survive dropping PostHog — the same reasoning as the `feedback` table.
+    signupSource: text('signup_source'),
+    signupMedium: text('signup_medium'),
+    signupCampaign: text('signup_campaign'),
+    signupReferrer: text('signup_referrer'),
+    // ── Referrals ──────────────────────────────────────────────────────────────
+    // The user's own code, minted once at provisioning (server/utils/users.ts).
+    // Nullable because accounts created before this column existed have none, and
+    // backfilling would hand codes to dormant accounts that will never share one.
+    // Unique, and nullable-unique is exactly right here: SQLite treats NULLs as
+    // distinct in a unique index, so every legacy row coexists while every minted
+    // code is still guaranteed to point at one account.
+    referralCode: text('referral_code').unique(),
+    // Who referred this user — the *other* account's referral_code, resolved at
+    // signup. Deliberately NOT a foreign key, for the reasons written out on
+    // `feedback.user_id` below: attribution must never be lost to a constraint
+    // failure, and the answer to "where did this customer come from" has to
+    // survive the referrer's row being deleted. A dangling code is a readable
+    // fact; a blocked signup is a lost customer.
+    referredBy: text('referred_by'),
+    ...timestamps,
+  },
+  (table) => [
+    // "How many people used my code" — rendered on /account for every signed-in
+    // visitor who opens the referral card. Unindexed it was a full scan of the
+    // users table on a page view, which is the one shape of slow query that
+    // gets worse exactly as the product succeeds.
+    //
+    // Not unique: many accounts share one referrer's code, which is the point.
+    index('users_referred_by_idx').on(table.referredBy),
+  ],
+)
 
 // Entitlements — one row per Paddle subscription, upserted by the webhook at
 // server/routes/paddle/webhook.post.ts. Gate features with requireSubscription()
 // (server/utils/billing.ts). `product_key` distinguishes plans/products when an
 // app sells more than one thing ('default' otherwise).
-export const entitlements = sqliteTable('entitlements', {
-  id: text('id')
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  userId: text('user_id')
-    .notNull()
-    .references(() => users.id),
-  paddleCustomerId: text('paddle_customer_id'),
-  paddleSubscriptionId: text('paddle_subscription_id').notNull().unique(),
-  productKey: text('product_key').notNull().default('default'),
-  // Paddle subscription statuses: active | trialing | past_due | paused | canceled
-  status: text('status').notNull(),
-  currentPeriodEnd: integer('current_period_end', { mode: 'timestamp' }),
-  // ── Paddle's scheduled_change ──────────────────────────────────────────────
-  // "Cancel at period end" does NOT change a subscription's status. Paddle
-  // keeps it `active` and attaches `scheduled_change: { action, effective_at }`
-  // until the date arrives, so a row that will never be billed again is
-  // indistinguishable from one that renews next month — unless these are
-  // stored. Without them the deletion guard refused, for months, to delete an
-  // account whose subscription was already cancelled, and told the customer to
-  // go cancel it.
-  //
-  // `action` is Paddle's own vocabulary (`cancel` | `pause` | `resume`), kept
-  // verbatim rather than mapped to a local enum: the set is theirs to extend,
-  // and a value we do not recognise should read as "something is scheduled"
-  // rather than be silently dropped.
-  //
-  // BOTH are cleared when Paddle sends `scheduled_change: null` — that is how a
-  // customer un-cancels, and a stale value here would keep an active
-  // subscription looking dead forever.
-  scheduledChangeAction: text('scheduled_change_action'),
-  scheduledChangeAt: integer('scheduled_change_at', { mode: 'timestamp' }),
-  ...timestamps,
-})
+export const entitlements = sqliteTable(
+  'entitlements',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    paddleCustomerId: text('paddle_customer_id'),
+    paddleSubscriptionId: text('paddle_subscription_id').notNull().unique(),
+    productKey: text('product_key').notNull().default('default'),
+    // Paddle subscription statuses: active | trialing | past_due | paused | canceled
+    status: text('status').notNull(),
+    currentPeriodEnd: integer('current_period_end', { mode: 'timestamp' }),
+    // ── Paddle's scheduled_change ──────────────────────────────────────────────
+    // "Cancel at period end" does NOT change a subscription's status. Paddle
+    // keeps it `active` and attaches `scheduled_change: { action, effective_at }`
+    // until the date arrives, so a row that will never be billed again is
+    // indistinguishable from one that renews next month — unless these are
+    // stored. Without them the deletion guard refused, for months, to delete an
+    // account whose subscription was already cancelled, and told the customer to
+    // go cancel it.
+    //
+    // `action` is Paddle's own vocabulary (`cancel` | `pause` | `resume`), kept
+    // verbatim rather than mapped to a local enum: the set is theirs to extend,
+    // and a value we do not recognise should read as "something is scheduled"
+    // rather than be silently dropped.
+    //
+    // BOTH are cleared when Paddle sends `scheduled_change: null` — that is how a
+    // customer un-cancels, and a stale value here would keep an active
+    // subscription looking dead forever.
+    scheduledChangeAction: text('scheduled_change_action'),
+    scheduledChangeAt: integer('scheduled_change_at', { mode: 'timestamp' }),
+    // ── Derived entitlements ───────────────────────────────────────────────────
+    // Set on a row that exists BECAUSE of another row's purchase — today only a
+    // referral reward, whose ref is `referral_<refereeId>` and which Paddle has
+    // therefore never heard of. This names the Paddle ref that earned it.
+    //
+    // Without it the clawback had to be keyed on the referee's *identity*, which
+    // is the wrong key in three directions at once: a refund of that person's
+    // SECOND purchase revoked the reward earned on their first, a partial refund
+    // revoked a reward the money had not actually reversed, and a reward could
+    // never be re-earned because nothing distinguished "which purchase was this
+    // for". Keyed on the purchase, each of those answers itself.
+    //
+    // NULL on every ordinary row, and on referral rows granted before this column
+    // existed — which is why the cascade treats NULL as "provenance unknown, do
+    // not touch". A missed clawback is recoverable; clawing back a reward that
+    // was legitimately earned is a support conversation with an honest customer.
+    earnedFromRef: text('earned_from_ref'),
+    // The window that was in force before a derived row was revoked, so the
+    // revocation can be undone. A revoke sets `current_period_end = now` (both
+    // halves must agree — see revokeForAdjustment), which destroys the original
+    // date; a chargeback the merchant later WINS has to put it back, and
+    // "recompute it" is not available once the row has been overwritten.
+    //
+    // NULL means "not revoked by the cascade", which is what makes it the exact
+    // predicate the restore matches on — a row nobody took away cannot be
+    // "restored" into a window it never had.
+    restorePeriodEnd: integer('restore_period_end', { mode: 'timestamp' }),
+    ...timestamps,
+  },
+  (table) => [
+    // Every read of this table that isn't keyed on the unique Paddle ref is
+    // keyed on the owner: getBillingOverview (the /account page and the admin
+    // console), the deletion guard, and countReferralRewards. Without this the
+    // table was full-scanned on every one of them, and it only grows.
+    //
+    // Deliberately NOT composite with `product_key`. Per-account row counts are
+    // tiny — a handful of purchases over a lifetime — so once the index has
+    // narrowed to one user, filtering the rest in memory costs nothing, and a
+    // single-column index serves the queries that don't mention product_key
+    // (the deletion guard scans every product on purpose) as well as the ones
+    // that do.
+    //
+    // It also covers the LIKE in countReferralRewards, which could not use the
+    // unique index on `paddle_subscription_id` for a prefix match anyway: under
+    // SQLite's rules a LIKE only becomes an index range scan for a column with
+    // NOCASE collation and no ESCAPE clause, and ours has an ESCAPE clause
+    // precisely because `_` is a wildcard (see server/utils/sql.ts).
+    index('entitlements_user_id_idx').on(table.userId),
+  ],
+)
 
 // MCP connect codes — short-lived, single-use codes bridging the app's session
 // auth to the MCP worker's OAuth flow (device-code style). Minted for the
@@ -427,6 +489,41 @@ export const notificationPreferences = sqliteTable(
     ),
   ],
 )
+
+// Instance secrets — server-generated derivation salts, one row each.
+//
+// ── Why this exists rather than another env var ──────────────────────────────
+// server/utils/unsubscribe.ts states the rule this table follows: "a new secret
+// is a human gate — every fork of this template would have to go set one before
+// this feature worked at all." That is why the unsubscribe key is derived from
+// `sessionPassword` instead of being its own secret.
+//
+// The referral welcome trial cannot use that trick, and the reason is narrow
+// but decisive: its salt has to be STABLE FOREVER. The once-per-mailbox
+// invariant is enforced by a deterministic ref (`welcome_<hash of mailbox>`)
+// meeting a unique index, so if the salt ever changes, every mailbox gets a
+// brand-new ref and every spent trial silently re-arms. `sessionPassword` is a
+// secret an operator is supposed to be able to rotate after a compromise, and
+// "rotating your session secret quietly hands out a free month to everyone who
+// already used one" is not a property anybody would predict.
+//
+// So the salt is generated here, once, at random, and never rotated. It costs a
+// fork nothing to set up — which is the same goal the no-new-secret rule was
+// serving, reached by the other road.
+//
+// ── What may and may not live here ───────────────────────────────────────────
+// Server-generated derivation material ONLY. Never user input, never anything
+// rendered, never anything a request can name — an id here is chosen by code in
+// this repo, so this table can never become a generic key/value store that a
+// handler writes into. It holds no personal data and is not exported.
+export const instanceSecrets = sqliteTable('instance_secrets', {
+  // A constant chosen in code, e.g. IDENTITY_SALT_ID. Not user-supplied.
+  id: text('id').primaryKey(),
+  value: text('value').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .$defaultFn(() => new Date())
+    .notNull(),
+})
 
 // Type exports — use these in your app, not raw Drizzle types
 export type User = typeof users.$inferSelect

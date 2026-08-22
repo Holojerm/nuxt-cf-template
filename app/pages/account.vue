@@ -321,20 +321,36 @@ useSeo({
              status `active` until the notice period ends — so without this the
              page tells someone who cancelled weeks ago that they renew
              automatically, next to no cancel button. -->
+        <!-- Referral days are a pass by shape and not by story, so they get
+             their own sentence. Telling somebody who just signed up through a
+             friend's link that they "have a one-time pass" describes a purchase
+             they never made; telling a referrer the same thing hides the reason
+             they have the days at all. Welcome and reward differ too — one was
+             given, one was earned. -->
         <p class="text-default">
           {{
             billing.cancelsAt
               ? 'Your subscription is cancelled. You keep access until it ends.'
-              : billing.kind === 'pass'
-                ? 'You have a one-time pass. It will not renew.'
-                : 'Your subscription renews automatically.'
+              : billing.referralKind === 'welcome'
+                ? 'You have free days from the invite you signed up with. They will not renew.'
+                : billing.referralKind === 'reward'
+                  ? 'You have referral days you earned by inviting someone. They will not renew.'
+                  : billing.kind === 'pass'
+                    ? 'You have a one-time pass. It will not renew.'
+                    : 'Your subscription renews automatically.'
           }}
         </p>
         <dl class="grid gap-4 sm:grid-cols-2">
           <div>
             <dt class="text-sm text-muted">Type</dt>
             <dd class="text-default">
-              {{ billing.kind === 'pass' ? 'One-time pass' : 'Subscription' }}
+              {{
+                billing.referralKind
+                  ? 'Referral days'
+                  : billing.kind === 'pass'
+                    ? 'One-time pass'
+                    : 'Subscription'
+              }}
             </dd>
           </div>
           <div>
@@ -444,11 +460,10 @@ useSeo({
           <!-- Only when there is one to explain. A referral row's "Ends" date
                sits after everything else the account holds, which reads as an
                error unless the stacking rule is stated — and for a subscriber
-               it can be a year out. Same sentence as the share card, at the
-               moment the date is actually on screen. -->
+               it can be a year out. Literally the same string the share card
+               promises, not a second copy of it (#shared/utils/referral). -->
           <p v-if="billing.history.some((item) => item.referral)" class="text-sm text-muted">
-            Referral days stack after whatever you already have — if you're subscribed, they start
-            when your subscription ends.
+            {{ REFERRAL_STACKING_NOTE }}
           </p>
         </div>
       </template>
