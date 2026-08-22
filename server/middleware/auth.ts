@@ -40,6 +40,16 @@ export default defineEventHandler(async (event) => {
     return
   }
 
+  // One-click unsubscribe: mail providers POST here with no session (RFC 8058
+  // List-Unsubscribe-Post) and people click the same URL from an email's
+  // footer, which is a GET. Method-scoped like the feedback rule above — a
+  // PUT or DELETE to this path still 404s at the router, this just stops the
+  // auth guard from turning it into a 401 first. Auth would defeat the whole
+  // point: nobody signed into anything is on the other end of either request.
+  if (path === '/api/email/unsubscribe' && (event.method === 'GET' || event.method === 'POST')) {
+    return
+  }
+
   // All other /api routes require a valid session
   if (path.startsWith('/api/')) {
     const session = await getUserSession(event)
