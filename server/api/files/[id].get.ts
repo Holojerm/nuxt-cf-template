@@ -19,6 +19,17 @@
 // Never accepts an `r2Key` from the caller — only the row `id`, looked up
 // and ownership-checked first. See server/db/schema.ts › `files` for why
 // that matters.
+//
+// ── Resizing ────────────────────────────────────────────────────────────────
+// `?w=`, `?q=`, `?fit=`, `?format=` resize an image on the way out, via the
+// Images binding. It happens HERE, after both checks above, and not through
+// `/cdn-cgi/image/` like the rest of the app's images, because the edge
+// resolves that by fetching the source URL itself with no session cookie —
+// against this endpoint it would fetch a 401. server/utils/images.ts has the
+// full argument.
+//
+// With no modifiers, or no binding, or a transform that throws, the response
+// is byte-identical to what it was before this existed: the original object.
 
 import { z } from 'zod'
 
@@ -44,10 +55,42 @@ export default defineEventHandler(async (event) => {
   // PDFs are forced to download rather than render in-browser — see
   // dispositionForMimeType() (server/utils/files.ts) for why an `inline`
   // PDF at this app's origin is a bigger risk than an `inline` image.
-  setHeader(
-    event,
-    'Content-Disposition',
-    contentDispositionValue(file.filename, dispositionForMimeType(file.mimeType)),
+  const disposition = contentDispositionValue(
+    file.filename,
+    dispositionForMimeType(file.mimeType),
   )
+
+  const wanted = isTransformableImage(file.mimeType)
+    ? parseImageRequest(getQuery(event), getHeader(event, 'accept'))
+    : null
+
+  if (wanted) {
+    const images = resolveImagesBinding(event)
+    if (images) {
+      try {
+        const object = await blob.get(file.r2Key)
+        if (object) {
+          return await transformImage(images, object.stream(), wanted, file.mimeType, {
+            'Content-Disposition': disposition,
+          })
+        }
+      } catch (error) {
+        // Falling through to the original is the whole contract: a corrupt or
+        // unsupported image must cost the caller a larger download, never a
+        // broken page. Logged because a transform failing EVERY time is a
+        // misconfiguration, and nothing else would surface it.
+        console.warn(
+          JSON.stringify({
+            kind: 'image_transform_failed',
+            fileId: file.id,
+            mimeType: file.mimeType,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        )
+      }
+    }
+  }
+
+  setHeader(event, 'Content-Disposition', disposition)
   return blob.serve(event, file.r2Key)
 })

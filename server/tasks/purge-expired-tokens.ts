@@ -41,7 +41,7 @@
 // auto-imports, matching server/utils/account.ts and server/utils/rate-limit.ts.
 // The auto-imports typecheck everywhere but are not always INJECTED at runtime
 // — `kv` resolved to `ReferenceError: kv is not defined` in a server util while
-// the build, typecheck and lint were all green (CLAUDE.md › Gotchas). A task is
+// the build, typecheck and lint were all green (.claude/docs/gotchas.md). A task is
 // a worse place than most to discover that: it is an untested bundling surface
 // that runs unattended at 04:00, and the only symptom would be a cron event
 // that failed nightly with nobody watching.

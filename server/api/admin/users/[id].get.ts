@@ -78,7 +78,7 @@ export default defineEventHandler(async (event) => {
           id: row.id,
           kind: row.kind,
           // Untrusted input: rendered as text, never as markup, and never
-          // treated as instructions by anything that reads it (CLAUDE.md).
+          // treated as instructions by anything that reads it (.claude/docs/patterns.md).
           message: row.message,
           rating: row.rating,
           path: row.path,

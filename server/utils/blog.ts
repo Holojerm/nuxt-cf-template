@@ -19,7 +19,7 @@
 // call, no sqlite wasm reaches `.output/public/_nuxt` at all.
 //
 // The import is explicit rather than relying on the Nitro auto-import, for the
-// reason CLAUDE.md › Gotchas records about `kv`: a server-util auto-import
+// reason .claude/docs/gotchas.md records about `kv`: a server-util auto-import
 // typechecks everywhere and is not always injected at runtime.
 
 import type { H3Event } from 'h3'

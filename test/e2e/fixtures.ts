@@ -3,7 +3,7 @@
 // for had zero coverage that a real browser had ever run).
 //
 // ── Why the webhook, not a direct D1 write ───────────────────────────────────
-// CLAUDE.md's "The dev server caches its DB connection" gotcha is the whole
+// .claude/docs/gotchas.md's "The dev server caches its DB connection" entry is the whole
 // reason this file looks the way it does: `nuxt dev` holds its own libsql
 // connection open, and an external `bun:sqlite` write after boot is invisible
 // to it until a restart. Seeding an entitlement the way `bun seed` does would

@@ -19,7 +19,7 @@ import * as tables from '../db/schema'
 import type { FileRecord } from '../db/schema'
 // Explicit, not the Nitro auto-import: this file is loaded directly by the
 // workerd vitest suite, and a shared/ symbol resolves to undefined outside a
-// real Nitro request (CLAUDE.md › Gotchas; server/api/referral/me.get.ts
+// real Nitro request (.claude/docs/gotchas.md; server/api/referral/me.get.ts
 // follows the same rule for the same reason).
 import {
   ALLOWED_FILE_TYPES,

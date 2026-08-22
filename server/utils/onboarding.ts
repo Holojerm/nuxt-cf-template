@@ -99,7 +99,7 @@ export async function hasActivated(db: OnboardingDb, userId: string): Promise<bo
  * remains complete on a later page load).
  *
  * ── Why server-side, not client-side ─────────────────────────────────────
- * The same reasoning CLAUDE.md gives for `user_signed_up`/`user_signed_in`
+ * The same reasoning applied to `user_signed_up`/`user_signed_in`
  * (server/utils/auth.ts) applies here: an ad blocker that drops posthog-js
  * would silently lose a client-fired activation event forever, and this is
  * the one event a product most wants to be able to trust.
@@ -144,7 +144,7 @@ export async function hasActivated(db: OnboardingDb, userId: string): Promise<bo
  * trade-off this codebase already accepts elsewhere for non-billing signals
  * — the KV rate limiter fails open and is "abuse control, not metering"
  * (server/utils/rate-limit.ts) — and the fix, if it's ever needed, is the
- * one CLAUDE.md already names for exactness: a Durable Object, not a retry
+ * one .claude/docs/auth.md already names for exactness: a Durable Object, not a retry
  * loop here.
  */
 export async function recordActivationOnce(

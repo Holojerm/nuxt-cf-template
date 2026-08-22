@@ -13,7 +13,7 @@
 // ── Why node:sqlite, not bun:sqlite ──────────────────────────────────────
 // globalTeardown runs inside Playwright's own process, which is Node, not
 // Bun — scripts/seed.ts's `bun:sqlite` import isn't available here. Node's
-// built-in `node:sqlite` has been usable since 22.13 (see CLAUDE.md's own
+// built-in `node:sqlite` has been usable since 22.13 (see .claude/docs/gotchas.md's own
 // node:sqlite gotcha, and package.json's `engines.node` floor), so this adds
 // no new dependency.
 //

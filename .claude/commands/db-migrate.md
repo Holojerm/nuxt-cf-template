@@ -34,7 +34,7 @@ to its own local database (`.data/db/sqlite.db`) on boot — that is the databas
 `bun run db:migrate` is a *different* database. It runs
 `wrangler d1 migrations apply <name> --local`, which targets wrangler's sandbox
 at `.wrangler/state/v3/d1/` — a path the dev server never reads. Running it is
-harmless but proves nothing about local dev. (See CLAUDE.md › Gotchas › "Local
+harmless but proves nothing about local dev. (See .claude/docs/gotchas.md › "Local
 D1 lives in two places".)
 
 If the new columns don't show up, the cause is almost always the *other* gotcha:
