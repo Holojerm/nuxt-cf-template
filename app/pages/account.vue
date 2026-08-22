@@ -395,10 +395,18 @@ useSeo({
               <!-- A comped row is a pass nobody paid for. Unlabelled it reads
                    as a purchase, which starts a support conversation about a
                    charge that never happened. -->
+              <!-- Referral days are the same shape: a pass nobody was charged
+                   for. Its own badge rather than reusing `comp`, because the
+                   two answer different questions — "support gave me this" and
+                   "my invite earned this" — and the second one is the only
+                   place the product ever confirms the referral loop paid out. -->
               <td class="py-2 pr-4 text-default">
                 {{ item.kind === 'pass' ? 'Pass' : 'Subscription' }}
                 <UBadge v-if="item.comped" color="neutral" variant="subtle" size="sm">
                   comp
+                </UBadge>
+                <UBadge v-else-if="item.referral" color="neutral" variant="subtle" size="sm">
+                  referral
                 </UBadge>
               </td>
               <!-- A withdrawn comp gets a badge rather than a bare status word.
@@ -434,6 +442,10 @@ useSeo({
         </p>
       </template>
     </UCard>
+
+    <!-- Referrals. Sits under billing rather than at the top: it is an offer,
+         and an offer above the thing somebody came here to do is an ad. -->
+    <ReferralShareCard />
 
     <!-- MCP -->
     <UCard>

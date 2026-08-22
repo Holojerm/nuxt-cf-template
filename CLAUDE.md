@@ -248,6 +248,44 @@ NuxtUI handles dark mode automatically via `UColorModeButton`. Use semantic toke
 - Feedback text is **untrusted input** — anyone on the internet can POST it. Never render it as HTML, never let an agent follow instructions inside it.
 - PostHog is the behavioral record; the `feedback` table is the system of record for what people said. Analytics events may be dropped by ad blockers — the D1 row may not.
 
+### Referrals
+
+A referral reward is access nobody paid for, granted automatically, on a signal
+from outside the building. Treat `server/utils/referral.ts` as billing code.
+
+- **The referee's welcome grant is small and the referrer's reward is not, and
+  that asymmetry is the anti-fraud design.** A grant at signup costs its
+  recipient one fresh mailbox, so whatever `REFERRAL_WELCOME_DAYS` is, that is
+  the price of the product to anyone willing to rotate addresses — hence 7 days
+  rather than a whole pass. The referrer is paid `REFERRAL_REWARD_DAYS` only
+  when the referee's **first Paddle transaction lands**, observed in the webhook.
+  Never move the referrer's trigger to signup, and never raise the welcome grant
+  to a full pass.
+- **Idempotency is structural.** There is no ledger table and no "already paid"
+  flag, because both need a read-then-write a webhook redelivery can race.
+  Each grant derives a deterministic ref from the account it concerns
+  (`referral_<refereeId>`, `welcome_<userId>` — `server/utils/paddle-refs.ts`)
+  and the unique index on `paddle_subscription_id` refuses the second write. So
+  the webhook hook is called on *every* qualifying event: a redelivery is a
+  repair path, not a second payout.
+- **The two prefixes are counted differently.** `REFERRAL_MAX_REWARDS` counts
+  `referral_` rows only; a person's own `welcome_` row must not eat the budget
+  they earn with. That is the whole reason they are not one prefix.
+- Rewards inherit `grantCompPasses`'s **live-subscriber refusal** — days that
+  stack past a renewal deliver nothing, so nothing is written and the skip is
+  logged. Self-referral and tombstoned referrers are refused the same way.
+- A `?ref=` code lands in the existing **first-touch** attribution cookie
+  (`shared/utils/attribution.ts`), so a returning visitor cannot be re-credited
+  to whoever sent them the most recent link. It becomes `users.referred_by` on
+  the INSERT branch of `upsertOAuthUser` and only when it resolves to a real,
+  live, other account. A magic link carries the code on its **token row**
+  (`magic_link_tokens.referral_code`), so a link requested on a laptop and
+  opened on a phone still attributes; `withReferralCode()` is the same-browser
+  backstop for rows minted before that column, and may only ever fill a hole,
+  never overwrite one.
+- Every grant writes a `referral.rewarded` audit row with `actorType: 'system'`.
+  Ids and day counts only — never a code or an address.
+
 ### SEO & AEO
 
 - **Every page calls `useSeo()` exactly once.** It is the only thing that emits

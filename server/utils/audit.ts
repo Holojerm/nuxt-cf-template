@@ -125,6 +125,18 @@ export const AUDIT_ACTIONS = [
    * server/utils/onboarding.ts › recordActivationOnce for the full reasoning.
    */
   'onboarding.activated',
+  /**
+   * The referral loop granted access nobody paid for — `actorType: 'system'`,
+   * both sides of it (metadata `side: 'referee' | 'referrer'`).
+   *
+   * One action rather than two, because the question this table gets asked
+   * about the loop is "what has it given away, and to whom", and splitting the
+   * answer across two verbs makes that a union query forever. Metadata carries
+   * ids, day counts, and the entitlement ref — never a referral code, which is
+   * a shareable credential rather than a fact worth freezing into an
+   * append-only table.
+   */
+  'referral.rewarded',
 ] as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]

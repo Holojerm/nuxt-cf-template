@@ -51,6 +51,26 @@ export default defineEventHandler(async (event) => {
       : null,
   })
 
+  // ── The referrer's half of the referral loop ───────────────────────────────
+  // This handler is the ONLY place in the app that observes money actually
+  // arriving, which is why the referrer is paid from here and not at signup:
+  // a reward triggered by account creation costs an attacker one mailbox, and
+  // one triggered by a completed transaction costs more than the product does.
+  //
+  // Called on every qualifying event rather than on a detected "first"
+  // purchase — the reward's ref is derived from the referee's id, so the unique
+  // index makes a redelivery a repair rather than a second payout, and a
+  // customer's second pass pays nothing. Same contract as notifyBillingOutcome
+  // above: awaited so the isolate cannot be torn down mid-write, and it never
+  // throws, because a 500 here makes Paddle replay a money event.
+  //
+  // `trialing` is excluded deliberately. A trial is not a payment; when it
+  // converts, Paddle sends a `subscription.updated` carrying `active` and the
+  // reward lands then.
+  if (outcome.kind === 'pass' || (outcome.kind === 'subscription' && outcome.status === 'active')) {
+    await rewardReferrerForFirstPurchase(db, outcome.userId)
+  }
+
   if (outcome.kind === 'subscription') {
     await captureServerEvent({
       distinctId: outcome.userId,

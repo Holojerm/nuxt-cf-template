@@ -34,8 +34,15 @@ export const PASS_DAYS = 30
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-/** D1 timestamp columns hold epoch SECONDS — round-trips lose sub-second precision. */
-function toSeconds(date: Date): Date {
+/**
+ * D1 timestamp columns hold epoch SECONDS — round-trips lose sub-second precision.
+ *
+ * Exported because every writer of an expiry date has to truncate the same way:
+ * an untruncated value never equals what was stored, which makes the
+ * "did this insert conflict?" comparison in grantPass — and in the referral
+ * grants that copy its shape — read every write as a redelivery.
+ */
+export function toSeconds(date: Date): Date {
   return new Date(Math.floor(date.getTime() / 1000) * 1000)
 }
 

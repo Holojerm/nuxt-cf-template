@@ -13,7 +13,11 @@
 import type { H3Event } from 'h3'
 import type { UserSession } from '#auth-utils'
 import type { Attribution } from '#shared/utils/attribution'
-import { ATTRIBUTION_COOKIE, readAttributionCookie } from '#shared/utils/attribution'
+import {
+  ATTRIBUTION_COOKIE,
+  readAttributionCookie,
+  withReferralCode,
+} from '#shared/utils/attribution'
 import type { OAuthProfile } from './users'
 
 /** Cookie the login page sets before bouncing to a provider. */
@@ -186,10 +190,19 @@ export async function establishSession(
   // columns and nothing more.
   // The caller may have captured it earlier on a different device — see
   // `attribution` on EstablishSessionOptions.
+  //
+  // The cookie is read either way, because of one field. A magic-link row
+  // carries the referral code itself now, so the cross-device case is already
+  // handled — but rows minted before that column existed carry NULL, and on
+  // those the redeeming browser's cookie is the last place the code survives.
+  // withReferralCode() fills that hole and can never overwrite a code the row
+  // already has, which is what stops a borrowed browser re-crediting somebody
+  // else's invite. See the note there.
+  const cookieAttribution = readAttributionCookie(getCookie(event, ATTRIBUTION_COOKIE))
   const attribution =
     providedAttribution !== undefined
-      ? providedAttribution
-      : readAttributionCookie(getCookie(event, ATTRIBUTION_COOKIE))
+      ? withReferralCode(providedAttribution, cookieAttribution?.referralCode)
+      : cookieAttribution
 
   const { user, created } = await upsertOAuthUser(db, profile, attribution)
 
@@ -267,6 +280,22 @@ export async function establishSession(
           unsubscribe: { eventType: 'welcome', url: unsubscribeUrl },
         })
       }
+    })
+  }
+
+  // ── The referee's half of the referral loop ────────────────────────────────
+  // Only on a brand-new account that resolved a referral code moments ago
+  // (upsertOAuthUser writes `referred_by` on the INSERT branch, and only when
+  // the code named a real, live, other account).
+  //
+  // Inside afterSignIn for the reason that helper exists: the session cookie is
+  // already sealed, so a throw here would tell someone sign-in failed while
+  // they are, in fact, signed in — and on the magic-link path their token is
+  // already spent. grantRefereeWelcome() never throws either; both guards are
+  // deliberate, because free trial days are never worth an account creation.
+  if (created && user.referredBy) {
+    await afterSignIn('referral_welcome', async () => {
+      await grantRefereeWelcome(db, user)
     })
   }
 

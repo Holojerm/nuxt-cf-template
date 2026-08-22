@@ -156,6 +156,10 @@ export async function createMagicLinkToken(
       signupMedium: input.attribution?.medium ?? null,
       signupCampaign: input.attribution?.campaign ?? null,
       signupReferrer: input.attribution?.referrer ?? null,
+      // Already shape-validated by attributionSchema on the way out of the
+      // cookie, and re-validated at redemption before it can name an account.
+      // This column only has to carry it across the device boundary.
+      referralCode: input.attribution?.referralCode ?? null,
     })
     .returning()
 
@@ -258,6 +262,11 @@ export async function discardMagicLinkToken(db: MagicLinkDb, id: string): Promis
  * two mean different things to establishSession(): `undefined` lets it fall back
  * to the `attr` cookie on the redeeming request, `null` asserts "there is no
  * attribution" and suppresses that fallback.
+ *
+ * `referralCode` is part of this and not an afterthought: it is what makes a
+ * link opened on a different device from the one that requested it still credit
+ * the person who shared it. Every field is carried, so the object this returns
+ * is the whole first touch rather than the marketing half of it.
  */
 export function attributionFromRecord(record: MagicLinkToken): Attribution | undefined {
   const attribution: Attribution = {
@@ -265,6 +274,7 @@ export function attributionFromRecord(record: MagicLinkToken): Attribution | und
     medium: record.signupMedium ?? undefined,
     campaign: record.signupCampaign ?? undefined,
     referrer: record.signupReferrer ?? undefined,
+    referralCode: record.referralCode ?? undefined,
   }
   const known = Object.values(attribution).some((value) => value !== undefined)
   return known ? attribution : undefined

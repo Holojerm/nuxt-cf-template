@@ -11,6 +11,24 @@
 // It is also the page answer engines care most about, so it carries the Offer
 // nodes and the FAQPage — both built from the same arrays the template renders
 // (app/utils/plans.ts, app/utils/faq.ts), never from a second copy of the copy.
+//
+// ── The `pricing-layout` experiment ──────────────────────────────────────────
+// `pass-first` leads with the one-time pass instead of the yearly subscription,
+// on the consumer hypothesis that a first-time visitor buys a thing more
+// readily than a commitment. Three properties keep it from being a mess:
+//
+//   1. It reorders with CSS `order` on the same grid. The DOM is identical in
+//      both variants, so the one frame of control that useFlagVariant always
+//      renders (see app/composables/useFlag.ts) swaps class strings and nothing
+//      else — no elements are created, destroyed, or moved by Vue, and the grid
+//      cells keep their size, so nothing below the fold shifts.
+//   2. Exactly one plan is featured in either variant (DESIGN.md › Component
+//      behavior: one primary button per view). The badge follows the promotion
+//      rather than sitting on `plan.featured`, which is the control's answer.
+//   3. The Offer JSON-LD is built from PLANS, not from the rendered order, so
+//      the structured data an answer engine quotes is identical for everyone.
+//      A page whose machine-readable prices depend on a client-side flag is a
+//      page that publishes two different price lists.
 
 definePageMeta({
   publicPage: {
@@ -43,6 +61,31 @@ watch(loggedIn, (value) => {
 
 const pending = ref<string | null>(null)
 
+// 'control' | 'pass-first'. Resolves in onMounted, so it is 'control' during
+// SSR and for the first client frame — which is why the variant may only
+// change `order` classes and copy, never structure.
+const pricingLayout = useFlagVariant('pricing-layout', 'control')
+const passFirst = computed(() => pricingLayout.value === 'pass-first')
+
+/** The control's promoted plan comes from the data, not from a second literal. */
+const CONTROL_FEATURED_ID = PLANS.find((plan) => plan.featured)?.id ?? null
+
+const featuredId = computed(() => (passFirst.value ? 'pass' : CONTROL_FEATURED_ID))
+
+/**
+ * Static class strings, because Tailwind scans source text — a computed
+ * `order-${n}` produces no CSS at all and the grid silently stops reordering.
+ */
+const ORDER_CLASSES = ['order-1', 'order-2', 'order-3'] as const
+
+/** Where each plan sits in `pass-first`. Control keeps the array's own order. */
+const PASS_FIRST_ORDER: Record<string, number> = { pass: 0, monthly: 1, yearly: 2 }
+
+function orderClass(planId: string, index: number): string {
+  const position = passFirst.value ? (PASS_FIRST_ORDER[planId] ?? index) : index
+  return ORDER_CLASSES[position] ?? ORDER_CLASSES[index] ?? ''
+}
+
 async function choose(plan: (typeof plans.value)[number]) {
   if (!loggedIn.value) {
     return navigateTo({ path: '/login', query: { redirect: '/pricing' } })
@@ -50,7 +93,13 @@ async function choose(plan: (typeof plans.value)[number]) {
   if (!plan.purchasable) return
 
   pending.value = plan.id
-  const opened = await openCheckout(plan.priceId, 'default')
+  // The variant rides on `checkout_started` — the funnel's denominator — so the
+  // experiment is measurable as "which layout sold which plan" rather than as
+  // two unrelated event streams.
+  const opened = await openCheckout(plan.priceId, 'default', {
+    pricing_variant: pricingLayout.value,
+    plan_id: plan.id,
+  })
   pending.value = null
 
   if (!opened) {
@@ -122,15 +171,19 @@ useSeo({
 
     <div class="grid gap-6 md:grid-cols-3">
       <UCard
-        v-for="plan in plans"
+        v-for="(plan, index) in plans"
         :key="plan.id"
-        :class="plan.featured ? 'ring-2 ring-primary' : ''"
+        :class="[orderClass(plan.id, index), plan.id === featuredId ? 'ring-2 ring-primary' : '']"
       >
         <div class="flex h-full flex-col gap-6">
           <div>
             <div class="flex items-center gap-2">
               <h2 class="text-xl text-highlighted">{{ plan.name }}</h2>
-              <UBadge v-if="plan.featured" color="primary" variant="solid"> Best value </UBadge>
+              <!-- Solid, never subtle: clay-600 on a clay tint is 4.04:1 and
+                   fails AA (DESIGN.md › Color). -->
+              <UBadge v-if="plan.id === featuredId" color="primary" variant="solid">
+                {{ passFirst ? 'Start here' : 'Best value' }}
+              </UBadge>
             </div>
             <p class="mt-3 flex items-baseline gap-2">
               <span class="font-display text-3xl text-highlighted">{{ plan.price }}</span>
@@ -150,8 +203,8 @@ useSeo({
             <UButton
               block
               size="lg"
-              :color="plan.featured ? 'primary' : 'neutral'"
-              :variant="plan.featured ? 'solid' : 'outline'"
+              :color="plan.id === featuredId ? 'primary' : 'neutral'"
+              :variant="plan.id === featuredId ? 'solid' : 'outline'"
               :disabled="!plan.purchasable"
               :loading="pending === plan.id"
               @click="choose(plan)"

@@ -296,7 +296,21 @@ describe('cross-device carry', () => {
       medium: 'email',
       campaign: 'launch',
       referrer: undefined,
+      referralCode: undefined,
     })
+  })
+
+  it('carries the referral code too — the field that is worth money', async () => {
+    // The whole point of the column. A lost `signup_source` is a marketing row
+    // that reads `direct`; a lost referral code is somebody who was promised
+    // days for inviting a friend and silently did not get them.
+    const { record } = await createMagicLinkToken(db, {
+      email: 'ada@example.com',
+      attribution: { source: 'referral', medium: 'invite', referralCode: 'AB2CD3EF' },
+    })
+
+    expect(record.referralCode).toBe('AB2CD3EF')
+    expect(attributionFromRecord(record)).toMatchObject({ referralCode: 'AB2CD3EF' })
   })
 
   it('returns undefined, not an empty object, when there is none to carry', async () => {

@@ -9,7 +9,7 @@
 //
 // One function, two callers, no drift by construction.
 
-import { isCompRef, isPass, isSubscriptionRef } from './paddle-refs'
+import { isCompRef, isPass, isReferralRef, isSubscriptionRef } from './paddle-refs'
 import { deriveBillingState } from './billing-state'
 import type { BillingState } from './billing-state'
 import { ACTIVE_STATUSES, getBillingOverview } from './entitlements'
@@ -20,6 +20,20 @@ export interface EntitlementHistoryView {
   kind: 'pass' | 'subscription'
   /** True when this row was comped by an admin rather than paid for. */
   comped: boolean
+  /**
+   * True when the referral loop granted this row — either side of it.
+   *
+   * A sibling of `comped` rather than a widening of it, because they are
+   * different facts with different consequences: a comp is revocable from the
+   * admin console (revokeCompPass refuses anything else), a referral grant is
+   * not. Collapsing them into one "free" flag would put a revoke button on a
+   * row the server will always refuse to revoke.
+   *
+   * Unlabelled, these rows read as purchases in billing history, which starts a
+   * support conversation about a charge that never happened — the same problem
+   * `comped` exists to solve.
+   */
+  referral: boolean
   status: string
   currentPeriodEnd: string | null
   purchasedAt: string
@@ -125,6 +139,7 @@ export async function buildEntitlementView(
       ref: entitlement.paddleSubscriptionId,
       kind: isPass(entitlement.paddleSubscriptionId) ? 'pass' : 'subscription',
       comped: isCompRef(entitlement.paddleSubscriptionId),
+      referral: isReferralRef(entitlement.paddleSubscriptionId),
       status: entitlement.status,
       currentPeriodEnd: entitlement.currentPeriodEnd?.toISOString() ?? null,
       purchasedAt: entitlement.createdAt.toISOString(),

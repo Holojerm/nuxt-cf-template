@@ -19,6 +19,12 @@
 
 import { eq } from 'drizzle-orm'
 import type { Attribution } from '#shared/utils/attribution'
+import {
+  REFERRAL_CODE_ALPHABET,
+  REFERRAL_CODE_LENGTH,
+  REFERRAL_CODE_MINT_ATTEMPTS,
+  normalizeReferralCode,
+} from '#shared/utils/referral'
 import * as tables from '../db/schema'
 import type { User } from '../db/schema'
 import type { EntitlementDb as Db } from './entitlements'
@@ -142,13 +148,11 @@ function displayName(profile: OAuthProfile, email: string): string {
 }
 
 // ── Referral codes ───────────────────────────────────────────────────────────
-// A referral code ends up in a URL, in a tweet, and read aloud over a phone, so
-// the alphabet drops every character people confuse when transcribing: 0/O,
-// 1/I/L. What's left is 30 symbols, all URL-safe without escaping.
-const REFERRAL_CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTVWXYZ'
-const REFERRAL_CODE_LENGTH = 8
-/** Bounded retries on a code collision — see the insert branch below for why. */
-const REFERRAL_CODE_ATTEMPTS = 5
+// The alphabet, the length, and the retry budget live in #shared/utils/referral
+// rather than here, because shared/utils/attribution.ts validates an incoming
+// `?ref=` against the same shape before it reaches a database write. A
+// generator and a validator that disagree mint codes nobody can redeem, and the
+// symptom is a referral program that silently credits nobody.
 
 /**
  * A crypto-random referral code. 30^8 ≈ 6.6e11 possibilities, which is both
@@ -182,8 +186,13 @@ export function generateReferralCode(length: number = REFERRAL_CODE_LENGTH): str
  * two sign-ins for one address race, and retrying that would burn attempts and
  * then surface the identical error five calls later. That one must propagate
  * immediately.
+ *
+ * Exported for the second minting path — server/utils/referral.ts lazily mints
+ * a code for accounts that predate the column, hits the same unique index, and
+ * must recover the same way. A second copy of this cause-chain walk would be a
+ * second chance to get it subtly wrong, on a branch nothing ever executes.
  */
-function isReferralCodeCollision(error: unknown): boolean {
+export function isReferralCodeCollision(error: unknown): boolean {
   // Walks the cause chain, and that is the whole point. Drizzle does not
   // rethrow D1's error — it wraps it, so `error.message` is
   // "Failed query: insert into \"users\" …" and the actual
@@ -201,6 +210,46 @@ function isReferralCodeCollision(error: unknown): boolean {
     current = current instanceof Error ? current.cause : undefined
   }
   return false
+}
+
+/**
+ * The account behind a referral code, or null — the only way a `?ref=` value is
+ * ever allowed to become a fact about somebody's account.
+ *
+ * Lives here rather than in server/utils/referral.ts on purpose: it is a read
+ * of the `users` table using this file's own identity rules, and putting it
+ * here keeps the import graph one-directional (referral.ts → users.ts). The
+ * reverse would be a cycle, and this repo has already had to break one of those
+ * once (see the header of server/utils/paddle-refs.ts).
+ *
+ * Three refusals, each of which is a way somebody gets paid for nothing:
+ *
+ *   * A code that doesn't parse, or matches no row. Codes are 30^8, so anything
+ *     typed by hand is noise — but noise that would otherwise be written into
+ *     `users.referred_by` and read back later as a dangling claim.
+ *   * A tombstone. Deleting an account nulls its `referral_code`
+ *     (server/utils/account.ts), so a deleted referrer usually stops resolving
+ *     on its own; the address check is the backstop for the case where a later
+ *     account happens to mint the freed code. A deleted account cannot earn.
+ *   * The caller themselves. Belt and braces at provisioning — the row being
+ *     created cannot own a code yet — but the reward path calls this too, where
+ *     the id comparison is the real self-referral gate.
+ */
+export async function findReferrerByCode(
+  db: Db,
+  rawCode: string | null | undefined,
+  selfEmail?: string | null,
+): Promise<User | null> {
+  const code = normalizeReferralCode(rawCode)
+  if (!code) return null
+
+  const referrer = await db.query.users.findFirst({
+    where: eq(tables.users.referralCode, code),
+  })
+  if (!referrer) return null
+  if (isUndeliverableAddress(referrer.email)) return null
+  if (selfEmail && normalizeEmail(referrer.email) === normalizeEmail(selfEmail)) return null
+  return referrer
 }
 
 /**
@@ -255,6 +304,20 @@ export async function upsertOAuthUser(
     return { user: updated ?? existing, created: false }
   }
 
+  // ── Referral credit, resolved exactly once ─────────────────────────────────
+  // On the INSERT branch only, for the same reason the four attribution columns
+  // are: `referred_by` answers "who introduced this customer", and that has one
+  // true answer forever. It is also the only place a *claim* from a cookie
+  // becomes a fact — the code has to name a real, live, other account or it is
+  // simply dropped (findReferrerByCode above).
+  //
+  // The COLUMN stores the referrer's code, not their id, which is what the
+  // schema comment specifies: it is deliberately not a foreign key, so that a
+  // referrer deleting their account cannot take somebody else's attribution
+  // down with it. Deletion nulls the code, so the claim stops resolving and no
+  // further reward is ever paid on it — which is the behaviour we want anyway.
+  const referrer = await findReferrerByCode(db, attribution?.referralCode, email)
+
   const values = {
     email,
     name: displayName(profile, email),
@@ -265,6 +328,7 @@ export async function upsertOAuthUser(
     signupMedium: attribution?.medium ?? null,
     signupCampaign: attribution?.campaign ?? null,
     signupReferrer: attribution?.referrer ?? null,
+    referredBy: referrer?.referralCode ?? null,
   }
 
   // Every account is minted a referral code here, at creation, so no later code
@@ -277,7 +341,7 @@ export async function upsertOAuthUser(
   // Bounded, because an unbounded loop turns a genuine schema problem into a
   // hung sign-in. At 30^8 this should never fire once; if it fires five times
   // the randomness is broken and that deserves to be thrown, not papered over.
-  for (let attempt = 1; attempt <= REFERRAL_CODE_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= REFERRAL_CODE_MINT_ATTEMPTS; attempt++) {
     try {
       const [created] = await db
         .insert(tables.users)
@@ -292,7 +356,7 @@ export async function upsertOAuthUser(
 
       return { user: created, created: true }
     } catch (error) {
-      if (attempt === REFERRAL_CODE_ATTEMPTS || !isReferralCodeCollision(error)) throw error
+      if (attempt === REFERRAL_CODE_MINT_ATTEMPTS || !isReferralCodeCollision(error)) throw error
     }
   }
 

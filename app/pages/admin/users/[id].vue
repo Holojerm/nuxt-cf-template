@@ -520,6 +520,21 @@ useSeo({
                     >
                       comp
                     </UBadge>
+                    <!-- Referral days are also a pass nobody was charged for,
+                         and without this the Type column says "Pass" while the
+                         ref column beside it says `referral_…` — support
+                         reading the first one would go looking for a payment
+                         that never existed. Not revocable: revokeCompPass
+                         refuses anything that isn't a `comp_` ref. -->
+                    <UBadge
+                      v-else-if="row.referral"
+                      class="ml-2"
+                      color="info"
+                      variant="subtle"
+                      icon="i-lucide-users"
+                    >
+                      referral
+                    </UBadge>
                   </td>
                   <td class="py-2 pr-4 text-muted">{{ row.status }}</td>
                   <td class="py-2 pr-4 font-mono text-xs text-dimmed">{{ row.ref }}</td>

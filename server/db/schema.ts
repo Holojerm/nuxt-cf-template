@@ -191,6 +191,23 @@ export const magicLinkTokens = sqliteTable(
     signupMedium: text('signup_medium'),
     signupCampaign: text('signup_campaign'),
     signupReferrer: text('signup_referrer'),
+    // The fifth field of the same cookie, and the only one that is worth money.
+    //
+    // It rides here for exactly the reason the four above do, but the cost of
+    // omitting it is different in kind. A lost `signup_source` is a marketing
+    // row that reads `direct`; a lost referral code is a person who was
+    // promised days for inviting a friend and silently did not get them — and
+    // the case where it goes missing is *cross-device*, which for email sign-in
+    // is the common path rather than the edge one. Requested on a laptop,
+    // opened on a phone: no `attr` cookie exists on the phone, so without this
+    // column the credit simply evaporates on the majority of magic-link signups.
+    //
+    // Deliberately NOT a foreign key to `users.referral_code`, matching
+    // `users.referred_by`: this is an unverified claim copied off a cookie, and
+    // it is resolved to a real, live, other account at redemption
+    // (server/utils/users.ts › findReferrerByCode). A constraint here would let
+    // a junk cookie value fail somebody's sign-in.
+    referralCode: text('referral_code'),
     ...timestamps,
   },
   (table) => [

@@ -103,7 +103,22 @@ export function usePaddle() {
     | undefined
   capture = posthog ? (event, properties) => posthog.capture(event, properties) : null
 
-  async function openCheckout(items: PaddleCheckoutItem[] | string, productKey = 'default') {
+  /**
+   * @param context extra properties to attach to `checkout_started`.
+   *
+   * The seam an experiment needs. `checkout_started` is the funnel's
+   * denominator (see below), so anything that changes which plan a person
+   * clicks has to travel on THAT event or the variant can't be joined to the
+   * outcome — PostHog would know a variant was shown and know a checkout
+   * opened, with nothing tying the two together for a person whose flags
+   * arrived after the page did. Deliberately narrow: strings only, merged into
+   * one event, never a second capture of the same moment.
+   */
+  async function openCheckout(
+    items: PaddleCheckoutItem[] | string,
+    productKey = 'default',
+    context: Record<string, string> = {},
+  ) {
     const token = config.public.paddleClientToken
     if (!token) {
       console.warn('usePaddle: NUXT_PUBLIC_PADDLE_CLIENT_TOKEN is not set — checkout disabled')
@@ -120,6 +135,7 @@ export function usePaddle() {
       item_count: list.length,
       product_key: productKey,
       signed_in: Boolean(user.value?.id),
+      ...context,
     })
 
     // A fresh overlay: the next close is an abandonment until proven otherwise.
