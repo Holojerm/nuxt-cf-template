@@ -31,18 +31,19 @@ through the agent**:
 | `NUXT_OAUTH_GOOGLE_CLIENT_ID` (prod + preview) | a public identifier, not a credential |
 | `NUXT_OAUTH_GITHUB_CLIENT_ID` (prod + preview) | same |
 | `NUXT_RESEND_FROM` (prod) | an email address, not a credential |
+| `NUXT_RESEND_API_KEY` (prod) | owner saved it to 1Password; piped in with `op read … \| tr -d '\n' \| wrangler secret put`. Vault → wrangler, never printed, never in the agent's context. |
 
 Setting a client id *without* its secret is safe here and does not repeat the
 Turnstile trap: `describeOAuthProviders()` requires **both** values before it
 marks a provider `available`, so the button stays hidden until the pair is
 complete.
 
-**The six that remain are third-party credentials that exist only as a value
-displayed in someone else's dashboard.** Setting them would mean reading each
-one into the agent's context and re-transmitting it — which stays off-limits
-regardless of authorisation, because a key that passes through a model context
-has been written into a transcript. They are listed in
-[Remaining commands](#remaining-commands); each is one line and takes a minute.
+**The five that remain are third-party credentials that exist only as a value
+displayed in someone else's dashboard.** Reading one into the agent's context to
+re-transmit it writes it into a transcript, so that stays off-limits regardless
+of authorisation. The Resend key shows the way around it: put the value in
+1Password and it can be piped machine-to-machine instead. Either way they are
+listed in [Remaining commands](#remaining-commands); each is one line.
 
 ### What this already unblocked
 
@@ -56,6 +57,19 @@ $ curl -s https://my-app.jeremy-ettlinger.workers.dev/api/health
 
 `"database":"connected"` is the useful part — it proves the D1 binding and the
 applied migrations work **through the running Worker**, not just from the CLI.
+
+And with the Resend key in, the app's primary sign-in works for real:
+
+```
+$ curl -s -X POST …/api/auth/magic-link -d '{"email":"jeremy.ettlinger@gmail.com"}'
+{"ok":true}
+```
+
+followed by "Sign in to My App" arriving in the inbox. Note that `{"ok":true}`
+is *not* by itself proof — the endpoint answers identically for an unknown
+address, an exhausted rate limit and a rejected send, because anything else
+would be an account-enumeration oracle. What makes it proof here is that in
+production this route 503s when the send fails, plus Resend's own delivery log.
 
 ---
 
@@ -82,7 +96,8 @@ applied migrations work **through the running Worker**, not just from the CLI.
 | `NUXT_RESEND_FROM` | `live` | agent | prod Worker secret | `wrangler secret list` | `NUXT_RESEND_API_KEY` |
 | Cron trigger `0 4 * * *` | `live` | agent (via deploy) | `[triggers]` | dashboard: "Runs At 04:00 AM / Next Sun, 23 Aug 2026 04:00:00" | — |
 | Workers Builds | `live` | agent | Worker → Settings → Build | repo `Holojerm/nuxt-cf-template`, branch `main`, build `bun run ci`, deploy `bunx wrangler --cwd .output deploy`, version `bunx wrangler --cwd .output versions upload`, root `/`, non-production builds on. **Proven end to end**: the push fired a build within seconds, it ran the real gates, and it *failed* at `brand:check` for a real reason (caveat 9) rather than passing vacuously | the session-password build variable |
-| Resend API key `my-app` | `configured-unverified` | agent created | resend.com/api-keys | created with **Sending access**, not Full access (no domain to scope to). The agent did not screenshot or read the value, so **whether it was captured before the one-time dialog closed is unconfirmed** — if it was missed, delete the key and create another | owner runs `wrangler secret put NUXT_RESEND_API_KEY` |
+| Resend API key `my-app` | `live` | agent created; owner saved to 1Password; agent piped it in | prod Worker secret `NUXT_RESEND_API_KEY` | created with **Sending access**, not Full access. Set via `op read … \| tr -d '\n' \| wrangler secret put`, so the value went vault → wrangler without being printed or entering the agent's context | — |
+| Magic-link sign-in | `live` | agent | — | **end to end**: `POST /api/auth/magic-link` → 200, and Resend's log shows "Sign in to My App" to jeremy.ettlinger@gmail.com, status **Opened**. In production this endpoint 503s when `sendEmail` fails (it is one of the two `inline: true` callers, so it bypasses the queue and knows the real result) — a 200 therefore means Resend genuinely accepted it | — |
 | GitHub App repo access | `live` | agent | github.com/settings/installations | `nuxt-cf-template` added alongside `whonder` + `drawthesystem-cloud`, which were left intact; scope kept at "Only select repositories" | — |
 | Turnstile widget `my-app` | `configured-unverified` | agent | site key in `[vars]` + `[env.preview.vars]` | "Successfully created Turnstile widget"; hostnames = both workers.dev hosts; Managed; pre-clearance off | secret key |
 | GitHub OAuth app | `configured-unverified` | agent | Client ID `Ov23liQyWvgpxRQ0eLrG` | app page reachable; redirect URIs for prod **and** preview | client secret — **not yet generated**, see below |
@@ -94,13 +109,13 @@ applied migrations work **through the running Worker**, not just from the CLI.
 | PostHog feature flags | `skipped` | owner's choice at kickoff | — | — | `new-onboarding`, `pricing-layout` (`control` \| `pass-first`) stay non-existent; code returns control for both |
 | Resend account | `live` | owner signed in | resend.com | signed in as jeremy.ettlinger@gmail.com; **no domains** — confirms `onboarding@resend.dev` is the only possible sender | a verified domain, if you ever want to mail anyone but yourself |
 | Sign in with Apple | `skipped` | owner's choice at kickoff | — | — | also impossible on `*.workers.dev` — Apple will not accept it as a verifiable domain |
-| The six third-party secrets | `blocked` | — | — | — | values live in other people's dashboards; must not transit the agent — see below |
+| The five remaining third-party secrets | `blocked` | — | — | — | values live in other people's dashboards; must not transit the agent — see below |
 
 ---
 
 ## Remaining commands
 
-Six values, each read from a dashboard. Each command prompts for the value on
+Five values, each read from a dashboard. Each command prompts for the value on
 stdin, so nothing lands in shell history.
 
 **Turnstile** — do this one *before merging the PR*, which commits the site key.
@@ -140,13 +155,6 @@ bunx wrangler secret put NUXT_PADDLE_WEBHOOK_SECRET
 bunx wrangler secret put NUXT_PADDLE_API_KEY
 ```
 
-**Resend** — resend.com/api-keys, create a **sending-only** key.
-`NUXT_RESEND_FROM` is already set to `My App <onboarding@resend.dev>`.
-
-```bash
-bunx wrangler secret put NUXT_RESEND_API_KEY
-```
-
 Add `--env preview` to any of the above you also want on the preview Worker.
 Leaving Resend unset there is a reasonable choice — preview emails become logged
 no-ops.
@@ -154,7 +162,19 @@ no-ops.
 Already set, for reference — no action needed:
 `NUXT_SESSION_PASSWORD` (prod + preview), `NUXT_OAUTH_GOOGLE_CLIENT_ID`
 (`546642789466-be7tki166137t2khk32o3tqjkkkcqe99.apps.googleusercontent.com`),
-`NUXT_OAUTH_GITHUB_CLIENT_ID` (`Ov23liQyWvgpxRQ0eLrG`), `NUXT_RESEND_FROM`.
+`NUXT_OAUTH_GITHUB_CLIENT_ID` (`Ov23liQyWvgpxRQ0eLrG`), `NUXT_RESEND_FROM`,
+`NUXT_RESEND_API_KEY`.
+
+**The 1Password pipe is the pattern to reuse for the rest.** Save the value to
+1Password, then:
+
+```bash
+op read "op://<vault>/<item>/credential" | tr -d '\n' | bunx wrangler secret put <NAME>
+```
+
+`tr -d '\n'` is not optional — `op read` appends a newline, and a trailing
+newline inside an API key produces a 401 that reads exactly like a wrong key.
+This is how `NUXT_RESEND_API_KEY` was set: vault → wrangler, never printed.
 
 Finally, **in the Cloudflare dashboard**, Worker → Settings → Build → Variables
 and secrets: add `NUXT_SESSION_PASSWORD` as a build variable marked **secret**.
@@ -221,15 +241,23 @@ sending-only key scoped to it.
 mix branch traffic into production analytics. Unset means the plugin no-ops,
 which is the right default.
 
-**8. What is and is not proven through the app.** `/api/health` returns
-`{"status":"ok","database":"connected"}` and `/api/auth/providers` returns 200,
-so the Worker, the session layer and the D1 binding are proven end to end. What
-is *not* proven is anything needing a third-party secret: the three providers
-still report `available: false`, `emailSignIn` is `false`, Turnstile does not
-render, and the Paddle handler will reject deliveries until its secret is set.
-Everything marked `configured-unverified` above is *configured correctly and
-unproven*; nothing was marked `live` on the strength of a dashboard screenshot
-alone.
+**8. What is and is not proven through the app.** Proven: `/api/health` returns
+`{"status":"ok","database":"connected"}`, `/api/auth/providers` returns 200 with
+`emailSignIn: true`, and a real magic-link email reached the owner's inbox — so
+the Worker, the session layer, the D1 binding and the whole transactional-email
+path are verified end to end. **This app's primary sign-in works.**
+
+Not proven: anything needing one of the five remaining secrets. The three OAuth
+providers still report `available: false`, Turnstile does not render, and the
+Paddle handler will reject deliveries until its secret is set. Everything marked
+`configured-unverified` above is *configured correctly and unproven*; nothing was
+marked `live` on the strength of a dashboard screenshot alone.
+
+Two things the email test did **not** cover, worth knowing: it went through the
+`inline: true` path, so **the EMAIL_QUEUE consumer is still unexercised** — the
+first queued send (any billing or notification mail) is its real first run. And
+Resend's "Opened" status comes from a tracking pixel, which a mail scanner can
+trip as easily as a human; delivery is what it proves, not that you read it.
 
 **9. Changing `NUXT_PUBLIC_APP_URL` invalidates the generated brand assets.**
 Worth knowing before you fork, because the failure arrives later and elsewhere:
