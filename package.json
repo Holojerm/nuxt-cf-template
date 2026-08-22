@@ -21,6 +21,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply my-app-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply my-app-db --remote",
+    "db:migrate:preview": "wrangler d1 migrations apply my-app-db-preview --remote",
     "db:studio": "drizzle-kit studio",
     "seed": "bun run scripts/seed.ts",
     "rename": "bun run scripts/rename.ts",
@@ -36,6 +37,8 @@
     "playwright:install": "playwright install chromium",
     "ci": "bun run lint && bun run design:check && bun run brand:check && bun run mirror:check && bun run seo:check && bun run typecheck && bun run test && bun run playwright:install && bun run test:a11y && bun run build",
     "deploy": "nuxt build && wrangler --cwd .output deploy",
+    "build:preview": "CLOUDFLARE_ENV=preview nuxt build",
+    "deploy:preview": "CLOUDFLARE_ENV=preview nuxt build && wrangler --cwd .output deploy",
     "mcp:dev": "bun run --cwd mcp dev",
     "mcp:typecheck": "bun run --cwd mcp typecheck",
     "mcp:deploy": "bun run --cwd mcp deploy"

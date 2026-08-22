@@ -581,8 +581,24 @@ export default defineNuxtConfig({
   nitro: {
     preset: 'cloudflare_module',
     experimental: {
-      // Enable tasks for background jobs (e.g. cron via Cloudflare Workers)
+      // Turns on Nitro's task layer: server/tasks/ is scanned, `defineTask` is
+      // auto-imported, and `import.meta._tasks` becomes true — which is the
+      // flag the cloudflare_module preset's `scheduled()` handler checks before
+      // it calls runCronTasks(). Without this, a cron trigger would fire, the
+      // handler would run, and no task would execute.
       tasks: true,
+    },
+
+    // Cron expression → task names. This map is the ONLY thing that connects a
+    // Cloudflare cron trigger to a task, and the join is an exact string match
+    // on the expression, so every key here must appear verbatim in
+    // `[triggers] crons` in wrangler.toml. A mismatch is silent: the Worker
+    // wakes on schedule and does nothing.
+    //
+    // 04:00 UTC — crons run on UTC, and this is off-peak for the retention job
+    // in server/tasks/purge-expired-tokens.ts, which is the only thing here.
+    scheduledTasks: {
+      '0 4 * * *': ['purge-expired-tokens'],
     },
   },
 

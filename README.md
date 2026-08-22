@@ -77,11 +77,17 @@ NUXT_PUBLIC_APP_NAME = "My App"  # Display name shown in the UI
 
 ### 2. Create Cloudflare resources
 
-In your [Cloudflare dashboard](https://dash.cloudflare.com), create:
+Four resources, and the queue is the one that bites: `wrangler deploy` **fails** on a
+queue that doesn't exist yet, unlike the dead-letter queue, which is created for you.
 
-- **D1 database** → copy the database ID into `wrangler.toml`
-- **KV namespace** → copy the namespace ID into `wrangler.toml`
-- **R2 bucket** → name must match `bucket_name` in `wrangler.toml`
+```bash
+wrangler d1 create my-app-db          # copy the database_id it prints
+wrangler kv namespace create KV       # copy the id it prints
+wrangler r2 bucket create my-app-blob
+wrangler queues create my-app-email
+```
+
+Then paste the two ids into `wrangler.toml`:
 
 ```toml
 [[d1_databases]]
@@ -90,6 +96,10 @@ database_id = "paste-your-d1-id-here"
 [[kv_namespaces]]
 id = "paste-your-kv-id-here"
 ```
+
+The R2 bucket and the queue are matched by **name**, so they need no id — but the names
+must equal `bucket_name` and `queue` in `wrangler.toml`. `bun run rename` keeps all of
+them in step, including `EMAIL_QUEUE_NAME` in `server/utils/email-queue.ts`.
 
 ### 3. Set up environment variables
 
@@ -135,6 +145,10 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
    - **Preview deploy command**: `bunx wrangler --cwd .output versions upload`
 4. Under **Build Variables and Secrets**, add `NUXT_SESSION_PASSWORD` (mark it secret).
 5. Enable **non-production branch builds** (Settings → Build → Branch control) to get build checks and preview URLs on every PR.
+6. To point those preview builds at the preview resources rather than production's, add
+   the build variable `CLOUDFLARE_ENV=preview` **on the non-production branch trigger
+   only**, and set up [the preview environment](#preview-environment) below. Until you do,
+   every preview URL runs branch code against your live database.
 
 Every push to `main` now lints, typechecks, tests, builds, and deploys. Pushes to other branches run the same checks and post a preview URL as a PR comment.
 
@@ -196,11 +210,14 @@ bun run ci            # Lint + design/brand/seo gates + typecheck + test + brows
 bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1 (via wrangler)
 bun db:migrate:remote # Apply migrations to remote/prod D1
+bun db:migrate:preview # Apply migrations to the preview D1 (nothing does this for you)
 bun db:studio         # Open Drizzle Studio (visual DB browser)
-bun run rename <name> # Rewrite the my-app placeholder across all six places it appears
+bun run rename <name> # Rewrite the my-app placeholder everywhere it appears
 bun run test          # Run Vitest in workerd via @cloudflare/vitest-pool-workers
 bun test:watch        # Same, in watch mode
 bun run deploy        # Build + deploy to Cloudflare (`bun deploy` is reserved by Bun)
+bun run build:preview # Build with the [env.preview] bindings (CLOUDFLARE_ENV=preview)
+bun run deploy:preview # Same, then deploy — creates/updates the my-app-preview Worker
 ```
 
 > **Note:** use `bun run test`, not `bun test`. The bare form invokes Bun's built-in test runner, which doesn't know about Vitest or the Cloudflare pool.
@@ -288,6 +305,86 @@ See [`test/example.test.ts`](./test/example.test.ts) for the starter pattern. Co
 The Cloudflare preset has to be pinned in `nuxt.config.ts`; the `@nuxthub/core` module does **not** auto-detect it for `nuxt build` (it only auto-detected in the legacy `nuxthub deploy` command, which Cloudflare sunset Feb 2026).
 
 Workers Builds runs the same two steps in CI — `bun run ci` covers the build (plus lint, the design-token and SEO gates, typecheck, unit tests, and the axe accessibility suite), and the deploy command is the same `wrangler --cwd .output deploy`. Builds run inside your Cloudflare account, so CI needs no API token.
+
+### `wrangler.toml` is an input, not the deployed config
+
+Nothing deploys `wrangler.toml`. The build generates `.output/server/wrangler.json` and
+wrangler deploys **that**. Nitro copies your `wrangler.toml` into it — bindings, `[triggers]`,
+`[[queues.*]]`, all of it — and then NuxtHub rewrites the result one last time on Nuxt's
+`close` hook.
+
+That last step is the surprising one, and it is what makes the preview environment below
+work the way it does: **NuxtHub deletes the `env` key from the generated config, always.**
+With `CLOUDFLARE_ENV=<name>` set it first flattens `env.<name>` into the top level; without
+it, the environments are simply dropped.
+
+The consequence to remember: `wrangler --cwd .output deploy --env preview` **cannot work**,
+because by the time wrangler reads that file there are no environments left in it. The
+environment is chosen when you *build*, not when you deploy.
+
+---
+
+## Preview environment
+
+Preview deploys share production's D1, KV, R2 and rate-limit counters unless you set this
+up. A preview URL is public and runs unreviewed branch code, so that default means every
+half-finished migration and destructive query lands in your live database.
+
+### 1. Create the preview resources
+
+```bash
+wrangler d1 create my-app-db-preview            # copy the database_id
+wrangler kv namespace create KV --preview       # copy the id
+wrangler r2 bucket create my-app-blob-preview
+wrangler queues create my-app-email-preview
+```
+
+Paste the two ids into the `[env.preview]` placeholders in `wrangler.toml`
+(`YOUR_PREVIEW_D1_DATABASE_ID`, `YOUR_PREVIEW_KV_NAMESPACE_ID`).
+
+### 2. Bootstrap the preview Worker once
+
+`[env.preview]` sets `name = "my-app-preview"`, so preview is a **separate Worker** with its
+own secrets — not a mode of the production one. It has to exist before Workers Builds can
+upload versions to it, and this is also what registers its cron trigger and queue consumer:
+
+```bash
+bun run deploy:preview        # CLOUDFLARE_ENV=preview nuxt build && wrangler --cwd .output deploy
+wrangler secret put NUXT_SESSION_PASSWORD --env preview
+bun run db:migrate:preview    # nothing applies migrations for you — see below
+```
+
+Secrets are per-environment. The preview Worker starts with **none** of production's, so
+repeat `wrangler secret put … --env preview` for every secret you actually need there.
+Leaving Resend unset is a reasonable choice: emails become logged no-ops on preview.
+
+### 3. Point Workers Builds at it
+
+In the dashboard, on the **non-production branch trigger only**:
+
+| Setting | Value |
+| --- | --- |
+| Build command | `bun run ci` |
+| Preview deploy command | `bunx wrangler --cwd .output versions upload` |
+| Build variable | `CLOUDFLARE_ENV=preview` |
+
+The deploy command carries **no `--env` flag** — that is the whole point of the section
+above. `CLOUDFLARE_ENV` on the build is what swaps the bindings; adding `--env preview`
+would fail on a config that no longer has environments in it.
+
+### Keeping it in step
+
+`[env.preview]` repeats **every** binding and every `var`, because bindings are
+non-inheritable: override one in an environment and you must override all of them. So
+**adding a binding means adding it twice.** Two that are easy to miss:
+
+- **`[[env.preview.ratelimits]]` uses a different `namespace_id` (1002).** The namespace is
+  scoped to the Cloudflare *account*, so sharing 1001 would let a branch under test
+  rate-limit real users out of signing in. It is also required rather than optional here:
+  `ratelimits` is missing from NuxtHub's non-inheritable list, so without the block preview
+  would silently inherit production's counter.
+- **Migrations must be applied to the preview D1 too** (`bun run db:migrate:preview`), for
+  exactly the reason the production note below gives — nothing applies them for you.
 
 ---
 
@@ -489,6 +586,47 @@ would merge two strangers' accounts.
 
 ---
 
+## Background work (cron tasks)
+
+Nitro's task layer is on (`nitro.experimental.tasks`), and the `cloudflare_module` preset
+already exports a `scheduled()` handler that runs cron tasks — so **no custom Worker entry
+point is needed**, and none exists in this repo. The same is true of the queue consumer
+above: it hooks `cloudflare:queue`, which that preset dispatches for you.
+
+Adding a scheduled job is two edits plus a file:
+
+1. `server/tasks/<name>.ts` exporting `defineTask({ meta, run })`
+2. `nitro.scheduledTasks` in `nuxt.config.ts` — cron expression → task name
+3. `[triggers] crons` in `wrangler.toml` — the **same** expression
+
+> **Those two expressions must match verbatim.** The lookup is an exact string comparison,
+> so `"0 4 * * *"` and `"0 04 * * *"` are different keys: Cloudflare fires on schedule,
+> Nitro finds no task, and the handler returns success having done nothing. No error, no
+> log line. If a task never runs, compare those two strings first.
+
+The one task that ships is [`purge-expired-tokens`](./server/tasks/purge-expired-tokens.ts),
+daily at 04:00 UTC. It deletes spent and expired `magic_link_tokens` and `mcp_connect_codes`
+older than a 24-hour grace window — nothing in the request path ever deleted them, so both
+tables grew forever with sign-ins. The grace window is deliberate: a spent token is the only
+evidence a link was replayed, and an expired one is what lets the verify page say "expired"
+rather than "invalid". Each run deletes at most 5000 rows per table, so a long backlog drains
+over several days instead of timing out forever on one enormous `DELETE`.
+
+**It runs in `bun dev` too** — the dev preset drives the same map with croner, in-process. To
+run it right now instead of waiting for 04:00, Nitro mounts a dev-only route:
+
+```bash
+curl https://my-app.localhost/_nitro/tasks/purge-expired-tokens
+curl "https://my-app.localhost/_nitro/tasks/purge-expired-tokens?graceSeconds=0"
+```
+
+The DB logic lives in [`server/utils/purge.ts`](./server/utils/purge.ts) and takes `db` as an
+argument, because Nitro skips scheduled tasks entirely under vitest — a test driving the task
+wrapper would be testing the shim. [`test/purge.test.ts`](./test/purge.test.ts) drives the
+util against a real D1 inside workerd.
+
+---
+
 ## Transactional email
 
 [`server/utils/email.ts`](./server/utils/email.ts) posts to Resend over plain `fetch` — no SDK, for
@@ -497,6 +635,28 @@ the same reason the PostHog helper has none. Swapping providers means editing on
 **It never throws.** Every call site is something more important than the email: a sign-in, or a
 Paddle webhook that must return 200 or get retried forever. Unset `NUXT_RESEND_API_KEY` and every
 send becomes a logged no-op, so the template runs without a Resend account.
+
+**It goes through a queue in production.** When the `EMAIL_QUEUE` producer binding exists,
+`sendEmail()` hands the built request to Cloudflare Queues and returns; the consumer in
+[`server/plugins/email-queue-consumer.ts`](./server/plugins/email-queue-consumer.ts) does the
+Resend POST with retries, dead-lettering to `my-app-email-dlq` after three transient failures.
+That takes a third-party API call off the request path and turns a transient 503 from "the mail
+is gone" into "the mail is late".
+
+Three things worth knowing:
+
+- **`bun dev` always sends inline.** The dev server has a producer binding (miniflare provides
+  one) but no consumer — the dev preset exports no `queue()` handler — so enqueueing there
+  would be a black hole that reports success. `shouldUseEmailQueue()` refuses it explicitly.
+- **The unconfigured check happens before the enqueue,** and if the enqueue itself fails the
+  send falls back to an inline POST. Adding the queue cannot have made any call site less
+  reliable than it was.
+- **A permanent rejection (any 4xx but 429) is acked, not retried.** It fails identically three
+  times; the log line `email_queue_dead_letter` is the record. The DLQ is reserved for mail
+  that might still be deliverable.
+
+`max_batch_timeout` is set to **1** second rather than the 30s default, because the magic-link
+email is the one message a user is actively waiting on.
 
 Which emails exist, and when they fire — decided by `decideNotification()` in
 [`server/utils/billing-notifications.ts`](./server/utils/billing-notifications.ts), covered by
