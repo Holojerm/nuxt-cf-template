@@ -36,12 +36,12 @@ compatibility_flags = ["nodejs_compat", "queue_consumer_wait_for_wait_until"]
 [[d1_databases]]
 binding = "DB"
 database_name = "my-app-db"
-database_id = "YOUR_D1_DATABASE_ID"
+database_id = "e05a806f-7596-4b97-893c-cb27614bd265"
 migrations_dir = "./server/db/migrations"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "YOUR_KV_NAMESPACE_ID"
+id = "110a52465ec94fc2b452a4783c5a4421"
 
 [[r2_buckets]]
 binding = "BLOB"
@@ -144,7 +144,7 @@ NUXT_EMAIL_QUEUE_NAME = "my-app-email"
 # Canonical public origin, no trailing slash. Emails, sitemap.xml, robots.txt
 # and og: tags build absolute links from this — a webhook has no request to
 # infer it from. Set it to your real domain before the first production deploy.
-NUXT_PUBLIC_APP_URL = "https://my-app.workers.dev"
+NUXT_PUBLIC_APP_URL = "https://my-app.jeremy-ettlinger.workers.dev"
 # Named on /terms and /privacy, and used as Reply-To on transactional email.
 NUXT_PUBLIC_SUPPORT_EMAIL = "support@example.com"
 NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
@@ -156,7 +156,18 @@ NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
 # Cloudflare Turnstile site key (public by design — it names the widget, it
 # authorises nothing). Empty = no widget renders and no challenge script loads.
 # Its partner, NUXT_TURNSTILE_SECRET_KEY, is a secret — see the list below.
-# NUXT_PUBLIC_TURNSTILE_SITE_KEY = "0x4AAA..."
+#
+# ⚠️ SET `NUXT_TURNSTILE_SECRET_KEY` BEFORE MERGING THIS. A site key with no
+# secret key is the one bad state the template warns about: the widget renders
+# and nothing verifies it, and server/utils/turnstile.ts logs
+# `turnstile_half_configured`. Secret key: dash → Turnstile → my-app → Settings.
+NUXT_PUBLIC_TURNSTILE_SITE_KEY = "0x4AAAAAAEYsq68WQEk9sbVo"
+# PostHog project token — public by design; it ships in the client bundle and
+# authorises nothing but ingestion. Events travel through the app's own
+# /ingest reverse proxy, so no *.posthog.com origin is added to the CSP.
+# Project 569675, US region, which is what nuxt.config.ts's posthogHost
+# default (https://us.i.posthog.com) already points at.
+NUXT_PUBLIC_POSTHOG_KEY = "phc_vJcZPnzTmBXMXyWfsecTjisEG2CRSrfSDfWXtEv7hswa"
 
 # ─── Preview environment ─────────────────────────────────────────────────────
 #
@@ -219,12 +230,12 @@ name = "my-app-preview"
 [[env.preview.d1_databases]]
 binding = "DB"
 database_name = "my-app-db-preview"
-database_id = "YOUR_PREVIEW_D1_DATABASE_ID"
+database_id = "479e9535-ee44-4e4b-8498-bd524933c814"
 migrations_dir = "./server/db/migrations"
 
 [[env.preview.kv_namespaces]]
 binding = "KV"
-id = "YOUR_PREVIEW_KV_NAMESPACE_ID"
+id = "4fdf372d76924e80905aa7fdd2074120"
 
 [[env.preview.r2_buckets]]
 binding = "BLOB"
@@ -266,7 +277,7 @@ NUXT_EMAIL_QUEUE_NAME = "my-app-email-preview"
 # per-version URL that this cannot know in advance; this value is what emails,
 # canonical tags and sitemap entries are built from, so pointing it at the
 # stable preview origin keeps them from claiming to be production.
-NUXT_PUBLIC_APP_URL = "https://my-app-preview.workers.dev"
+NUXT_PUBLIC_APP_URL = "https://my-app-preview.jeremy-ettlinger.workers.dev"
 NUXT_PUBLIC_SUPPORT_EMAIL = "support@example.com"
 NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
 # The point of the whole block, from an SEO angle: robots.txt disallows
@@ -274,6 +285,11 @@ NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
 # A public preview URL indexed alongside production splits your ranking between
 # two copies of the same site.
 NUXT_PUBLIC_INDEXABLE = "false"
+# Same widget as production — it carries both workers.dev hostnames. `vars` are
+# non-inheritable, so this repetition is required, not redundant. The same
+# warning applies: `wrangler secret put NUXT_TURNSTILE_SECRET_KEY --env preview`
+# before this reaches the preview Worker.
+NUXT_PUBLIC_TURNSTILE_SITE_KEY = "0x4AAAAAAEYsq68WQEk9sbVo"
 
 # Secrets — set via `wrangler secret put <NAME>`, never in this file.
 # Secrets are per-environment too: add `--env preview` to set them on the
