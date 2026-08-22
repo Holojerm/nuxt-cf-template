@@ -561,6 +561,27 @@ Going live: swap the token/secret for live ones and set `NUXT_PUBLIC_PADDLE_ENV=
 
 ---
 
+## Uploads (R2)
+
+Cloudflare R2 was wired (`hub.blob: true`) but had no upload path — this is the worked, paid-gated example. Every route requires an active subscription, same as `/dashboard`.
+
+| Route | What it does |
+| --- | --- |
+| `POST /api/files` | Server-mediated upload: the client posts multipart form data, the server validates it (`ensureBlob`, an exact MIME allowlist, an 8 MB cap) and writes it to R2 itself — it never trusts a client-supplied storage key or path. Inserts a `pending` row, calls `blob.put()`, then flips the row to `uploaded`; a crash in between leaves a `pending` row with no object behind it — an abandoned upload a future sweep could find, not a row lying about what's in the bucket. |
+| `GET /api/files` | The caller's own files, newest first, cursor-paginated over the `(user_id, created_at)` index. |
+| `GET /api/files/:id` | Streams one file via `blob.serve()`, after an ownership check scoped to the caller's own `userId`. |
+| `DELETE /api/files/:id` | Deletes the R2 object, then the row — deliberately in that order. R2's delete is idempotent, so if the row delete fails afterward, the file is still listed and a retry finishes the job; deleting the row first risks a silent, permanently orphaned object if the object delete then fails. |
+
+**Where keys live.** Every object is stored at `uploads/<user_id>/<uuid>.<ext>` (`server/utils/files.ts` › `buildR2Key()`). The key is built from the session's own user id and the *validated* MIME type — never from anything the client sends — so one user's uploads can never collide with, overwrite, or be guessed from another's. See the `files` table's comment in `server/db/schema.ts` for the invariant this protects.
+
+**Limits.** JPEG, PNG, WebP, and PDF only, 8 MB per file (`shared/utils/files.ts`, imported by both the server route and the client's pre-check in `app/components/Upload/FileUpload.vue`, so the two can't disagree about what gets rejected). The client-side check is a courtesy — the server re-validates every one of these regardless of what a modified client sends.
+
+**Private, not public.** R2 objects here have no public URL; `GET /api/files/:id` is the only path to the bytes, gated the same way as every other paid route (`requireSubscription`) plus the ownership check above. There's no signed or short-lived URL layered on top, because there's no direct path to the object that one would be protecting against.
+
+**Local dev.** `bun dev` writes uploads to NuxtHub's local blob directory, `.data/blob` (gitignored) — a filesystem-backed emulation of the R2 driver, parallel to `.data/db/sqlite.db` for D1. It's created automatically on first upload; no setup needed.
+
+---
+
 ## Pages
 
 | Route | Access | Notes |
@@ -574,6 +595,7 @@ Going live: swap the token/secret for live ones and set `NUXT_PUBLIC_PADDLE_ENV=
 | `/unsubscribe` | Public | Where an email footer's unsubscribe link lands. Confirming is what opts you out — a GET must not, because mail gateways fetch it. `noindex`. |
 | `/account` | Signed in | Plan status, billing history, self-serve cancel, MCP connect code, sign out. |
 | `/dashboard` | Signed in **and** paying | The gated example. Replace with your product. |
+| `/files` | Signed in **and** paying | Upload, list, download, and delete files in R2 — see [Uploads (R2)](#uploads-r2). |
 | `/terms`, `/privacy` | Public | Templates written to match what this codebase actually does. **Have a lawyer read them.** |
 | `/design-system` | Dev only | Stripped from the production route table in `nuxt.config.ts`. |
 

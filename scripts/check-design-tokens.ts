@@ -155,7 +155,12 @@ const REFINEMENTS: Record<string, (match: string) => boolean> = {
   'icon-only button without aria-label': (match) =>
     /\s:?icon[=\s]/.test(match) &&
     !/\s:?label[=\s]/.test(match) &&
-    !/\saria-label[=\s]/.test(match),
+    // `:?` for the same reason the `alt` refinement above has it: a bound
+    // `:aria-label="..."` (needed whenever the label has to include, say,
+    // the filename it's deleting) is exactly as accessible as a literal
+    // one, and a checker that only recognized the static form would push
+    // people toward hardcoding text that should be dynamic.
+    !/\s:?aria-label[=\s]/.test(match),
   // An icon-only button is square and small by construction — the one control
   // that reliably lands under 44px on a phone.
   'icon-only button below the touch floor': (match) =>
