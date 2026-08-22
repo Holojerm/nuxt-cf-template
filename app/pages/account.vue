@@ -437,9 +437,20 @@ useSeo({
       </div>
 
       <template #footer>
-        <p class="text-sm text-muted">
-          Invoices and receipts come from Paddle, our merchant of record.
-        </p>
+        <div class="flex flex-col gap-2">
+          <p class="text-sm text-muted">
+            Invoices and receipts come from Paddle, our merchant of record.
+          </p>
+          <!-- Only when there is one to explain. A referral row's "Ends" date
+               sits after everything else the account holds, which reads as an
+               error unless the stacking rule is stated — and for a subscriber
+               it can be a year out. Same sentence as the share card, at the
+               moment the date is actually on screen. -->
+          <p v-if="billing.history.some((item) => item.referral)" class="text-sm text-muted">
+            Referral days stack after whatever you already have — if you're subscribed, they start
+            when your subscription ends.
+          </p>
+        </div>
       </template>
     </UCard>
 

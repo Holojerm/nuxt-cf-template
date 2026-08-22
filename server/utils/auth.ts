@@ -295,7 +295,11 @@ export async function establishSession(
   // deliberate, because free trial days are never worth an account creation.
   if (created && user.referredBy) {
     await afterSignIn('referral_welcome', async () => {
-      await grantRefereeWelcome(db, user)
+      // The salt is passed in rather than read inside, because the welcome
+      // ref is a salted hash of the MAILBOX — that is what makes the trial
+      // once-per-inbox instead of once-per-account, and therefore not renewable
+      // by deleting and re-registering (server/utils/referral.ts).
+      await grantRefereeWelcome(db, user, { salt: useRuntimeConfig(event).sessionPassword })
     })
   }
 

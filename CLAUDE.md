@@ -262,22 +262,48 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
   recipient one fresh mailbox, so whatever `REFERRAL_WELCOME_DAYS` is, that is
   the price of the product to anyone willing to rotate addresses — hence 7 days
   rather than a whole pass. The referrer is paid `REFERRAL_REWARD_DAYS` only
-  when the referee's **first Paddle transaction lands**, observed in the webhook.
-  Never move the referrer's trigger to signup, and never raise the welcome grant
-  to a full pass.
+  when the referee **first pays**, observed in the webhook. Never move the
+  referrer's trigger to signup, and never raise the welcome grant to a full pass.
+- **Three things hold that cost story up, and all three are load-bearing.**
+  Remove any one and farming the loop becomes cheaper than buying the product:
+  1. **The reward is revoked when the referee's purchase reverses**
+     (`revokeReferralRewardForReferee`, hooked to the adjustment path in the
+     webhook). Paddle's own `revokeForAdjustment` cannot reach it — it matches
+     Paddle ids and the reward's ref is `referral_<refereeId>`. Without the
+     clawback, buy-collect-refund was unlimited free days.
+  2. **The cap counts revoked rows.** Refund-churn burns budget instead of
+     recycling it; counting only live rows would make the ceiling unreachable.
+  3. **Self-referral is judged by mailbox, not address** (`isSameMailbox`), so
+     `me+1@gmail.com` on `me@gmail.com`'s code is refused.
+- **The welcome grant is once per MAILBOX, not once per account.** Its ref is
+  `welcome_<saltedHash(canonical mailbox)>`. Keyed on the user id it was
+  renewable forever by deleting the account and signing up again on the same
+  address. A missing session password refuses the grant rather than falling back
+  to an unsalted digest (which would put a reversible email hash in a table that
+  is exported) or to the user id (which reopens the hole).
 - **Idempotency is structural.** There is no ledger table and no "already paid"
   flag, because both need a read-then-write a webhook redelivery can race.
-  Each grant derives a deterministic ref from the account it concerns
-  (`referral_<refereeId>`, `welcome_<userId>` — `server/utils/paddle-refs.ts`)
-  and the unique index on `paddle_subscription_id` refuses the second write. So
-  the webhook hook is called on *every* qualifying event: a redelivery is a
-  repair path, not a second payout.
+  Each grant derives a deterministic ref (`server/utils/paddle-refs.ts`) and the
+  unique index on `paddle_subscription_id` refuses the second write. So the
+  webhook hook is called on *every* qualifying event: a redelivery is a repair
+  path, not a second payout. The cap is the one soft edge — it is read-then-write,
+  so the true ceiling is `REFERRAL_MAX_REWARDS` plus in-flight deliveries.
 - **The two prefixes are counted differently.** `REFERRAL_MAX_REWARDS` counts
   `referral_` rows only; a person's own `welcome_` row must not eat the budget
   they earn with. That is the whole reason they are not one prefix.
-- Rewards inherit `grantCompPasses`'s **live-subscriber refusal** — days that
-  stack past a renewal deliver nothing, so nothing is written and the skip is
-  logged. Self-referral and tombstoned referrers are refused the same way.
+- **A live subscriber IS paid** — unlike a comp, which still refuses. A comp is
+  an apology an operator chooses to send; a referral reward was earned by
+  somebody the product already promised. The days stack from the renewal date
+  and start when the subscription ends, and the share card says exactly that.
+  Refusing lost the reward permanently (the trigger never retries) and did it to
+  the referrers most worth having. Self-referral and tombstoned referrers are
+  still refused, and every skip is logged.
+- **"First paid" for a subscription is a status transition, not money** —
+  `previousStatus === null || 'trialing'`. `past_due → active` is a dunning
+  recovery, not a first payment. It is not keyed on `transaction.completed` with
+  a `subscription_id` because `applyPaddleEvent` classifies that as `ignored`
+  with no userId; see the reasoning at the webhook call site. The clawback is
+  the backstop for what a status cannot distinguish.
 - A `?ref=` code lands in the existing **first-touch** attribution cookie
   (`shared/utils/attribution.ts`), so a returning visitor cannot be re-credited
   to whoever sent them the most recent link. It becomes `users.referred_by` on

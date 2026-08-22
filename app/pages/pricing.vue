@@ -17,11 +17,14 @@
 // on the consumer hypothesis that a first-time visitor buys a thing more
 // readily than a commitment. Three properties keep it from being a mess:
 //
-//   1. It reorders with CSS `order` on the same grid. The DOM is identical in
-//      both variants, so the one frame of control that useFlagVariant always
-//      renders (see app/composables/useFlag.ts) swaps class strings and nothing
-//      else — no elements are created, destroyed, or moved by Vue, and the grid
-//      cells keep their size, so nothing below the fold shifts.
+//   1. It reorders with CSS `order` on the same grid, at `md:` and up only. The
+//      DOM is identical in both variants, so the one frame of control that
+//      useFlagVariant always renders (see app/composables/useFlag.ts) swaps
+//      class strings and nothing else — no elements are created, destroyed, or
+//      moved by Vue, and the grid cells keep their size. Below `md` the grid is
+//      one column, where the same swap would visibly reshuffle the stack a
+//      frame after paint, so ordering is deliberately desktop-only; see
+//      ORDER_CLASSES for what that means when reading the results.
 //   2. Exactly one plan is featured in either variant (DESIGN.md › Component
 //      behavior: one primary button per view). The badge follows the promotion
 //      rather than sitting on `plan.featured`, which is the control's answer.
@@ -75,8 +78,21 @@ const featuredId = computed(() => (passFirst.value ? 'pass' : CONTROL_FEATURED_I
 /**
  * Static class strings, because Tailwind scans source text — a computed
  * `order-${n}` produces no CSS at all and the grid silently stops reordering.
+ *
+ * `md:` and up ONLY, which is the honest limitation of doing this client-side.
+ * Below `md` the grid is a single column, so an `order` swap is a vertical
+ * rearrangement of the whole stack — and because the flag resolves in
+ * `onMounted`, a mobile visitor would watch three cards physically reshuffle
+ * one frame after the page painted, possibly under their thumb. On a
+ * three-column grid the same swap is a horizontal reorder of equally-sized
+ * cells: no reflow, no scroll-position change, nothing moves under the pointer.
+ *
+ * So the reorder is a desktop-layout experiment. Mobile still gets the other
+ * half of the variant — which plan is featured — because the badge and ring are
+ * paint, not layout, and swap invisibly. Read the results with that in mind:
+ * the arms differ in ordering only above `md`.
  */
-const ORDER_CLASSES = ['order-1', 'order-2', 'order-3'] as const
+const ORDER_CLASSES = ['md:order-1', 'md:order-2', 'md:order-3'] as const
 
 /** Where each plan sits in `pass-first`. Control keeps the array's own order. */
 const PASS_FIRST_ORDER: Record<string, number> = { pass: 0, monthly: 1, yearly: 2 }

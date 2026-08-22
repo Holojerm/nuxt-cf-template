@@ -137,6 +137,16 @@ export const AUDIT_ACTIONS = [
    * append-only table.
    */
   'referral.rewarded',
+  /**
+   * A referral reward was clawed back because the referee's purchase went
+   * backwards — refunded or charged back. `actorType: 'system'`.
+   *
+   * Its own action rather than a `reason` on the line above, because the two
+   * are asked about separately: "what has the loop given away" is a growth
+   * question and "what has it taken back" is a fraud question, and the second
+   * one is the one somebody reads at speed when a refund pattern shows up.
+   */
+  'referral.revoked',
 ] as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]

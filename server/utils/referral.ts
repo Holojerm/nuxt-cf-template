@@ -17,22 +17,39 @@
 //      cannot be re-credited to whoever sent them the most recent link.
 //   3. At account creation the code is resolved to a real, live, other account
 //      and frozen into `users.referred_by`. Unresolvable codes are dropped.
-//   4. The new account gets REFERRAL_WELCOME_DAYS immediately.
-//   5. The REFERRER gets REFERRAL_REWARD_DAYS the first time that account
-//      completes a Paddle transaction — never before.
+//   4. The new MAILBOX gets REFERRAL_WELCOME_DAYS, once, ever.
+//   5. The REFERRER gets REFERRAL_REWARD_DAYS the first time that account pays
+//      — and loses them again if that payment is refunded or charged back.
 //
-// Step 5 is the whole anti-fraud design, and step 4 is why it has to be. A
-// grant at signup costs its recipient one fresh mailbox; if the referrer were
-// paid then too, N throwaway accounts would be an unbounded supply of free
-// access to one person, and the product would be free to anyone patient. Tying
-// the referrer's side to a completed transaction means farming the program
-// costs strictly more than buying the product. The welcome grant is small for
-// the same arithmetic run on the other side — see REFERRAL_WELCOME_DAYS.
+// ── What each half costs an attacker, stated honestly ────────────────────────
+// This is the part that was wrong in the first version of this file, which
+// claimed farming the loop "costs strictly more than buying the product". It
+// did not, and the gap is worth writing down because it is the shape every
+// referral program gets attacked through.
 //
-// What this does NOT defend against: one person with two mailboxes paying once
-// to give themselves 30 extra days. That is a $12–18 purchase for $18 of
-// product, which is a bad trade for the attacker and a fine one for us, and the
-// per-referrer cap bounds it anyway.
+// The claim only holds if the money actually stays. It did not: a referee could
+// buy the $18 pass, collect the referrer's 30 days, and refund the same day —
+// so the true cost of 30 days was a refund request, repeated through `+1`,
+// `+2`, `+3` sub-addresses of one inbox. Three things close that, and all three
+// are needed:
+//
+//   * The reward is REVOKED when an adjustment revokes the referee's purchase
+//     (revokeReferralRewardForReferee below). Refunded money buys nothing.
+//   * The cap counts revoked rows too, so refund-churn burns budget rather than
+//     recycling it — see countReferralRewards.
+//   * Self-referral is judged by MAILBOX, not by address, so the `+tag` variant
+//     of the same inbox is refused outright (server/utils/users.ts ›
+//     isSameMailbox).
+//
+// What remains, accurately: two genuinely distinct mailboxes, one real
+// non-refunded purchase, for 30 days on one of them. That is $18 of revenue for
+// $18 of product — break-even, bounded by REFERRAL_MAX_REWARDS, and indexed in
+// the audit trail. Fine. Unbounded free access is what had to go.
+//
+// Step 4 gets the same treatment from the other side. A signup costs one fresh
+// mailbox, so the welcome ref is keyed on the MAILBOX rather than the account
+// id — otherwise deleting and re-registering the same address refills the trial
+// forever (server/utils/paddle-refs.ts › referralWelcomeRef).
 //
 // ── Idempotency is structural, not a flag ────────────────────────────────────
 // There is no ledger table and no "already paid?" column, because both would
@@ -41,7 +58,7 @@
 // concerns, and the unique index on `entitlements.paddle_subscription_id`
 // refuses the second one. Five redeliveries compute one ref and write one row.
 
-import { and, count, eq, isNull } from 'drizzle-orm'
+import { and, count, eq, inArray, isNull } from 'drizzle-orm'
 
 import {
   REFERRAL_CODE_MINT_ATTEMPTS,
@@ -52,21 +69,48 @@ import {
 import * as tables from '../db/schema'
 import type { User } from '../db/schema'
 import { writeAudit } from './audit'
-import { getBillingOverview, toSeconds } from './entitlements'
+import { ACTIVE_STATUSES, getBillingOverview, toSeconds } from './entitlements'
 import type { EntitlementDb } from './entitlements'
-import { REFERRAL_REF_PREFIX, referralRewardRef, referralWelcomeRef } from './paddle-refs'
+import { saltedHash } from './hash'
+import {
+  REFERRAL_REF_PREFIX,
+  isReferralRef,
+  referralRewardRef,
+  referralWelcomeRef,
+} from './paddle-refs'
 import { likePrefix } from './sql'
 import {
+  canonicalizeEmailForLimiting,
   findReferrerByCode,
   findUserById,
   generateReferralCode,
   isReferralCodeCollision,
+  isSameMailbox,
 } from './users'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /** The sentinel actor on an audit row nobody clicked. See server/utils/audit.ts. */
 const SYSTEM_ACTOR = 'system'
+
+/**
+ * Status written when a referral grant is taken back.
+ *
+ * Deliberately the same string as admin-grants.ts's COMP_REVOKED_STATUS, and
+ * deliberately a second declaration rather than an import: the two modules
+ * describe unrelated events (an admin withdrew an apology; a refund clawed back
+ * an earned reward) and should not be coupled, but the VALUE has to match,
+ * because /account's billing history renders one `revoked` badge for both and a
+ * second spelling would render a bare status word nobody has seen before.
+ * test/referral.test.ts asserts they are equal, which is this repo's idiom for
+ * two copies that must agree.
+ *
+ * Nothing has to learn this string to respect it: access is decided by the
+ * ACTIVE_STATUSES allowlist, so any status outside it stops granting by
+ * construction — findActiveEntitlement, deriveBillingState, requireSubscription
+ * and the MCP worker's raw SQL all fall in line for free.
+ */
+export const REFERRAL_REVOKED_STATUS = 'revoked'
 
 // ─── Granting ────────────────────────────────────────────────────────────────
 
@@ -78,8 +122,6 @@ export type ReferralGrantOutcome =
   | 'granted'
   /** This exact ref already exists — a redelivery, or a second purchase. */
   | 'already_granted'
-  /** Refused: a live subscription already grants access. See below. */
-  | 'active_subscription'
 
 export interface ReferralGrantPlan {
   ref: string
@@ -100,65 +142,85 @@ export interface ReferralGrantPlan {
  * written first; a row saying "rewarded" in front of a grant that was about to
  * be refused would be the opposite of a record.
  *
- * ── Why a live subscriber is refused ─────────────────────────────────────────
- * Inherited verbatim from grantCompPasses(), for the same reason spelled out
- * there: days stack from the CURRENT expiry, and for a monthly subscriber that
- * expiry is the renewal their next payment already buys. The customer gains
- * nothing, and meanwhile the granted row outranks the subscription in
- * findActiveEntitlement's `ORDER BY current_period_end DESC`. Telling somebody
- * "you earned 30 days" while handing them zero is worse than telling them
- * nothing, so nothing is written and the skip is logged.
+ * ── A live subscriber IS paid, unlike a comp ─────────────────────────────────
+ * This used to refuse whenever a subscription was already granting access,
+ * copied from grantCompPasses(). It was the wrong rule in the wrong place, and
+ * the reason is that a comp and an earned reward differ in who is owed what.
  *
- * `accessSubscriptionIds`, not `cancellableSubscriptionIds`: during dunning
- * access is genuinely paused, so referral days are genuinely days.
+ * A comp is an apology an operator chooses to send, so refusing it and naming a
+ * better instrument (a Paddle credit) is good support. A referral reward has
+ * already been EARNED, by somebody who read "you get 30 days when they pay" on
+ * their own account page and then went and did it. Refusing costs them the
+ * reward permanently — the trigger is a one-time transaction, so nothing ever
+ * retries — and it fails precisely the referrers most worth having, since the
+ * people who recommend a product are overwhelmingly the ones already paying for
+ * it. Silently not paying your best customers is not a fraud control.
+ *
+ * So the days are written, stacked from the running expiry, which for a
+ * subscriber is their renewal date: the reward begins when the subscription
+ * ends. That is honest and it is what the share card now says. The old worry —
+ * that the granted row outranks the subscription in findActiveEntitlement's
+ * `ORDER BY current_period_end DESC` and makes /account misdescribe the plan —
+ * was fixed independently in entitlement-view.ts, which pins the description to
+ * a live `sub_` row whatever the dates say.
+ *
+ * The stacking base is `overview.active`, the longest-running granting row,
+ * rather than the subscription specifically: if a pass runs past the renewal,
+ * stacking on the renewal would throw away days the customer already holds.
+ * A `sub_` row with no `current_period_end` (Paddle always sends one; a null
+ * would mean a malformed event) has nothing to anchor on and starts today.
  */
 async function planReferralGrant(
   db: EntitlementDb,
   params: { userId: string; ref: string; days: number; productKey?: string; now?: Date },
-): Promise<{ ok: true; plan: ReferralGrantPlan } | { ok: false; blockedBy: string }> {
+): Promise<ReferralGrantPlan> {
   const productKey = params.productKey ?? 'default'
   const now = params.now ?? new Date()
 
-  // One read answers both questions: is a subscription already granting access
-  // (refuse), and what is currently granting access (the stacking base). It
-  // scans the whole history rather than trusting findActiveEntitlement's single
-  // row, which an earlier grant stacked past a renewal would hide.
   const overview = await getBillingOverview(db, params.userId, productKey)
-
-  const blockedBy = overview.accessSubscriptionIds[0]
-  if (blockedBy) return { ok: false, blockedBy }
 
   const running = overview.active?.currentPeriodEnd
   const stackedOn = running && running > now ? running : null
   const base = stackedOn ?? now
 
   return {
-    ok: true,
-    plan: {
-      ref: params.ref,
-      days: params.days,
-      endsAt: toSeconds(new Date(base.getTime() + params.days * DAY_MS)),
-      stackedOn,
-      productKey,
-      userId: params.userId,
-    },
+    ref: params.ref,
+    days: params.days,
+    endsAt: toSeconds(new Date(base.getTime() + params.days * DAY_MS)),
+    stackedOn,
+    productKey,
+    userId: params.userId,
   }
 }
 
 /**
  * Write one planned grant. Idempotent on the ref, by the unique index.
  *
- * `granted` is reported the way grantPass() reports it: compare what came back
- * from the upsert against what this call computed. On a redelivery the stored
- * date is whatever the first delivery wrote, the recomputed one has stacked on
- * top of it, and the two differ — so the flag is derived from the database's
- * answer rather than from a prior read that a race could have invalidated.
+ * ── Why DO NOTHING rather than grantPass's DO UPDATE ─────────────────────────
+ * grantPass() infers "did this insert land?" by comparing the date it computed
+ * against the date that came back from an upsert: on a redelivery the stored
+ * value is whatever the first delivery wrote and the recomputed one has stacked
+ * on top of it, so they differ. That inference is sound for a purchased pass
+ * and NOT sound here, and the difference is the welcome grant.
+ *
+ * A welcome grant lands on an account with no entitlements, so its date is
+ * always `now + 7 days` — recomputed identically on every attempt. Two attempts
+ * inside the same second therefore produce the same truncated timestamp, the
+ * comparison says "matches", and a conflict that wrote nothing is reported as a
+ * fresh grant. The row stays correct (the index still refuses the duplicate),
+ * but the RETURN VALUE lies, and it lies in the direction of "we just gave this
+ * person a trial" — which is what the delete-and-re-register test caught.
+ *
+ * `DO NOTHING … RETURNING` has no inference in it: SQLite returns a row when it
+ * inserted one and no rows when it skipped, so `granted` is the database's own
+ * answer. The only thing given up is the `updated_at` bump on a redelivery,
+ * which recorded nothing anybody reads.
  */
 async function writeReferralGrant(
   db: EntitlementDb,
   plan: ReferralGrantPlan,
 ): Promise<{ granted: boolean; endsAt: Date }> {
-  const stored = await db
+  const inserted = await db
     .insert(tables.entitlements)
     .values({
       userId: plan.userId,
@@ -167,14 +229,37 @@ async function writeReferralGrant(
       status: 'active',
       currentPeriodEnd: plan.endsAt,
     })
-    .onConflictDoUpdate({
-      target: tables.entitlements.paddleSubscriptionId,
-      set: { updatedAt: new Date() },
-    })
+    .onConflictDoNothing({ target: tables.entitlements.paddleSubscriptionId })
     .returning({ currentPeriodEnd: tables.entitlements.currentPeriodEnd })
 
-  const endsAt = stored[0]?.currentPeriodEnd ?? plan.endsAt
-  return { granted: endsAt.getTime() === plan.endsAt.getTime(), endsAt }
+  const row = inserted[0]
+  if (row?.currentPeriodEnd) return { granted: true, endsAt: row.currentPeriodEnd }
+
+  // Skipped: this ref already exists. Report the window that is actually in
+  // force rather than the one this call would have written, so a caller never
+  // tells somebody about days they do not have.
+  const existing = await db.query.entitlements.findFirst({
+    where: eq(tables.entitlements.paddleSubscriptionId, plan.ref),
+    columns: { currentPeriodEnd: true },
+  })
+  return { granted: false, endsAt: existing?.currentPeriodEnd ?? plan.endsAt }
+}
+
+/**
+ * Has this exact grant already been made?
+ *
+ * A point lookup on the unique index, and its only job is to keep the audit row
+ * honest: audit-before-act means a payout that the index was always going to
+ * refuse would otherwise leave a `referral.rewarded` row behind a grant that
+ * never happened. The index is still the real guard — this read can be raced,
+ * and losing that race costs one spurious audit row and no extra days.
+ */
+async function referralGrantExists(db: EntitlementDb, ref: string): Promise<boolean> {
+  const row = await db.query.entitlements.findFirst({
+    where: eq(tables.entitlements.paddleSubscriptionId, ref),
+    columns: { id: true },
+  })
+  return Boolean(row)
 }
 
 /** One structured line per decision. Skips are the ones worth reading. */
@@ -190,10 +275,15 @@ export type ReferralOutcome =
   | 'no_referrer'
   /** `referred_by` names a code that no live account holds — deleted, or junk. */
   | 'referrer_unresolved'
-  /** The referrer and the referee are the same account. */
+  /** Referrer and referee are the same account, or the same mailbox. */
   | 'self_referral'
   /** This referrer has earned REFERRAL_MAX_REWARDS already. */
   | 'capped'
+  /**
+   * No session password, so no salt for the welcome ref. Refused rather than
+   * degraded — see grantRefereeWelcome for why an unsalted ref is not an option.
+   */
+  | 'unconfigured'
   /** Something threw. Logged, swallowed, and safe to retry on redelivery. */
   | 'error'
 
@@ -254,12 +344,41 @@ async function payReferral(
 }
 
 /**
- * The referee's arrival bonus — REFERRAL_WELCOME_DAYS, at account creation.
+ * The salt-derived, mailbox-scoped welcome ref for an address.
+ *
+ * Exported so test/referral.test.ts can assert the once-per-mailbox property
+ * directly rather than inferring it from a row count, and so a support script
+ * can answer "has this address already had its trial?" without guessing.
+ */
+export async function welcomeRefForEmail(email: string, salt: string): Promise<string | null> {
+  if (!salt) return null
+  const hash = await saltedHash(canonicalizeEmailForLimiting(email), salt)
+  return hash ? referralWelcomeRef(hash) : null
+}
+
+/**
+ * The referee's arrival bonus — REFERRAL_WELCOME_DAYS, once per MAILBOX.
  *
  * Called from establishSession() inside afterSignIn(), so it runs after the
  * session cookie is sealed and cannot fail a sign-in. It never throws anyway;
  * both guards exist because the cost of getting this wrong is that somebody's
  * account creation 500s over a free trial they did not ask for.
+ *
+ * ── Once per mailbox, not once per account ───────────────────────────────────
+ * The ref is keyed on a salted hash of the canonical mailbox rather than on
+ * `user.id`, because a user id is renewable and an inbox is not: deleting an
+ * account frees its address, and signing up again mints a fresh id — so an
+ * id-keyed ref hands out the trial again, and again, forever. Two mailboxes
+ * taking turns would be permanent free access. See referralWelcomeRef().
+ *
+ * ── Why a missing salt refuses rather than degrades ──────────────────────────
+ * Falling back to an unsalted digest would work, and would put a plain
+ * SHA-256 of somebody's email address into a table that is rendered in the
+ * admin console and included in "download your data" — reversible against any
+ * mailing list. Falling back to the user id would silently reopen the hole this
+ * function exists to close. Neither is worth a free trial, and `sessionPassword`
+ * is mandatory for sessions to work at all, so nothing that can reach this line
+ * in a working deployment will ever hit it.
  *
  * Re-resolves the referrer rather than trusting `users.referred_by` to still
  * mean something. It was resolved moments ago on the same request, so this is
@@ -270,44 +389,51 @@ async function payReferral(
 export async function grantRefereeWelcome(
   db: EntitlementDb,
   user: Pick<User, 'id' | 'email' | 'referredBy'>,
-  options: { productKey?: string; now?: Date } = {},
+  options: { salt: string; productKey?: string; now?: Date },
 ): Promise<ReferralResult> {
   try {
     if (!user.referredBy) return { outcome: 'no_referrer' }
+
+    const ref = await welcomeRefForEmail(user.email, options.salt)
+    if (!ref) {
+      logReferral('referral_welcome_skipped', { reason: 'unconfigured', userId: user.id })
+      return { outcome: 'unconfigured' }
+    }
 
     // No `selfEmail` here, deliberately. That argument makes findReferrerByCode
     // fold "it's you" into "no such referrer", which is the right answer at
     // provisioning (there is no id yet to compare) and the wrong one here: the
     // two outcomes want different log lines, and "unresolved" sent somebody
-    // looking for a deleted account that was never involved. The id comparison
-    // below is the real gate, and it is exact.
+    // looking for a deleted account that was never involved. The checks below
+    // are the real gate.
+    // Before anything else that would be recorded: this mailbox may already
+    // have spent its trial on an account that has since been deleted, and the
+    // audit row must not claim otherwise.
+    if (await referralGrantExists(db, ref)) return { outcome: 'already_granted' }
+
     const referrer = await findReferrerByCode(db, user.referredBy)
     if (!referrer) {
       logReferral('referral_welcome_skipped', { reason: 'referrer_unresolved', userId: user.id })
       return { outcome: 'referrer_unresolved' }
     }
-    if (referrer.id === user.id) {
+    // Two accounts, one inbox — `me+1@` on `me@`'s code. Provisioning refuses
+    // this before `referred_by` is ever written, so reaching it means a row
+    // predating that fix or a hand-edited column. Cheap to re-assert at the
+    // moment access is handed out, which is the only moment that matters.
+    if (referrer.id === user.id || isSameMailbox(referrer.email, user.email)) {
       logReferral('referral_welcome_skipped', { reason: 'self_referral', userId: user.id })
       return { outcome: 'self_referral' }
     }
 
-    const planned = await planReferralGrant(db, {
+    const plan = await planReferralGrant(db, {
       userId: user.id,
-      ref: referralWelcomeRef(user.id),
+      ref,
       days: REFERRAL_WELCOME_DAYS,
       productKey: options.productKey,
       now: options.now,
     })
-    if (!planned.ok) {
-      logReferral('referral_welcome_skipped', {
-        reason: 'active_subscription',
-        userId: user.id,
-        blockedBy: planned.blockedBy,
-      })
-      return { outcome: 'active_subscription', referrerId: referrer.id }
-    }
 
-    return await payReferral(db, planned.plan, {
+    return await payReferral(db, plan, {
       side: 'referee',
       refereeId: user.id,
       referrerId: referrer.id,
@@ -332,6 +458,11 @@ export async function grantRefereeWelcome(
  * one. "First purchase" is enforced by the deterministic ref, not by the
  * caller's ability to recognise a first purchase — so a redelivery is a repair
  * path rather than a double payout, and a customer's second pass pays nothing.
+ *
+ * What "paid" can and cannot mean here is the caller's problem and is written
+ * out at the call site (server/routes/paddle/webhook.post.ts). The backstop for
+ * everything a status transition cannot distinguish — a refunded pass, a
+ * charged-back invoice — is revokeReferralRewardForReferee() below.
  */
 export async function rewardReferrerForFirstPurchase(
   db: EntitlementDb,
@@ -352,21 +483,20 @@ export async function rewardReferrerForFirstPurchase(
       logReferral('referral_reward_skipped', { reason: 'referrer_unresolved', refereeId })
       return { outcome: 'referrer_unresolved' }
     }
-    if (referrer.id === refereeId) {
+    // Id first, then mailbox: `me+1@gmail.com` buying a pass on `me@gmail.com`'s
+    // code is two accounts, one inbox, and one person paying themselves 30 days
+    // for the price of a refundable purchase. Provisioning refuses it now, so
+    // this catches rows written before that fix and anything hand-edited.
+    if (referrer.id === refereeId || isSameMailbox(referrer.email, referee.email)) {
       logReferral('referral_reward_skipped', { reason: 'self_referral', refereeId })
       return { outcome: 'self_referral' }
     }
 
     const ref = referralRewardRef(refereeId)
 
-    // Checked up front so the audit row below is honest about what happened,
-    // rather than recording a payout the unique index was always going to
-    // refuse. The index is still the real guard — this read can be raced.
-    const existing = await db.query.entitlements.findFirst({
-      where: eq(tables.entitlements.paddleSubscriptionId, ref),
-      columns: { id: true },
-    })
-    if (existing) return { outcome: 'already_granted', referrerId: referrer.id }
+    if (await referralGrantExists(db, ref)) {
+      return { outcome: 'already_granted', referrerId: referrer.id }
+    }
 
     const earned = await countReferralRewards(db, referrer.id)
     if (earned >= REFERRAL_MAX_REWARDS) {
@@ -381,24 +511,18 @@ export async function rewardReferrerForFirstPurchase(
       return { outcome: 'capped', referrerId: referrer.id }
     }
 
-    const planned = await planReferralGrant(db, {
+    // Paid whether or not they are already subscribed — the days stack from
+    // their renewal date and begin when the subscription ends. See
+    // planReferralGrant for why this is the opposite call from a comp's.
+    const plan = await planReferralGrant(db, {
       userId: referrer.id,
       ref,
       days: REFERRAL_REWARD_DAYS,
       productKey: options.productKey,
       now: options.now,
     })
-    if (!planned.ok) {
-      logReferral('referral_reward_skipped', {
-        reason: 'active_subscription',
-        refereeId,
-        referrerId: referrer.id,
-        blockedBy: planned.blockedBy,
-      })
-      return { outcome: 'active_subscription', referrerId: referrer.id }
-    }
 
-    return await payReferral(db, planned.plan, {
+    return await payReferral(db, plan, {
       side: 'referrer',
       refereeId,
       referrerId: referrer.id,
@@ -406,6 +530,133 @@ export async function rewardReferrerForFirstPurchase(
   } catch (error) {
     logReferral('referral_reward_failed', { refereeId, error: String(error) })
     return { outcome: 'error' }
+  }
+}
+
+// ─── Taking it back ──────────────────────────────────────────────────────────
+
+export type ReferralRevokeOutcome =
+  /** The row was granting access and no longer is. */
+  | 'revoked'
+  /** No reward exists for this referee. The common answer, and not a problem. */
+  | 'not_found'
+  /** Already ended — revoked earlier, or a second adjustment for one purchase. */
+  | 'already_revoked'
+  /** Its 30 days were fully consumed before the money went back. See below. */
+  | 'already_expired'
+  /** Something threw. Logged, swallowed; Paddle redelivers adjustments. */
+  | 'error'
+
+export interface ReferralRevokeResult {
+  outcome: ReferralRevokeOutcome
+  ref: string
+  /** The account the days were taken from, when any were. */
+  referrerId?: string
+}
+
+/**
+ * Claw back the reward paid for a referee whose purchase went backwards.
+ *
+ * ── The hole this closes ─────────────────────────────────────────────────────
+ * revokeForAdjustment() matches an adjustment to an entitlement by Paddle's own
+ * transaction and subscription ids. The referrer's reward carries neither — its
+ * ref is `referral_<refereeId>`, which Paddle has never heard of — so no refund
+ * or chargeback could reach it, and the days survived the money going back.
+ *
+ * That made the loop's cost story false. A referee could buy the $18 pass,
+ * hand the referrer 30 days, and refund the same day; through `+1`, `+2`, `+3`
+ * sub-addresses of one inbox that is unlimited free access for a few refund
+ * requests. (The sub-address half is refused separately now, by mailbox — see
+ * isSameMailbox — but the refund half had to close on its own, because two
+ * genuinely different people can run the same trick with two real inboxes.)
+ *
+ * ── Only ever a referral row ─────────────────────────────────────────────────
+ * The ref is constructed here, so it cannot be anything else — and it is
+ * asserted anyway, the way grantCompPasses() asserts its prefix. A `sub_` or
+ * `txn_` row is money Paddle owns: writing a local status onto one is either
+ * overwritten by the next webhook or takes away access somebody paid for.
+ * Paddle's own revocation path (revokeForAdjustment) handles those, and this
+ * runs beside it, never over it.
+ *
+ * ── An expired reward is left completely alone ───────────────────────────────
+ * Same rule as revokeCompPass(), and it matters more here. Nothing flips a
+ * referral row's status when its window closes, so a reward from eight months
+ * ago still reads `status: 'active'` with a date in the past. Setting
+ * `current_period_end = now` on that would drag a past date FORWARD, rewriting
+ * history to say the referrer had access for longer than they did.
+ *
+ * It also gives the policy a sensible edge for free: a chargeback on month
+ * seven of a subscription finds a reward whose 30 days were consumed long ago
+ * and writes nothing, so a referrer is not punished for how their referee's
+ * relationship ended half a year later. Only a clawback that arrives while the
+ * days are still running takes anything away — which is exactly the refund-
+ * churn case, and not the honest-referral one.
+ */
+export async function revokeReferralRewardForReferee(
+  db: EntitlementDb,
+  refereeId: string,
+  options: { now?: Date } = {},
+): Promise<ReferralRevokeResult> {
+  const ref = referralRewardRef(refereeId)
+  try {
+    const now = options.now ?? new Date()
+
+    // Cheap assertion, catastrophic omission — see the note above.
+    if (!isReferralRef(ref)) return { outcome: 'not_found', ref }
+
+    const row = await db.query.entitlements.findFirst({
+      where: eq(tables.entitlements.paddleSubscriptionId, ref),
+    })
+    if (!row) return { outcome: 'not_found', ref }
+
+    // Status before window, so a second adjustment reports the more useful of
+    // two true things ("somebody already took this back", not "it expired").
+    if (!ACTIVE_STATUSES.includes(row.status)) {
+      return { outcome: 'already_revoked', ref, referrerId: row.userId }
+    }
+    if (row.currentPeriodEnd && row.currentPeriodEnd <= now) {
+      return { outcome: 'already_expired', ref, referrerId: row.userId }
+    }
+
+    await writeAudit(db, {
+      actorUserId: SYSTEM_ACTOR,
+      actorType: 'system',
+      action: 'referral.revoked',
+      targetType: 'user',
+      targetId: row.userId,
+      metadata: { ref, refereeId, referrerId: row.userId, reason: 'referee_purchase_reversed' },
+    })
+
+    const revoked = await db
+      .update(tables.entitlements)
+      .set({
+        status: REFERRAL_REVOKED_STATUS,
+        // BOTH, exactly as revokeForAdjustment and revokeCompPass do. The
+        // status is what the app's allowlist reads and the date is what
+        // anything checking only the window reads (the MCP worker's raw SQL);
+        // the two must never disagree about whether somebody has access.
+        currentPeriodEnd: now,
+        updatedAt: new Date(),
+      })
+      // Guards repeated in the WHERE rather than trusted from the read above:
+      // two adjustment deliveries in flight both pass the read, only one
+      // matches here, and the loser writes nothing instead of stamping a
+      // second, later expiry over the first.
+      .where(
+        and(
+          eq(tables.entitlements.paddleSubscriptionId, ref),
+          inArray(tables.entitlements.status, ACTIVE_STATUSES),
+        ),
+      )
+      .returning({ id: tables.entitlements.id })
+
+    if (!revoked.length) return { outcome: 'already_revoked', ref, referrerId: row.userId }
+
+    logReferral('referral_reward_revoked', { refereeId, referrerId: row.userId, ref })
+    return { outcome: 'revoked', ref, referrerId: row.userId }
+  } catch (error) {
+    logReferral('referral_revoke_failed', { refereeId, error: String(error) })
+    return { outcome: 'error', ref }
   }
 }
 
@@ -418,9 +669,20 @@ export async function rewardReferrerForFirstPurchase(
  * arrival and must not eat into the budget it earns with — which is the entire
  * reason the two grants carry different prefixes.
  *
- * Revoked and refunded reward rows still count. The cap bounds how many payouts
- * an account can trigger, not how many are currently granting access; making it
- * the latter would let a refund cycle reset the budget.
+ * ── Revoked rows still count, and that is the anti-churn property ───────────
+ * The cap bounds how many payouts an account can TRIGGER, not how many are
+ * currently granting access. Counting only live rows would mean a refund both
+ * clawed the days back and refunded the budget slot, so an attacker could cycle
+ * buy → collect → refund indefinitely and never approach the ceiling. Spent is
+ * spent: a reward that was granted and taken away has still used one of the ten.
+ *
+ * ── The count is read-then-write, and the bound is soft by a fan-out ─────────
+ * Two referees' first purchases delivered concurrently at nine both read nine
+ * and both write, so the true ceiling is REFERRAL_MAX_REWARDS plus however many
+ * webhook deliveries are in flight at once — a handful, not unbounded. Accepted
+ * rather than fixed: closing it needs a transaction or a counter column, and
+ * the cap is a blast radius rather than an accounting figure. The audit trail
+ * is what an investigation reads, and it records every payout regardless.
  */
 export async function countReferralRewards(db: EntitlementDb, userId: string): Promise<number> {
   const [row] = await db

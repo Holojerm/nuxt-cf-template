@@ -65,7 +65,7 @@ export function compRef(): string {
 /** The referrer's reward, one per referee they brought: `referral_<refereeId>`. */
 export const REFERRAL_REF_PREFIX = 'referral_'
 
-/** The referee's arrival bonus, one per account: `welcome_<userId>`. */
+/** The referee's arrival bonus, one per MAILBOX: `welcome_<salted mailbox hash>`. */
 export const REFERRAL_WELCOME_REF_PREFIX = 'welcome_'
 
 /**
@@ -77,9 +77,30 @@ export function referralRewardRef(refereeId: string): string {
   return `${REFERRAL_REF_PREFIX}${refereeId}`
 }
 
-/** The arrival bonus for one account. One per account, forever. */
-export function referralWelcomeRef(userId: string): string {
-  return `${REFERRAL_WELCOME_REF_PREFIX}${userId}`
+/**
+ * The arrival bonus for one MAILBOX. One per mailbox, forever.
+ *
+ * ── Why not the user id ──────────────────────────────────────────────────────
+ * Because a user id is renewable and a mailbox is not. Deleting an account
+ * anonymizes the row and frees the address (server/utils/account.ts), so
+ * signing up again on the same address takes the INSERT branch and mints a
+ * fresh id — and a welcome ref keyed on that id is a fresh 7 days, every time,
+ * forever. Two mailboxes taking turns is then permanent free access, which is
+ * precisely the arithmetic REFERRAL_WELCOME_DAYS is sized against.
+ *
+ * The argument is a SALTED HASH of the canonical mailbox, never the address
+ * itself: this string lands in `entitlements.paddle_subscription_id`, which is
+ * rendered in the admin console and exported in "download your data". An email
+ * frozen there would outlive the account it belongs to. Salted rather than bare
+ * SHA-256 for the reason server/utils/hash.ts gives — an unsalted digest of an
+ * address is rainbow-tableable against a mailing list.
+ *
+ * Note this deliberately survives deletion. That is the point, and it is worth
+ * stating plainly: a deleted account's trial is spent, and coming back does not
+ * refill it.
+ */
+export function referralWelcomeRef(mailboxHash: string): string {
+  return `${REFERRAL_WELCOME_REF_PREFIX}${mailboxHash}`
 }
 
 /** Is this row access somebody earned through the referral loop? Labels history. */

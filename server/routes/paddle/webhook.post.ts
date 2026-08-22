@@ -52,23 +52,62 @@ export default defineEventHandler(async (event) => {
   })
 
   // ── The referrer's half of the referral loop ───────────────────────────────
-  // This handler is the ONLY place in the app that observes money actually
-  // arriving, which is why the referrer is paid from here and not at signup:
-  // a reward triggered by account creation costs an attacker one mailbox, and
-  // one triggered by a completed transaction costs more than the product does.
+  // This handler is the closest the app gets to observing money arrive, which
+  // is why the referrer is paid from here and not at signup: a reward triggered
+  // by account creation costs an attacker one fresh mailbox.
   //
-  // Called on every qualifying event rather than on a detected "first"
-  // purchase — the reward's ref is derived from the referee's id, so the unique
-  // index makes a redelivery a repair rather than a second payout, and a
-  // customer's second pass pays nothing. Same contract as notifyBillingOutcome
-  // above: awaited so the isolate cannot be torn down mid-write, and it never
-  // throws, because a 500 here makes Paddle replay a money event.
+  // Called on every qualifying event rather than on a detected "first" purchase
+  // — the reward's ref is derived from the referee's id, so the unique index
+  // makes a redelivery a repair rather than a second payout, and a customer's
+  // second pass pays nothing. Same contract as notifyBillingOutcome above:
+  // awaited so the isolate cannot be torn down mid-write, and it never throws,
+  // because a 500 here makes Paddle replay a money event.
   //
-  // `trialing` is excluded deliberately. A trial is not a payment; when it
-  // converts, Paddle sends a `subscription.updated` carrying `active` and the
-  // reward lands then.
-  if (outcome.kind === 'pass' || (outcome.kind === 'subscription' && outcome.status === 'active')) {
+  // ── What "first paid" actually means, and what it does not ─────────────────
+  // For a pass, `kind: 'pass'` IS a `transaction.completed` — money landed.
+  //
+  // For a subscription it is a STATUS TRANSITION, not a payment: the first time
+  // this app sees the subscription (`previousStatus === null`) or the moment a
+  // trial converts. Those two are the only transitions that can be a first
+  // payment. Everything else is excluded on purpose — `past_due → active` is a
+  // dunning recovery on a subscription that already paid, `paused → active` is
+  // a resume, and `trialing` itself is not money.
+  //
+  // It is deliberately NOT keyed on `transaction.completed` carrying a
+  // `subscription_id`, which would be the truer signal. applyPaddleEvent
+  // classifies that as `ignored: 'subscription_transaction'` and returns no
+  // userId, so using it would mean widening that contract AND relying on Paddle
+  // to echo the checkout's `custom_data` onto subscription transactions — which
+  // is not something this template can verify. Getting that wrong pays no
+  // subscription referrer at all, silently, which is worse than the residue
+  // below.
+  //
+  // The residue: a subscription created `active` under manual collection before
+  // its invoice is paid, or one carrying a 100% discount, pays a referrer for
+  // a sale worth nothing. Neither is distinguishable from a status, and neither
+  // survives contact with the clawback — an unpaid invoice ends in a
+  // cancellation and a discounted one that is refunded revokes below.
+  const firstSubscriptionPayment =
+    outcome.kind === 'subscription' &&
+    outcome.status === 'active' &&
+    (outcome.previousStatus === null || outcome.previousStatus === 'trialing')
+
+  if (outcome.kind === 'pass' || firstSubscriptionPayment) {
     await rewardReferrerForFirstPurchase(db, outcome.userId)
+  }
+
+  // ── …and the clawback, which is what makes the above safe ──────────────────
+  // revokeForAdjustment() above has already ended the referee's own row, but it
+  // matches on Paddle's transaction and subscription ids and the referrer's
+  // reward carries neither — so without this, refunded money still bought 30
+  // days for somebody. `result.userId` is the referee whose purchase reversed.
+  //
+  // Same never-throws contract; a reward whose clawback failed is repaired by
+  // the next adjustment delivery.
+  if (outcome.kind === 'adjustment' && outcome.result.outcome === 'revoked') {
+    if (outcome.result.userId) {
+      await revokeReferralRewardForReferee(db, outcome.result.userId)
+    }
   }
 
   if (outcome.kind === 'subscription') {

@@ -34,13 +34,20 @@ import {
   referralShareUrl,
 } from '../shared/utils/referral'
 import {
+  REFERRAL_REVOKED_STATUS,
   countReferralRewards,
   ensureReferralCode,
   getReferralSummary,
   grantRefereeWelcome,
+  revokeReferralRewardForReferee,
   rewardReferrerForFirstPurchase,
+  welcomeRefForEmail,
 } from '../server/utils/referral'
-import { PASS_DAYS, findActiveEntitlement } from '../server/utils/entitlements'
+import { COMP_REVOKED_STATUS } from '../server/utils/admin-grants'
+import { deleteAccount } from '../server/utils/account'
+import { revokeForAdjustment } from '../server/utils/entitlements'
+import { PASS_DAYS, findActiveEntitlement, grantPass } from '../server/utils/entitlements'
+import { buildEntitlementView } from '../server/utils/entitlement-view'
 import { isReferralRef, referralRewardRef, referralWelcomeRef } from '../server/utils/paddle-refs'
 import { generateReferralCode, upsertOAuthUser } from '../server/utils/users'
 
@@ -48,6 +55,16 @@ const db = drizzle(env.DB, { schema })
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const REFERRER_CODE = 'AB2CD3EF'
+
+/** Stands in for `sessionPassword` — the welcome ref is a salted mailbox hash. */
+const SALT = 'test-session-password'
+
+/** The referee as grantRefereeWelcome takes it: id, address, and the claim. */
+const REFEREE = {
+  id: 'referee',
+  email: 'referee@example.com',
+  referredBy: REFERRER_CODE,
+} as const
 
 /** D1 timestamp columns are epoch seconds — expectations round the same way. */
 function atSecond(ms: number): number {
@@ -228,7 +245,7 @@ describe('a magic link opened on another device', () => {
 
     // The welcome grant follows from that column alone, so the referee gets
     // their days on a device that never saw the link they arrived through.
-    const welcome = await grantRefereeWelcome(db, user)
+    const welcome = await grantRefereeWelcome(db, user, { salt: SALT })
     expect(welcome.outcome).toBe('granted')
     expect(welcome.days).toBe(REFERRAL_WELCOME_DAYS)
   })
@@ -289,32 +306,22 @@ describe('grantRefereeWelcome', () => {
   })
 
   it('grants the welcome days to the referee, not the referrer', async () => {
-    const result = await grantRefereeWelcome(db, {
-      id: 'referee',
-      email: 'referee@example.com',
-      referredBy: REFERRER_CODE,
-    })
+    const result = await grantRefereeWelcome(db, REFEREE, { salt: SALT })
 
     expect(result.outcome).toBe('granted')
     expect(result.days).toBe(REFERRAL_WELCOME_DAYS)
 
     const granting = await findActiveEntitlement(db, 'referee')
-    expect(granting?.paddleSubscriptionId).toBe(referralWelcomeRef('referee'))
+    expect(granting?.paddleSubscriptionId).toBe(
+      await welcomeRefForEmail('referee@example.com', SALT),
+    )
     // The referrer is paid on the referee's first PURCHASE and not before.
     expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
   })
 
   it('grants once per account, however many times it is called', async () => {
-    const first = await grantRefereeWelcome(db, {
-      id: 'referee',
-      email: 'referee@example.com',
-      referredBy: REFERRER_CODE,
-    })
-    const second = await grantRefereeWelcome(db, {
-      id: 'referee',
-      email: 'referee@example.com',
-      referredBy: REFERRER_CODE,
-    })
+    const first = await grantRefereeWelcome(db, REFEREE, { salt: SALT })
+    const second = await grantRefereeWelcome(db, REFEREE, { salt: SALT })
 
     expect(first.outcome).toBe('granted')
     expect(second.outcome).toBe('already_granted')
@@ -328,33 +335,33 @@ describe('grantRefereeWelcome', () => {
 
   it('does nothing for an account nobody referred', async () => {
     await makeUser('organic')
-    const result = await grantRefereeWelcome(db, {
-      id: 'organic',
-      email: 'organic@example.com',
-      referredBy: null,
-    })
+    const result = await grantRefereeWelcome(
+      db,
+      { id: 'organic', email: 'organic@example.com', referredBy: null },
+      { salt: SALT },
+    )
     expect(result.outcome).toBe('no_referrer')
     expect(await findActiveEntitlement(db, 'organic')).toBeNull()
   })
 
   it('refuses a code that no live account holds', async () => {
     await makeUser('orphan', { referredBy: 'ZZ9YY8XX' })
-    const result = await grantRefereeWelcome(db, {
-      id: 'orphan',
-      email: 'orphan@example.com',
-      referredBy: 'ZZ9YY8XX',
-    })
+    const result = await grantRefereeWelcome(
+      db,
+      { id: 'orphan', email: 'orphan@example.com', referredBy: 'ZZ9YY8XX' },
+      { salt: SALT },
+    )
     expect(result.outcome).toBe('referrer_unresolved')
     expect(await findActiveEntitlement(db, 'orphan')).toBeNull()
   })
 
   it('refuses an account that names its own code', async () => {
     await makeUser('narcissus', { referralCode: 'TT2VV3WW', referredBy: 'TT2VV3WW' })
-    const result = await grantRefereeWelcome(db, {
-      id: 'narcissus',
-      email: 'narcissus@example.com',
-      referredBy: 'TT2VV3WW',
-    })
+    const result = await grantRefereeWelcome(
+      db,
+      { id: 'narcissus', email: 'narcissus@example.com', referredBy: 'TT2VV3WW' },
+      { salt: SALT },
+    )
     expect(result.outcome).toBe('self_referral')
     expect(await findActiveEntitlement(db, 'narcissus')).toBeNull()
   })
@@ -454,11 +461,20 @@ describe('rewardReferrerForFirstPurchase', () => {
     // person's own arrival; only `referral_` rows are referrals they earned.
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
-      paddleSubscriptionId: referralWelcomeRef('referrer'),
+      paddleSubscriptionId: (await welcomeRefForEmail('referrer@example.com', SALT))!,
       status: 'active',
       currentPeriodEnd: new Date(NOW.getTime() - DAY_MS),
     })
     expect(await countReferralRewards(db, 'referrer')).toBe(0)
+  })
+
+  it('counts a REVOKED reward against the cap, so refund-churn cannot recycle it', async () => {
+    // The property that makes the clawback worth having. If the cap only
+    // counted live rows, buy → collect → refund would return the budget slot
+    // and the ceiling would be unreachable by construction.
+    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW })
+    await revokeReferralRewardForReferee(db, 'referee', { now: NOW })
+    expect(await countReferralRewards(db, 'referrer')).toBe(1)
   })
 
   it('pays nothing for a self-referral', async () => {
@@ -480,27 +496,56 @@ describe('rewardReferrerForFirstPurchase', () => {
     expect(await findActiveEntitlement(db, 'ghost')).toBeNull()
   })
 
-  it('pays nothing to a live subscriber, because the days would deliver nothing', async () => {
-    // Inherited from grantCompPasses: days stack from the current expiry, and
-    // for a subscriber that expiry is the renewal their next payment buys. A
-    // grant that hands over zero days while saying "you earned 30" is worse
-    // than no grant.
+  it('PAYS a live subscriber, anchored past their renewal', async () => {
+    // The opposite of what this used to assert, and the reason is that a comp
+    // and an earned reward are different things. Refusing lost the reward
+    // permanently — the trigger is one-time and never retries — and it did so
+    // to exactly the referrers most worth having, since the people who
+    // recommend a product are the ones already paying for it.
+    const renewsAt = new Date(atSecond(NOW.getTime() + 20 * DAY_MS))
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
       paddleSubscriptionId: 'sub_live',
       status: 'active',
-      currentPeriodEnd: new Date(NOW.getTime() + 20 * DAY_MS),
+      currentPeriodEnd: renewsAt,
     })
 
     const result = await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW })
-    expect(result.outcome).toBe('active_subscription')
+    expect(result.outcome).toBe('granted')
+    // Stacked from the renewal, so the days begin when the subscription ends —
+    // which is what the share card and the billing history now promise.
+    expect(result.stackedOn?.getTime()).toBe(renewsAt.getTime())
+    expect(result.endsAt?.getTime()).toBe(
+      atSecond(renewsAt.getTime() + REFERRAL_REWARD_DAYS * DAY_MS),
+    )
 
     const rows = await db
       .select()
       .from(schema.entitlements)
       .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
-    expect(rows).toHaveLength(0)
-    expect(await db.select().from(schema.auditLog)).toHaveLength(0)
+    expect(rows).toHaveLength(1)
+  })
+
+  it('still describes that referrer as a subscriber, not as a pass holder', async () => {
+    // The bug the old refusal was really guarding against: the reward row wins
+    // findActiveEntitlement's `ORDER BY current_period_end DESC`, so /account
+    // could have told a paying customer "You have a one-time pass" beside a
+    // working cancel button. entitlement-view pins the description to the live
+    // `sub_` row, which is what makes paying the subscriber safe.
+    await db.insert(schema.entitlements).values({
+      userId: 'referrer',
+      paddleSubscriptionId: 'sub_live',
+      status: 'active',
+      currentPeriodEnd: new Date(atSecond(NOW.getTime() + 20 * DAY_MS)),
+    })
+    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW })
+
+    const view = await buildEntitlementView(db, 'referrer', { portalConfigured: false })
+    expect(view.kind).toBe('subscription')
+    expect(view.active).toBe(true)
+    expect(view.cancellable).toBe(1)
+    // …and the earned days are visible in history, labelled as what they are.
+    expect(view.history.some((row) => row.referral)).toBe(true)
   })
 
   it('does nothing at all for a customer nobody referred', async () => {
@@ -514,6 +559,233 @@ describe('rewardReferrerForFirstPurchase', () => {
     await expect(rewardReferrerForFirstPurchase(db, 'nobody-at-all')).resolves.toMatchObject({
       outcome: 'no_referrer',
     })
+  })
+})
+
+// ── Refund clawback ─────────────────────────────────────────────────────────
+// The hole that made the loop's cost story false. revokeForAdjustment matches
+// Paddle's own transaction and subscription ids; the referrer's reward carries
+// neither, so refunded money still bought 30 days. Buy → collect → refund, on
+// repeat, was unlimited free access.
+
+describe('revokeReferralRewardForReferee', () => {
+  beforeEach(async () => {
+    await makeUser('referrer', { referralCode: REFERRER_CODE })
+    await makeUser('referee', { referredBy: REFERRER_CODE })
+  })
+
+  it('takes the days back, and says so in the audit trail', async () => {
+    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW })
+    expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
+
+    const result = await revokeReferralRewardForReferee(db, 'referee', { now: NOW })
+    expect(result.outcome).toBe('revoked')
+    expect(result.referrerId).toBe('referrer')
+
+    // Both halves, exactly as revokeForAdjustment and revokeCompPass write
+    // them: the status is what the app's allowlist reads, the date is what
+    // anything checking only the window reads, and they must agree.
+    const [row] = await db
+      .select()
+      .from(schema.entitlements)
+      .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
+    expect(row?.status).toBe(REFERRAL_REVOKED_STATUS)
+    expect(row?.currentPeriodEnd?.getTime()).toBeLessThanOrEqual(NOW.getTime())
+    expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
+
+    const revokedAudit = (await db.select().from(schema.auditLog)).find(
+      (entry) => entry.action === 'referral.revoked',
+    )
+    expect(revokedAudit?.actorType).toBe('system')
+    expect(revokedAudit?.targetId).toBe('referrer')
+  })
+
+  it('closes the buy-collect-refund loop end to end, through the real adjustment path', async () => {
+    // The scenario in full: the referee buys a pass, the referrer is paid, the
+    // referee refunds the same day. Driven through revokeForAdjustment so the
+    // wiring in the webhook is the only thing not exercised here.
+    await grantPass(db, { userId: 'referee', transactionId: 'txn_refunded', billedAt: NOW })
+    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW })
+    expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
+
+    const adjustment = await revokeForAdjustment(db, {
+      action: 'refund',
+      status: 'approved',
+      transactionId: 'txn_refunded',
+    })
+    expect(adjustment).toMatchObject({ outcome: 'revoked', userId: 'referee' })
+
+    // …which is the exact hand-off the webhook makes.
+    await revokeReferralRewardForReferee(db, adjustment.userId!, { now: NOW })
+
+    expect(await findActiveEntitlement(db, 'referee')).toBeNull()
+    expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
+  })
+
+  it('is idempotent across a redelivered adjustment', async () => {
+    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW })
+    expect((await revokeReferralRewardForReferee(db, 'referee', { now: NOW })).outcome).toBe(
+      'revoked',
+    )
+    expect((await revokeReferralRewardForReferee(db, 'referee', { now: NOW })).outcome).toBe(
+      'already_revoked',
+    )
+  })
+
+  it('leaves an already-expired reward completely alone', async () => {
+    // Writing `current_period_end = now` on a window that closed months ago
+    // would drag a past date FORWARD — rewriting history to say the referrer
+    // had access longer than they did. It also gives the policy a sensible
+    // edge: a chargeback on month seven does not punish the referrer.
+    await db.insert(schema.entitlements).values({
+      userId: 'referrer',
+      paddleSubscriptionId: referralRewardRef('referee'),
+      status: 'active',
+      currentPeriodEnd: new Date(atSecond(NOW.getTime() - 200 * DAY_MS)),
+    })
+
+    const result = await revokeReferralRewardForReferee(db, 'referee', { now: NOW })
+    expect(result.outcome).toBe('already_expired')
+
+    const [row] = await db
+      .select()
+      .from(schema.entitlements)
+      .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
+    expect(row?.currentPeriodEnd?.getTime()).toBe(atSecond(NOW.getTime() - 200 * DAY_MS))
+    expect(row?.status).toBe('active')
+  })
+
+  it('says nothing happened when there was no reward to take back', async () => {
+    // A refund from a customer nobody referred — the common case by far.
+    expect((await revokeReferralRewardForReferee(db, 'referee', { now: NOW })).outcome).toBe(
+      'not_found',
+    )
+  })
+
+  it('never touches a Paddle row', async () => {
+    // Only ever `referral_<refereeId>`. A `sub_`/`txn_` row is money Paddle
+    // owns: a local status on one is either overwritten by the next webhook or
+    // takes away access somebody paid for.
+    await grantPass(db, { userId: 'referee', transactionId: 'txn_kept', billedAt: NOW })
+    await revokeReferralRewardForReferee(db, 'referee', { now: NOW })
+
+    const [paid] = await db
+      .select()
+      .from(schema.entitlements)
+      .where(eq(schema.entitlements.paddleSubscriptionId, 'txn_kept'))
+    expect(paid?.status).toBe('active')
+  })
+
+  it('spells its status the same way a revoked comp does', () => {
+    // Two declarations, one value, on purpose — /account renders a single
+    // `revoked` badge for both, and a second spelling would surface a bare
+    // status word nobody has seen before.
+    expect(REFERRAL_REVOKED_STATUS).toBe(COMP_REVOKED_STATUS)
+  })
+})
+
+// ── One inbox, two accounts ─────────────────────────────────────────────────
+// Sub-addressing is the cheapest way to look like two people. `me+1@gmail.com`
+// and `me@gmail.com` are one mailbox, and an exact-address comparison waves the
+// pair straight through.
+
+describe('self-referral by sub-address', () => {
+  it('is refused at provisioning, so referred_by is never written', async () => {
+    await makeUser('self', { email: 'me@gmail.com', referralCode: REFERRER_CODE })
+
+    const { user } = await upsertOAuthUser(
+      db,
+      { provider: 'email', email: 'me+1@gmail.com' },
+      { source: 'referral', medium: 'invite', referralCode: REFERRER_CODE },
+    )
+    expect(user.referredBy).toBeNull()
+  })
+
+  it('is refused at payout too, for rows written before that guard existed', async () => {
+    await makeUser('self', { email: 'me@gmail.com', referralCode: REFERRER_CODE })
+    // Hand-written, the way a pre-fix row would look.
+    await makeUser('alias', { email: 'me+1@gmail.com', referredBy: REFERRER_CODE })
+
+    const result = await rewardReferrerForFirstPurchase(db, 'alias', { now: NOW })
+    expect(result.outcome).toBe('self_referral')
+    expect(await findActiveEntitlement(db, 'self')).toBeNull()
+
+    const welcome = await grantRefereeWelcome(
+      db,
+      { id: 'alias', email: 'me+1@gmail.com', referredBy: REFERRER_CODE },
+      { salt: SALT },
+    )
+    expect(welcome.outcome).toBe('self_referral')
+  })
+
+  it('still allows two genuinely different mailboxes', async () => {
+    await makeUser('referrer', { email: 'ada@example.com', referralCode: REFERRER_CODE })
+    const { user } = await upsertOAuthUser(
+      db,
+      { provider: 'email', email: 'grace@example.com' },
+      { referralCode: REFERRER_CODE },
+    )
+    expect(user.referredBy).toBe(REFERRER_CODE)
+  })
+})
+
+// ── The welcome grant is spent per mailbox, not per account ─────────────────
+
+describe('deleting an account does not refill the welcome trial', () => {
+  it('grants nothing the second time the same address signs up', async () => {
+    await makeUser('referrer', { referralCode: REFERRER_CODE })
+
+    const first = await upsertOAuthUser(
+      db,
+      { provider: 'email', email: 'boomerang@example.com' },
+      { referralCode: REFERRER_CODE },
+    )
+    expect((await grantRefereeWelcome(db, first.user, { salt: SALT })).outcome).toBe('granted')
+
+    // Deletion anonymizes the row and frees the address, so the next sign-in
+    // takes the INSERT branch and mints a brand-new user id. Keyed on that id,
+    // the ref would be fresh and the trial would refill — forever, with two
+    // mailboxes taking turns.
+    await deleteAccount(db, first.user.id)
+
+    const second = await upsertOAuthUser(
+      db,
+      { provider: 'email', email: 'boomerang@example.com' },
+      { referralCode: REFERRER_CODE },
+    )
+    expect(second.created).toBe(true)
+    expect(second.user.id).not.toBe(first.user.id)
+
+    const again = await grantRefereeWelcome(db, second.user, { salt: SALT })
+    expect(again.outcome).toBe('already_granted')
+    expect(await findActiveEntitlement(db, second.user.id)).toBeNull()
+  })
+
+  it('keys the ref on the mailbox, so sub-addresses share one trial', async () => {
+    expect(await welcomeRefForEmail('me+1@gmail.com', SALT)).toBe(
+      await welcomeRefForEmail('me@gmail.com', SALT),
+    )
+    expect(await welcomeRefForEmail('ada@example.com', SALT)).not.toBe(
+      await welcomeRefForEmail('grace@example.com', SALT),
+    )
+  })
+
+  it('puts no address in the ref, and refuses to build one without a salt', async () => {
+    // This string is rendered in the admin console and included in "download
+    // your data", and it outlives the account. An unsalted digest of an email
+    // is rainbow-tableable against any mailing list, so a missing salt refuses.
+    const ref = await welcomeRefForEmail('ada@example.com', SALT)
+    expect(ref).not.toContain('ada')
+    expect(ref).not.toContain('@')
+    expect(await welcomeRefForEmail('ada@example.com', '')).toBeNull()
+  })
+
+  it('refuses the grant rather than degrading when there is no salt', async () => {
+    await makeUser('referrer', { referralCode: REFERRER_CODE })
+    await makeUser('referee', { referredBy: REFERRER_CODE })
+    const result = await grantRefereeWelcome(db, REFEREE, { salt: '' })
+    expect(result.outcome).toBe('unconfigured')
+    expect(await findActiveEntitlement(db, 'referee')).toBeNull()
   })
 })
 

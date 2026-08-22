@@ -140,6 +140,35 @@ export function canonicalizeEmailForLimiting(email: string): string {
   return local ? `${local}@${domain}` : normalized
 }
 
+/**
+ * Do these two addresses reach the same inbox?
+ *
+ * ── Why this is allowed to use the limiting form, when identity may not ──────
+ * canonicalizeEmailForLimiting() carries a loud warning that it is NOT the
+ * identity key, because collapsing `a.b@` and `ab@` on a provider where dots
+ * are significant would merge two strangers' accounts. That warning is about
+ * MERGING. This function only ever REFUSES, and the two failure directions are
+ * not comparable:
+ *
+ *   - A false merge grants one stranger access to another's account.
+ *   - A false refusal here costs two people who genuinely share a canonical
+ *     form one referral reward, and they can email support.
+ *
+ * On money, the refusing direction is the safe one, so the looser comparison is
+ * the right one. It is also the only comparison that catches the attack it
+ * exists for: `me+1@gmail.com` referred by `me@gmail.com`'s own code is one
+ * person with one mailbox and two accounts, and an exact-match check waves it
+ * straight through. Note the surface stays narrow — outside the two
+ * dot-insensitive domains this only folds `+tags`, which are the same mailbox
+ * by definition rather than by guess.
+ *
+ * Accounts are still keyed on normalizeEmail(). Nothing here merges anything.
+ */
+export function isSameMailbox(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false
+  return canonicalizeEmailForLimiting(a) === canonicalizeEmailForLimiting(b)
+}
+
 /** Fall back to the local-part when a provider has no display name (common on GitHub). */
 function displayName(profile: OAuthProfile, email: string): string {
   const name = profile.name?.trim()
@@ -231,9 +260,12 @@ export function isReferralCodeCollision(error: unknown): boolean {
  *     (server/utils/account.ts), so a deleted referrer usually stops resolving
  *     on its own; the address check is the backstop for the case where a later
  *     account happens to mint the freed code. A deleted account cannot earn.
- *   * The caller themselves. Belt and braces at provisioning — the row being
- *     created cannot own a code yet — but the reward path calls this too, where
- *     the id comparison is the real self-referral gate.
+ *   * The caller's own mailbox. Not merely the same address — the same INBOX,
+ *     via isSameMailbox(). The row being created cannot own a code yet, so an
+ *     exact-address check here would never fire and never has; what it missed
+ *     is the one shape that matters, `me+1@gmail.com` signing up on
+ *     `me@gmail.com`'s code. That is one person, two accounts, and a self-
+ *     referral in every sense except string equality.
  */
 export async function findReferrerByCode(
   db: Db,
@@ -248,7 +280,11 @@ export async function findReferrerByCode(
   })
   if (!referrer) return null
   if (isUndeliverableAddress(referrer.email)) return null
-  if (selfEmail && normalizeEmail(referrer.email) === normalizeEmail(selfEmail)) return null
+  // Mailbox, not exact address. `me+1@gmail.com` arriving on `me@gmail.com`'s
+  // own code is one person with one inbox and two accounts, and an exact
+  // comparison passes it — see isSameMailbox() for why the looser test is the
+  // correct one on a refusal.
+  if (isSameMailbox(referrer.email, selfEmail)) return null
   return referrer
 }
 

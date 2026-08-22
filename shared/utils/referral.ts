@@ -66,7 +66,15 @@ export function normalizeReferralCode(raw: string | null | undefined): string | 
  * product is optional; at 7 it is a trial-length taste that still leaves a
  * reason to buy, and rotating a mailbox weekly is more work than $18.
  *
- * It is denominated in DAYS rather than passes for the same reason: a pass is
+ * That arithmetic only holds because the grant is once per MAILBOX rather than
+ * once per account. It was once per account, which meant deleting the account
+ * and signing up again on the same address refilled the trial — so the real
+ * price was not "a fresh mailbox" but "two mailboxes, forever", and the
+ * paragraph above was simply false. The ref is now a salted hash of the
+ * canonical mailbox and the unique index refuses the second grant permanently
+ * (server/utils/paddle-refs.ts › referralWelcomeRef).
+ *
+ * It is denominated in DAYS rather than passes for a separate reason: a pass is
  * "the thing the customer would have bought" (see server/utils/admin-grants.ts
  * on why comps are counted in passes), and this is explicitly not that. It is a
  * trial, and calling it one keeps the whole-passes rule intact where it matters.
@@ -78,10 +86,11 @@ export const REFERRAL_WELCOME_DAYS = 7
  *
  * A full pass — the thing they would have bought — because unlike the welcome
  * grant this one is not free to obtain: somebody had to complete a real Paddle
- * transaction for it to exist. That trigger is the entire anti-fraud design.
- * Rewarding on signup instead would make N throwaway accounts an unlimited
- * supply of days for one attacker; rewarding on payment means farming the
- * program costs more than the product does.
+ * transaction, and KEEP it, for these days to exist. Rewarding on signup would
+ * make N throwaway accounts an unlimited supply of days for one attacker.
+ * Rewarding on payment alone was not enough either — the purchase could simply
+ * be refunded, which is why the reward is revoked when the referee's money goes
+ * back (server/utils/referral.ts › revokeReferralRewardForReferee).
  *
  * Asserted equal to PASS_DAYS by test/referral.test.ts, so the two cannot drift.
  */

@@ -59,6 +59,16 @@ onScopeDispose(() => clearTimeout(resetTimer))
         {{ REFERRAL_MAX_REWARDS }} times. Days stack on whatever you already have.
       </p>
 
+      <!-- The sentence a subscriber needs, and the one the card used to leave
+           out while quietly not paying them at all. Reward days stack from the
+           end of whatever is already running, so for somebody on a subscription
+           they are real days that simply start later. Saying so is the whole
+           difference between a delayed reward and a broken promise. -->
+      <p class="text-sm text-muted">
+        Already subscribed? Your reward days stack too — they start when your subscription ends, so
+        nothing is lost either way.
+      </p>
+
       <div v-if="status === 'pending'" class="flex flex-col gap-3">
         <USkeleton class="h-9 w-full" />
         <USkeleton class="h-4 w-48" />
@@ -100,9 +110,9 @@ onScopeDispose(() => clearTimeout(resetTimer))
         </div>
 
         <!-- Never state anything by colour alone (DESIGN.md › Accessibility):
-             the copied state changes the icon AND the accessible name above,
-             and this line is the visible word for it. `aria-live` because the
-             icon swap is the only other signal a screen reader would get. -->
+             the button's icon changes, and this line is the word for it. It is
+             also the ONLY announcement a screen reader gets, since the button's
+             accessible name is deliberately static — hence `aria-live`. -->
         <p aria-live="polite" class="text-sm text-muted">
           <span v-if="copied">Copied to your clipboard.</span>
           <span v-else>Share it anywhere — the credit is recorded on their first visit.</span>

@@ -22,9 +22,14 @@ import { getReferralSummary } from '../../utils/referral'
 export default defineEventHandler(async (event) => {
   const { user } = await requireUserSession(event)
 
-  // Mints a code on the spot for accounts that predate the column — the column
-  // is nullable precisely so that backfilling never handed codes to accounts
-  // that would never share one (server/db/schema.ts).
+  // ── This GET writes, and that is deliberate ────────────────────────────────
+  // getReferralSummary() mints a code on the spot for accounts that predate the
+  // column — nullable precisely so backfilling never handed codes to accounts
+  // that would never share one (server/db/schema.ts). So do NOT put this route
+  // behind a cache, a `routeRules` swr, or anything that assumes a GET is pure:
+  // a cached first response would hand every caller the first caller's code.
+  // The write is idempotent and guarded on `referral_code IS NULL`, so a
+  // repeated call is free — it is just not free of side effects the first time.
   const summary = await getReferralSummary(db, user.id)
   if (!summary) {
     // The session names a user row that is gone. Not a 500: the session guard
