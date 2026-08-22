@@ -1,4 +1,4 @@
-// Types for the runtime config keys the SEO layer adds.
+// Types for the runtime config keys the SEO layer and the fleet contract add.
 //
 // Nuxt infers runtime-config types from the *values* in nuxt.config.ts, and
 // `publicPages` starts life as an empty array — which infers as `{}[]` and makes
@@ -17,6 +17,8 @@ declare module 'nuxt/schema' {
     publicPages: PublicPage[]
     /** Build stamp used as <lastmod> in sitemap.xml. */
     buildDate: string
+    /** The cron map Nitro runs (SCHEDULED_TASKS in nuxt.config.ts), reported by /api/status. */
+    scheduledTasks: Record<string, string[]>
   }
 }
 

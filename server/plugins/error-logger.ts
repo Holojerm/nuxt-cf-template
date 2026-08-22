@@ -1,8 +1,13 @@
 // Structured error logging for unhandled API errors.
 //
-// Two destinations:
+// Three destinations:
 //   1. console.error JSON → Cloudflare Logs (cheap, queryable, always on)
-//   2. PostHog `$exception` event → PostHog Errors UI (grouped, with stack
+//   2. the `ops_events` spool → server/tasks/ops/alert.ts emails a digest on
+//      a cron. This is the one that reaches someone who isn't looking at a
+//      dashboard, which is the whole point. Awaited, because Workers cancels
+//      in-flight promises once the response is sent and a 5xx is exactly the
+//      path that sends one immediately.
+//   3. PostHog `$exception` event → PostHog Errors UI (grouped, with stack
 //      traces and the user's session attached). No-ops when posthogKey is
 //      empty (template default), so this is safe to leave wired up.
 //
@@ -14,7 +19,10 @@
 // resolves to `undefined` at runtime — the failure CLAUDE.md › Gotchas
 // documents — would throw inside the error handler and take the log line with
 // the exception it was trying to record.
+import { db } from '@nuxthub/db'
+
 import { pathForLog } from '../utils/log'
+import { recordOpsEvent } from '../utils/ops'
 
 export default defineNitroPlugin((nitro) => {
   nitro.hooks.hook('error', async (error, { event }) => {
@@ -35,6 +43,12 @@ export default defineNitroPlugin((nitro) => {
         method: event?.method,
       }),
     )
+
+    await recordOpsEvent(db, {
+      kind: 'server_error',
+      detail: `${status} ${err.message}`,
+      path: pathForLog(event?.path),
+    })
 
     let distinctId = 'server-anonymous'
     if (event) {

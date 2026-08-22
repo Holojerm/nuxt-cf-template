@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "slug": "my-app",
+  "name": "My App",
+  "stage": "unreleased",
+  "urls": { "prod": "https://my-app.workers.dev" },
+  "workers": ["my-app", "my-app-mcp"],
+  "bindings": {
+    "d1": [{ "name": "my-app-db", "id": "YOUR_D1_DATABASE_ID" }],
+    "kv": ["YOUR_KV_NAMESPACE_ID"],
+    "r2": ["my-app-blob"]
+  },
+  "crons": ["0 4 * * *", "*/30 * * * *"],
+  "deploy": "workers-builds",
+  "template": { "repo": "Holojerm/nuxt-cf-template", "syncedSha": null },
+  "features": { "auth": true, "billing": true, "posthog": null, "opsEvents": true },
+  "secrets": ["NUXT_SESSION_PASSWORD"]
+}

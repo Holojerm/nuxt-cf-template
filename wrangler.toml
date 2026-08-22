@@ -122,15 +122,42 @@ max_retries = 3
 # remember it exists when you answer a deletion request.
 dead_letter_queue = "my-app-email-dlq"
 
+# ─── Workers Logs ────────────────────────────────────────────────────────────
+# Structured logs and the Observability tab in the dashboard, retained 7 days on
+# the Paid plan (3 on Free). Without this the only way to see an error is to be
+# running `wrangler tail` at the moment it happens. head_sampling_rate stays at
+# 1 (log every request): traffic on a new app is low, and the first thing you
+# want after "checkout did nothing" is the request that failed, not a sample
+# of its neighbours. Inheritable — [env.preview] gets it without repeating it.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 # ─── Scheduled tasks ─────────────────────────────────────────────────────────
-# Every expression here must appear VERBATIM as a key in `nitro.scheduledTasks`
-# in nuxt.config.ts. That map is what turns a trigger into a task, and the join
+# Every expression here must appear VERBATIM as a key in SCHEDULED_TASKS in
+# nuxt.config.ts. That map is what turns a trigger into a task, and the join
 # is an exact string match — a cron listed here with no matching key wakes the
 # Worker on schedule and runs nothing, with no error and no log line.
+# `bun run crons:check` (part of `bun run ci`) fails the build on a mismatch.
+#
+#   "0 4 * * *"     purge-expired-tokens — retention sweep
+#   "*/30 * * * *"  ops:alert — drains the ops_events spool into a digest email
 #
 # Cron triggers run on UTC, and changes take up to 15 minutes to propagate.
 [triggers]
-crons = ["0 4 * * *"]
+crons = ["0 4 * * *", "*/30 * * * *"]
+
+# ─── Ops alert email ─────────────────────────────────────────────────────────
+# Outbound mail for the ops digest (server/tasks/ops/alert.ts). Pinned to a
+# single destination on purpose: an unrestricted send binding is a spam cannon
+# if the Worker is ever compromised, and this one only ever needs to reach one
+# inbox. Sends to a verified destination address are free and count against no
+# quota. To enable: verify the address under Email → Email Routing →
+# Destination addresses, uncomment this block, and set the two vars below.
+# Until then the cron logs `ops_alert_unconfigured` every tick and sends nothing.
+# [[send_email]]
+# name = "ALERT_EMAIL"
+# destination_address = "you@example.com"
 
 [vars]
 NUXT_PUBLIC_APP_NAME = "My App"
@@ -148,6 +175,12 @@ NUXT_PUBLIC_APP_URL = "https://my-app.workers.dev"
 # Named on /terms and /privacy, and used as Reply-To on transactional email.
 NUXT_PUBLIC_SUPPORT_EMAIL = "support@example.com"
 NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
+# Ops digest routing — pairs with the [[send_email]] block above. `to` must be
+# the same verified destination address the binding is pinned to; `from` must
+# be on a zone in this account with Email Routing enabled. Not secrets: the
+# binding already decides where mail can go.
+# NUXT_ALERT_EMAIL_TO = "you@example.com"
+# NUXT_ALERT_EMAIL_FROM = "alerts@your-domain.example"
 # Paddle price IDs for /pricing. Sandbox and production have DIFFERENT ids —
 # override these per environment rather than hardcoding them in app code.
 # NUXT_PUBLIC_PADDLE_PRICE_MONTHLY = "pri_..."
@@ -300,3 +333,7 @@ NUXT_PUBLIC_INDEXABLE = "false"
 #                                widget nobody verifies (server/utils/turnstile.ts
 #                                logs `turnstile_half_configured` when it sees that).
 #                                Both from dash.cloudflare.com → Turnstile → Add site.
+#   NUXT_FLEET_TOKEN             bearer the portfolio dashboard presents to /api/fleet.
+#                                32+ chars (`openssl rand -base64 32`). Unset = the
+#                                route 404s and the app is simply not on the dashboard.
+#   NUXT_FLEET_TOKEN_PREVIOUS    only during a rotation — server/utils/fleet-auth.ts.
