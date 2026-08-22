@@ -36,7 +36,7 @@ import type { drizzle } from 'drizzle-orm/d1'
 import type { Attribution } from '#shared/utils/attribution'
 import * as tables from '../db/schema'
 import type { MagicLinkToken } from '../db/schema'
-import { normalizeEmail } from './users'
+import { isUndeliverableAddress, normalizeEmail } from './users'
 
 export type MagicLinkDb = ReturnType<typeof drizzle<typeof tables>>
 
@@ -107,40 +107,6 @@ export type MagicLinkFailure = 'invalid' | 'expired' | 'used'
 export type MagicLinkLookup =
   | { ok: true; record: MagicLinkToken }
   | { ok: false; reason: MagicLinkFailure }
-
-/**
- * Addresses this app must never mail, and must never mint a link for.
- *
- * ── The one that matters: deleted-account tombstones ─────────────────────────
- * Deleting an account anonymizes the `users` row in place rather than removing
- * it (server/utils/account.ts — the id has to survive, because
- * `entitlements.user_id` is a real foreign key and billing records are kept for
- * tax law). The scrubbed row keeps a synthetic address,
- * `deleted-<id>@deleted.invalid`.
- *
- * That address is still an address, and identity here is the email
- * (server/utils/users.ts). Mint a link for it and redeeming that link would
- * find the tombstone row by email and hand out a session for the deleted
- * account's id — with its entitlement history, its audit trail, and whatever
- * `role` it had, since deletion does not scrub that. Account resurrection, from
- * nothing but a leaked user id.
- *
- * In practice Resend refuses `.invalid` today, so the mail never leaves. That
- * is not a guard, it's a coincidence: it depends on a third party's address
- * validation, and a fork that swaps mail providers or points a catch-all domain
- * at itself loses it silently. An authentication boundary does not get to live
- * in someone else's input validation.
- *
- * ── Why the whole TLD, not the exact tombstone string ────────────────────────
- * `.invalid` is reserved by RFC 2606 precisely so that it can never resolve, so
- * refusing all of it costs zero real users and survives 2.2 changing the
- * tombstone's spelling later. The sibling reservations are deliberately NOT
- * here: `.example` is what this repo's own fixtures and dev sign-in use.
- */
-export function isUndeliverableAddress(email: string): boolean {
-  const domain = normalizeEmail(email).split('@').pop() ?? ''
-  return domain === 'invalid' || domain.endsWith('.invalid')
-}
 
 export interface CreateMagicLinkTokenInput {
   /** Normalized here as well as by the caller — the DB row must match `users.email`. */

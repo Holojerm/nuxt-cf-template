@@ -39,6 +39,26 @@ export const users = sqliteTable('users', {
   role: text('role').notNull().default('user'),
   provider: text('provider'),
   lastLoginAt: integer('last_login_at', { mode: 'timestamp' }),
+  // ── Session revocation ─────────────────────────────────────────────────────
+  // Sessions are self-contained sealed cookies: nothing is stored server-side,
+  // so nothing could previously be taken away. Delete your account from your
+  // laptop and your phone kept full access to the retained entitlements until
+  // the cookie expired, because every check in the app reads the cookie and
+  // stops there.
+  //
+  // This column is the revocation primitive that was missing. Every session
+  // carries the second it was issued (server/utils/auth.ts › establishSession);
+  // a session issued before this instant is dead, checked on every
+  // authenticated request by server/middleware/auth.ts. Deletion sets it, and
+  // it is deliberately a *timestamp* rather than a `deleted_at` flag so the same
+  // column also answers "sign me out everywhere" and "an admin force-logged this
+  // account out" without another migration.
+  //
+  // NULL means nothing has ever been revoked — the state every account is in.
+  // A session with no issued-at that meets a non-null value here is treated as
+  // revoked: it cannot prove it postdates the revocation, and on this column
+  // "cannot prove" has to mean no.
+  sessionsInvalidBefore: integer('sessions_invalid_before', { mode: 'timestamp' }),
   // ── First-touch attribution ────────────────────────────────────────────────
   // Written once, at account creation, from the cookie the attribution plugin
   // set on the visitor's first landing (shared/utils/attribution.ts). Never

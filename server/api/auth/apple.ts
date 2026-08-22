@@ -24,6 +24,18 @@
 // to. The private key is a real secret — `wrangler secret put`, never `[vars]`,
 // and its literal newlines written as `\n` in the env var.
 //
+// ── NUXT_OAUTH_APPLE_REDIRECT_URL is required, unlike every other provider ───
+// Not a preference. nuxt-auth-utils 0.5.30's Apple handler
+// (dist/runtime/server/lib/oauth/apple.js) builds the outbound authorize URL
+// with `config.redirectURL || getOAuthRedirectURL(event)` but then sends the
+// RAW `config.redirectURL` in the token-exchange body — the google and github
+// handlers fall back in both places. So with it unset the two legs disagree:
+// the user reaches Apple, consents, comes back, and the exchange posts
+// `redirect_uri=undefined`, which Apple answers with `invalid_grant`. Everything
+// up to the final step looks perfect, which is what makes it expensive to
+// diagnose. server/utils/auth-providers.ts therefore treats a missing redirect
+// URL as "not configured" so the button never renders at all.
+//
 // ── Hide My Email is a real address, and a separate account ──────────────────
 // Apple lets people sign in with a relay address (`…@privaterelay.appleid.com`)
 // that forwards to their real inbox. Identity here is the verified email, so

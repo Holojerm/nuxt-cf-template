@@ -25,7 +25,6 @@ import {
   generateMagicLinkToken,
   hashMagicLinkToken,
   inspectMagicLinkToken,
-  isUndeliverableAddress,
   MAGIC_LINK_RATE_LIMIT,
   MAGIC_LINK_TOKEN_PATTERN,
   MAGIC_LINK_TTL_SECONDS,
@@ -316,32 +315,9 @@ describe('cross-device carry', () => {
 // The only thing stopping it in production today is that Resend happens to
 // refuse `.invalid`, which is a coincidence rather than a guard.
 
-describe('isUndeliverableAddress', () => {
-  it('refuses the tombstone a deleted account is rewritten to', () => {
-    const userId = 'ec6f5e2c-6b0f-4a3f-9a1b-9f0a2b3c4d5e'
-    expect(isUndeliverableAddress(`deleted-${userId}@deleted.invalid`)).toBe(true)
-  })
-
-  it('refuses the whole reserved TLD, not one spelling of it', () => {
-    // RFC 2606 reserves `.invalid` so it can never resolve. Covering the TLD is
-    // what keeps this correct if the tombstone's shape ever changes.
-    expect(isUndeliverableAddress('anyone@deleted.invalid')).toBe(true)
-    expect(isUndeliverableAddress('anyone@some.other.invalid')).toBe(true)
-    expect(isUndeliverableAddress('anyone@invalid')).toBe(true)
-    // Casing and whitespace go through the same normalizer the row is keyed by.
-    expect(isUndeliverableAddress('  Deleted-X@Deleted.INVALID ')).toBe(true)
-  })
-
-  it('lets every real address through, including the fixtures this repo uses', () => {
-    // `.example` is reserved too, and deliberately NOT refused — it is what the
-    // dev sign-in and every test in this repo runs on.
-    expect(isUndeliverableAddress('ada@example.com')).toBe(false)
-    expect(isUndeliverableAddress('demo@example.com')).toBe(false)
-    // A local part that merely looks like the TLD must not trip it.
-    expect(isUndeliverableAddress('not.invalid@example.com')).toBe(false)
-    expect(isUndeliverableAddress('deleted-123@example.com')).toBe(false)
-  })
-})
+// The predicate itself is tested in test/users.test.ts, where it lives — it is
+// a rule about the identity key, and the session guard reads it too. What
+// belongs here is that the mint path actually applies it.
 
 describe('createMagicLinkToken with a reserved address', () => {
   it('refuses rather than minting, even though the route never gets this far', () => {

@@ -126,7 +126,17 @@ export async function establishSession(
   // from this browser (shared machines, and every demo you ever give).
   if (created && attribution) deleteCookie(event, ATTRIBUTION_COOKIE, { path: '/' })
 
-  await setUserSession(event, {
+  // replaceUserSession, not setUserSession: the latter deep-merges into
+  // whatever is already in the cookie, and defu skips nulls — so signing in as
+  // B on a browser that had signed in as A would keep A's avatarUrl (and any
+  // key a future version stops writing) hanging off B's session. A sign-in is
+  // an assertion about who the user is now, not a patch on who they were.
+  //
+  // `issuedAt` is what makes revocation possible at all. A sealed cookie has no
+  // server-side record to delete, so the only way to invalidate one is to date
+  // it and compare against `users.sessions_invalid_before`. Seconds, to match
+  // the resolution D1 stores timestamps at.
+  await replaceUserSession(event, {
     user: {
       id: user.id,
       email: user.email,
@@ -134,6 +144,7 @@ export async function establishSession(
       avatarUrl: user.avatarUrl,
       role: user.role,
     },
+    issuedAt: Math.floor(Date.now() / 1000),
   })
 
   await captureServerEvent({

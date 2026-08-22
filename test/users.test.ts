@@ -10,7 +10,13 @@ import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import { generateReferralCode, normalizeEmail, upsertOAuthUser } from '../server/utils/users'
+import {
+  canonicalizeEmailForLimiting,
+  generateReferralCode,
+  isUndeliverableAddress,
+  normalizeEmail,
+  upsertOAuthUser,
+} from '../server/utils/users'
 
 const db = drizzle(env.DB, { schema })
 
@@ -261,7 +267,9 @@ describe('referral code collisions', () => {
     // deserves to be thrown rather than papered over.
     let caught: unknown
     try {
-      await upsertOAuthUser(db, { provider: 'github', email: 'ada@example.com' }, null, { mintCode })
+      await upsertOAuthUser(db, { provider: 'github', email: 'ada@example.com' }, null, {
+        mintCode,
+      })
     } catch (error) {
       caught = error
     }
@@ -273,5 +281,95 @@ describe('referral code collisions', () => {
     const cause = (caught as Error | undefined)?.cause as Error | undefined
     expect(cause?.message).toMatch(/UNIQUE constraint failed: users\.referral_code/)
   })
+})
 
+// ── Reserved addresses ──────────────────────────────────────────────────────
+// Deletion anonymizes the `users` row in place and keys it
+// `deleted-<id>@deleted.invalid`. Identity here is the email, so anything that
+// mints a credential for that address — a magic link, the dev sign-in — would
+// hand out a session for the deleted account's id, entitlements and role
+// included. The session guard reads this too, so a tombstone can never
+// authorize a call even if some future path forgets the revocation watermark.
+
+describe('isUndeliverableAddress', () => {
+  it('refuses the tombstone a deleted account is rewritten to', () => {
+    const userId = 'ec6f5e2c-6b0f-4a3f-9a1b-9f0a2b3c4d5e'
+    expect(isUndeliverableAddress(`deleted-${userId}@deleted.invalid`)).toBe(true)
+  })
+
+  it('refuses the whole reserved TLD, not one spelling of it', () => {
+    // RFC 2606 reserves `.invalid` so it can never resolve. Covering the TLD is
+    // what keeps this correct if the tombstone's shape ever changes.
+    expect(isUndeliverableAddress('anyone@deleted.invalid')).toBe(true)
+    expect(isUndeliverableAddress('anyone@some.other.invalid')).toBe(true)
+    expect(isUndeliverableAddress('anyone@invalid')).toBe(true)
+    // Casing and whitespace go through the same normalizer the row is keyed by.
+    expect(isUndeliverableAddress('  Deleted-X@Deleted.INVALID ')).toBe(true)
+  })
+
+  it('lets every real address through, including the fixtures this repo uses', () => {
+    // `.example` is reserved too, and deliberately NOT refused — it is what the
+    // dev sign-in and every test in this repo runs on.
+    expect(isUndeliverableAddress('ada@example.com')).toBe(false)
+    expect(isUndeliverableAddress('demo@example.com')).toBe(false)
+    // A local part that merely looks like the TLD must not trip it.
+    expect(isUndeliverableAddress('not.invalid@example.com')).toBe(false)
+    expect(isUndeliverableAddress('deleted-123@example.com')).toBe(false)
+  })
+})
+
+// ── Canonical mailbox, for rate limiting only ───────────────────────────────
+// normalizeEmail() is the IDENTITY key and stays trim+lowercase. This is the
+// separate question of "which mailbox does this actually reach", asked because
+// `victim+1@gmail.com` … `+9999` are thousands of distinct strings that all
+// land in one inbox — so a per-address limiter keyed on the normalized form is
+// one an attacker steps around by incrementing a counter, while every message
+// still arrives at the person being flooded.
+
+describe('canonicalizeEmailForLimiting', () => {
+  it('collapses sub-addressed spellings onto one mailbox', () => {
+    expect(canonicalizeEmailForLimiting('victim+1@example.com')).toBe('victim@example.com')
+    expect(canonicalizeEmailForLimiting('victim+anything-at-all@example.com')).toBe(
+      'victim@example.com',
+    )
+    // The whole tag, including further plusses.
+    expect(canonicalizeEmailForLimiting('victim+a+b@example.com')).toBe('victim@example.com')
+  })
+
+  it('ignores dots on the providers that ignore dots', () => {
+    expect(canonicalizeEmailForLimiting('v.i.c.t.i.m@gmail.com')).toBe('victim@gmail.com')
+    // googlemail.com is the same mailbox as gmail.com, so it is the same bucket.
+    expect(canonicalizeEmailForLimiting('v.ictim+tag@googlemail.com')).toBe('victim@gmail.com')
+  })
+
+  it('keeps dots everywhere else, because everywhere else they are significant', () => {
+    // `a.b@` and `ab@` are two different people on most providers. Collapsing
+    // them here would only slow one of them down; collapsing them in the
+    // IDENTITY key would merge two strangers' accounts, which is why that key
+    // is a different function.
+    expect(canonicalizeEmailForLimiting('a.b@example.com')).toBe('a.b@example.com')
+    expect(canonicalizeEmailForLimiting('a.b@fastmail.com')).toBe('a.b@fastmail.com')
+  })
+
+  it('normalizes case and whitespace like the identity key does', () => {
+    expect(canonicalizeEmailForLimiting('  Victim+Tag@Example.COM ')).toBe('victim@example.com')
+  })
+
+  it('leaves an ordinary address exactly as normalizeEmail would', () => {
+    expect(canonicalizeEmailForLimiting('ada@example.com')).toBe('ada@example.com')
+  })
+
+  it('does not collapse every tag-only address into one shared bucket', () => {
+    // `+tag@domain` has no local part left after stripping. Returning
+    // `@domain` would put every such address — across every user of that
+    // provider — in a single bucket, which is a lockout primitive rather than a
+    // rate limit. Falls back to the exact address instead.
+    expect(canonicalizeEmailForLimiting('+tag@example.com')).toBe('+tag@example.com')
+    expect(canonicalizeEmailForLimiting('+other@example.com')).toBe('+other@example.com')
+  })
+
+  it('does not throw on input that is barely an address', () => {
+    expect(canonicalizeEmailForLimiting('nodomain')).toBe('nodomain')
+    expect(canonicalizeEmailForLimiting('@example.com')).toBe('@example.com')
+  })
 })

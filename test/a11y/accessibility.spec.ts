@@ -29,10 +29,21 @@ import { expect, test } from '@playwright/test'
 // the `sitemap coverage` test at the bottom of this file fails the build if the
 // two ever disagree. Add a public page, forget this list, and CI tells you.
 //
-// /auth/verify is scanned with no token, which is exactly the state a stale or
-// mangled link produces — the one a reader is most likely to meet on a bad day,
-// and therefore the one whose error copy has to survive both color modes.
-const ROUTES = ['/', '/pricing', '/changelog', '/login', '/auth/verify', '/terms', '/privacy']
+// /auth/verify and /unsubscribe are scanned with no parameters, which is
+// exactly the state a stale or mangled link produces — the one a reader is most
+// likely to meet on a bad day, and therefore the one whose error copy has to
+// survive both color modes. Both are public and reachable straight from an
+// email, by people who are not signed in and may never have been.
+const ROUTES = [
+  '/',
+  '/pricing',
+  '/changelog',
+  '/login',
+  '/auth/verify',
+  '/unsubscribe',
+  '/terms',
+  '/privacy',
+]
 
 const COLOR_MODES = ['light', 'dark'] as const
 

@@ -34,16 +34,20 @@ import { REDIRECT_COOKIE, safeRedirectPath } from '../../utils/auth'
 import { magicLinkEmail } from '../../utils/auth-email-templates'
 import { sendEmail } from '../../utils/email'
 import { emailBranding } from '../../utils/email-templates'
+import { kv } from '@nuxthub/kv'
 import { saltedHash } from '../../utils/hash'
 import {
   createMagicLinkToken,
   discardMagicLinkToken,
-  isUndeliverableAddress,
   MAGIC_LINK_RATE_LIMIT,
   MAGIC_LINK_TTL_SECONDS,
 } from '../../utils/magic-link'
-import { rateLimit } from '../../utils/rate-limit'
-import { normalizeEmail } from '../../utils/users'
+import { consumeRateLimit } from '../../utils/rate-limit'
+import {
+  canonicalizeEmailForLimiting,
+  isUndeliverableAddress,
+  normalizeEmail,
+} from '../../utils/users'
 
 const bodySchema = z.object({
   // 254 is the RFC 5321 ceiling for a whole address. Capped before the address
@@ -51,38 +55,91 @@ const bodySchema = z.object({
   email: z.string().trim().email().max(254),
 })
 
+/**
+ * Has this mailbox had its share of links for now?
+ *
+ * ── Why this does not use rateLimit() ────────────────────────────────────────
+ * The H3 wrapper is the right tool for the per-IP limit in the middleware and
+ * the wrong one here, for two reasons that both leak information about somebody
+ * else's account:
+ *
+ *   * It sets `X-RateLimit-Remaining` on the response. Keyed by ADDRESS, that
+ *     header answers "is this person in the middle of signing in right now?"
+ *     for anyone willing to POST their address — an activity oracle on a
+ *     stranger, from an unauthenticated endpoint.
+ *   * It throws 429. A distinguishable response for a distinguishable address
+ *     is the enumeration hole the identical-response rule exists to close, and
+ *     it also hands an attacker confirmation that their lockout landed.
+ *
+ * So the budget is consumed through the pure counter, which sets no headers,
+ * and exhaustion is reported to the caller as an ordinary success. The person
+ * being targeted still gets no unwanted mail; the attacker learns nothing and
+ * cannot tell a locked-out address from a fresh one. It costs the honest user
+ * who exhausts their own budget an email that never arrives, which is what a
+ * rate limit costs anyway.
+ *
+ * ── Two buckets, because one address has many spellings ──────────────────────
+ * `victim+1@gmail.com` … `+9999` are thousands of distinct strings that all
+ * land in one inbox, so a limiter keyed on the exact address is one an attacker
+ * walks around by incrementing a counter while every message still arrives.
+ * Both the canonical mailbox and the exact address are charged, so
+ * sub-addressing cannot widen the budget — and identity stays on the exact
+ * address, because collapsing it would merge two strangers' accounts (see
+ * canonicalizeEmailForLimiting).
+ *
+ * Fails OPEN, like rateLimit() itself: a KV outage must not take the front door
+ * down with it.
+ */
+async function addressBudgetExhausted(email: string, salt: string): Promise<boolean> {
+  const spellings = [...new Set([canonicalizeEmailForLimiting(email), email])]
+
+  try {
+    for (const spelling of spellings) {
+      // Hashed, not raw: KV keys are readable in the Cloudflare dashboard and
+      // land in log lines, and "which addresses asked for a sign-in link" is
+      // not something this app needs to publish in order to run.
+      const identifier = (await saltedHash(spelling, salt)) ?? spelling
+      const verdict = await consumeRateLimit(kv, {
+        key: `${MAGIC_LINK_RATE_LIMIT.name}:${identifier}`,
+        limit: MAGIC_LINK_RATE_LIMIT.limit,
+        windowSeconds: MAGIC_LINK_RATE_LIMIT.windowSeconds,
+      })
+      if (!verdict.allowed) return true
+    }
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        kind: 'rate_limit_unavailable',
+        name: MAGIC_LINK_RATE_LIMIT.name,
+        error: String(error),
+      }),
+    )
+    return false
+  }
+
+  return false
+}
+
 export default defineEventHandler(async (event) => {
   const body = await readValidatedBody(event, bodySchema.parse)
   const email = normalizeEmail(body.email)
   const config = useRuntimeConfig(event)
 
-  // Keyed by a salted hash of the address rather than the address itself. KV
-  // keys are readable in the Cloudflare dashboard and land in log lines, and
-  // "which addresses asked for a sign-in link" is not something this app needs
-  // to publish in order to run. Same construction as `feedback.ip_hash`, same
-  // reasoning (server/utils/hash.ts).
-  const identifier = (await saltedHash(email, config.sessionPassword)) ?? email
-  await rateLimit(event, { ...MAGIC_LINK_RATE_LIMIT, identifier })
+  // ── Everything below answers `{ ok: true }` ────────────────────────────────
+  // Three reasons a link is not sent, none of them distinguishable from a link
+  // that was. Each is logged, because the operator does need to know.
 
-  // Reserved addresses — in practice, the `deleted-<id>@deleted.invalid`
-  // tombstone a deleted account's row is rewritten to. Minting for one would be
-  // an account-resurrection primitive; see isUndeliverableAddress() for the
-  // whole mechanism.
-  //
-  // Answered with the ordinary success body, like every other address, because
-  // the no-enumeration rule this endpoint is built around does not get an
-  // exception for the case where the answer is interesting. Deliberately placed
-  // AFTER rateLimit() and not before: the limiter sets X-RateLimit-* on the
-  // response, so a short-circuit above it would be visible in the headers and
-  // would hand back exactly the signal the identical body exists to withhold.
-  //
-  // Honest about what this does not cover: the guarded path skips a database
-  // write and a call to Resend, so it returns measurably faster. Closing that
-  // would mean minting a token nobody can ever receive, to hide a fact that is
-  // only reachable by someone who already knows a deleted account's user id.
-  // Not worth the row.
+  // 1. Reserved addresses — in practice the `deleted-<id>@deleted.invalid`
+  //    tombstone a deleted account's row is rewritten to. Minting for one is an
+  //    account-resurrection primitive; see isUndeliverableAddress().
   if (isUndeliverableAddress(email)) {
     console.warn(JSON.stringify({ kind: 'magic_link_reserved_address_refused' }))
+    return { ok: true }
+  }
+
+  // 2. This mailbox has had its five links for the quarter hour.
+  if (await addressBudgetExhausted(email, config.sessionPassword)) {
+    console.warn(JSON.stringify({ kind: 'magic_link_address_budget_exhausted' }))
     return { ok: true }
   }
 
@@ -95,10 +152,20 @@ export default defineEventHandler(async (event) => {
   const { token, record } = await createMagicLinkToken(db, { email, redirectTo, attribution })
 
   const brand = emailBranding()
-  // The link points at a *page*, not at this API. That page's button is what
+  // Two deliberate choices in one line.
+  //
+  // The link points at a *page*, not at this API: that page's button is what
   // spends the token — see server/api/auth/magic-link/verify.get.ts for why a
   // link that signs you in by being fetched is a link a mail scanner can spend.
-  const url = `${brand.appUrl}/auth/verify?token=${encodeURIComponent(token)}`
+  //
+  // And the token rides in the FRAGMENT, not the query string. A fragment is
+  // the one part of a URL a browser never transmits: it appears in no access
+  // log, no Referer header, no reverse proxy, and no CDN trace. With `?token=`
+  // the live credential was written to Cloudflare Logs on every visit and
+  // forwarded to PostHog as a same-origin `Referer` — readable by everyone with
+  // analytics access, for the whole fifteen-minute window, before the user had
+  // clicked anything. The page reads it client-side, which it was already doing.
+  const url = `${brand.appUrl}/auth/verify#token=${encodeURIComponent(token)}`
 
   const result = await sendEmail({
     to: email,
@@ -108,7 +175,7 @@ export default defineEventHandler(async (event) => {
   if (!result.sent) {
     // sendEmail() never throws, precisely because its usual callers are more
     // important than the mail. Here the mail IS the request, so the one thing
-    // this must not do is swallow the failure and answer "check your inbox".
+    // this must not do is swallow every failure and answer "check your inbox".
     //
     // `import.meta.dev` is replaced with a literal at build time — the same
     // guard server/api/auth/dev.post.ts relies on, with the same runtime
@@ -125,6 +192,20 @@ export default defineEventHandler(async (event) => {
     // Nobody will ever hold this token, so the row is a lie about a live link.
     await discardMagicLinkToken(db, record.id)
     console.error(JSON.stringify({ kind: 'magic_link_undeliverable', reason: result.reason }))
+
+    // `rejected` means Resend accepted the request and refused THIS address —
+    // a suppression-list entry, a hard bounce, a domain that doesn't exist. It
+    // is the one failure that depends on which address was submitted, so
+    // answering it differently turns the mail provider's address validation
+    // into the enumeration oracle the identical-response rule above exists to
+    // prevent: submit an address, read the status, learn whether it is real.
+    // Logged, and answered like every other request.
+    //
+    // `error` and `unconfigured` are properties of this deployment, identical
+    // for every caller, and a 503 for them is the honest answer — the whole
+    // point of inspecting the result rather than trusting it.
+    if (result.reason === 'rejected') return { ok: true }
+
     throw createError({
       statusCode: 503,
       message: 'Could not send the sign-in email',

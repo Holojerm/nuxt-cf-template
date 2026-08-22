@@ -1,7 +1,8 @@
 // Server middleware — runs on every request.
 //
-// Two jobs, in order: throttle the sign-in surface, then require a session for
-// everything under /api/ that isn't explicitly public.
+// Three jobs, in order: throttle the sign-in surface, refuse a session the
+// account behind it has revoked, then require a session for everything under
+// /api/ that isn't explicitly public.
 
 export default defineEventHandler(async (event) => {
   // Only protect /api routes that aren't public. Strip the query string —
@@ -23,6 +24,51 @@ export default defineEventHandler(async (event) => {
   // providers, tight enough to stop a callback-replay script.
   if (path.startsWith('/api/auth/')) {
     await rateLimit(event, { name: 'auth', limit: 30, windowSeconds: 60 })
+  }
+
+  // ── Revocation ─────────────────────────────────────────────────────────────
+  // Runs BEFORE the public-route bail-out, and that placement is the point.
+  // A sealed cookie carries no server-side record, so this is the only moment
+  // in the request where a revoked session can be caught — and it has to cover
+  // /api/_auth/session too, or a deleted account's other browser keeps
+  // rendering a signed-in shell forever because the one endpoint that reports
+  // "are you signed in?" was the one endpoint that never checked.
+  //
+  // Scoped to /api/ and to requests that actually carry a session: page renders
+  // are not gated here (the client discovers it on its next API call), and a
+  // request with no cookie costs nothing. That keeps the price at one indexed
+  // read per authenticated API call — see server/utils/session-guard.ts for why
+  // that read is not cached.
+  const session = path.startsWith('/api/') ? await getUserSession(event) : null
+  if (session?.user) {
+    const verdict = await checkSession(db, {
+      userId: session.user.id,
+      issuedAt: session.issuedAt,
+    })
+    if (!verdict.valid) {
+      console.warn(JSON.stringify({ kind: 'session_revoked', reason: verdict.reason }))
+      // Clear it so the browser stops presenting a dead credential on every
+      // subsequent request instead of only on the ones that happen to 401. The
+      // Set-Cookie rides out on whichever response follows.
+      await clearUserSession(event)
+
+      // Signing out is the one thing a revoked session is still allowed to do.
+      // It authorizes nothing — it destroys a credential — and 401ing it would
+      // make useUserSession().clear() throw, which it does not catch, turning
+      // "your session ended" into an unhandled rejection in the UI.
+      const isSignOut =
+        (path === '/api/_auth/session' && event.method === 'DELETE') || path === '/api/auth/logout'
+      if (!isSignOut) {
+        // 401 on GET /api/_auth/session too, and that is what makes the UI heal
+        // rather than hang: useUserSession().fetch() DOES catch a failed
+        // response and sets the session to null, so the other browser flips to
+        // signed-out on its next refresh. Falling through instead would achieve
+        // nothing — h3's clearSession drops the cached session from the request
+        // context, so the endpoint would re-unseal the same cookie and report
+        // the revoked user as present.
+        throw createError({ statusCode: 401, message: 'Unauthorized' })
+      }
+    }
   }
 
   if (publicRoutes.some((route) => path.startsWith(route))) {
@@ -50,11 +96,10 @@ export default defineEventHandler(async (event) => {
     return
   }
 
-  // All other /api routes require a valid session
+  // All other /api routes require a valid session. Already read above, so this
+  // costs nothing beyond the check itself.
   if (path.startsWith('/api/')) {
-    const session = await getUserSession(event)
-
-    if (!session.user) {
+    if (!session?.user) {
       throw createError({
         statusCode: 401,
         message: 'Unauthorized',

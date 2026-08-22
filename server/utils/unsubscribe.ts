@@ -143,20 +143,26 @@ export const unsubscribeQuerySchema = z.object({
 })
 
 /**
- * Shared guts of GET and POST /api/email/unsubscribe: validate the query,
- * verify the token, and record the opt-out.
+ * Parse and authenticate an unsubscribe request. Writes nothing.
  *
- * Both HTTP verbs perform the SAME write. GET is not treated as a safe
- * preview here on purpose — the realistic caller on GET is a human clicking
- * the plain-text link in an email's footer (always a GET; it's an `<a href>`),
- * not a crawler or link-unfurler that would make "GET has side effects" a
- * real problem. POST is what mail providers use for RFC 8058's one-click
- * button, with no page load and no session either.
+ * ── Why this is split from the write ─────────────────────────────────────────
+ * This URL lives in inbound email, which is the one place in the world where
+ * every link is fetched by a machine before a human sees it. Defender Safe
+ * Links, Proofpoint, and Mimecast GET every URL in a message on delivery — the
+ * exact hazard the magic-link flow is built around (see
+ * server/api/auth/magic-link/verify.get.ts). A GET that performed the opt-out
+ * meant a corporate mail gateway silently unsubscribed people from mail they
+ * had asked for, and the only evidence would be a preference row nobody set.
+ *
+ * So the GET authenticates and hands off to a confirmation page, and the POST
+ * — which is both RFC 8058's one-click path and that page's button — writes.
+ * The friction argument that used to justify the GET writing still holds for
+ * the case it was about: Gmail and Yahoo's own Unsubscribe button POSTs, so the
+ * one-click experience those rules are written about is untouched.
  */
-export async function resolveUnsubscribeRequest(
+export async function authenticateUnsubscribeRequest(
   event: H3Event,
-  db: NotificationDb,
-): Promise<{ userId: string; eventType: OptionalNotificationEventType }> {
+): Promise<{ userId: string; eventType: OptionalNotificationEventType; token: string }> {
   const {
     u: userId,
     e: eventType,
@@ -169,6 +175,15 @@ export async function resolveUnsubscribeRequest(
     throw createError({ statusCode: 400, message: 'Invalid or expired unsubscribe link' })
   }
 
+  return { userId, eventType, token }
+}
+
+/** Authenticate, then record the opt-out. The POST half of the pair above. */
+export async function applyUnsubscribeRequest(
+  event: H3Event,
+  db: NotificationDb,
+): Promise<{ userId: string; eventType: OptionalNotificationEventType }> {
+  const { userId, eventType } = await authenticateUnsubscribeRequest(event)
   await setNotificationPreference(db, userId, eventType, false)
   return { userId, eventType }
 }

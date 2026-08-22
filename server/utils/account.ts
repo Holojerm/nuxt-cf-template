@@ -33,7 +33,7 @@ import type { drizzle } from 'drizzle-orm/d1'
 import { blob } from '@nuxthub/blob'
 import * as tables from '../db/schema'
 import type { AuditMetadata } from '../db/schema'
-import { ACTIVE_STATUSES } from './entitlements'
+import { isBillingLive } from './entitlements'
 import { isSubscriptionRef } from './paddle-refs'
 import { withAudit } from './audit'
 import { isNotificationEnabled } from './notifications'
@@ -53,7 +53,7 @@ function tombstoneEmail(userId: string): string {
 }
 
 /**
- * Is there a live, auto-renewing Paddle subscription behind this account —
+ * Is there a subscription behind this account that Paddle might still bill —
  * across every product it might have bought, not just `'default'`.
  *
  * Deliberately NOT `getBillingOverview(db, userId)`, which scopes to one
@@ -62,6 +62,14 @@ function tombstoneEmail(userId: string): string {
  * exists to stop a customer getting billed after deletion must not miss it.
  * Per-account row counts are small, so one unfiltered read plus an in-memory
  * scan is simpler and safer than threading every product key through here.
+ *
+ * ── Billing-liveness, not access ─────────────────────────────────────────────
+ * This used to key on ACTIVE_STATUSES, which is the rule for "does this grant
+ * access". Wrong question, and wrong in the expensive direction: `past_due` and
+ * `paused` grant no access and are exactly the two states that go on to charge
+ * a card — one when a dunning retry succeeds, one when the customer unpauses.
+ * A `past_due` account could therefore delete itself, and then renew. See
+ * isBillingLive() in server/utils/entitlements.ts.
  */
 async function findLiveSubscriptionRef(db: AccountDb, userId: string): Promise<string | null> {
   const rows = await db
@@ -73,7 +81,7 @@ async function findLiveSubscriptionRef(db: AccountDb, userId: string): Promise<s
     .where(eq(tables.entitlements.userId, userId))
 
   const live = rows.find(
-    (row) => isSubscriptionRef(row.paddleSubscriptionId) && ACTIVE_STATUSES.includes(row.status),
+    (row) => isSubscriptionRef(row.paddleSubscriptionId) && isBillingLive(row.status),
   )
   return live?.paddleSubscriptionId ?? null
 }
@@ -81,6 +89,7 @@ async function findLiveSubscriptionRef(db: AccountDb, userId: string): Promise<s
 export interface DeleteAccountCounts {
   filesDeleted: number
   connectCodesDeleted: number
+  magicLinkTokensDeleted: number
   notificationPreferencesDeleted: number
   feedbackScrubbed: number
 }
@@ -119,24 +128,36 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
   if (!user) return { outcome: 'not_found' }
 
   const liveSubscriptionId = await findLiveSubscriptionRef(db, userId)
-  if (liveSubscriptionId) return { outcome: 'live_subscription', subscriptionId: liveSubscriptionId }
+  if (liveSubscriptionId)
+    return { outcome: 'live_subscription', subscriptionId: liveSubscriptionId }
 
-  const [files, [connectCodeTotal], [notificationTotal], [feedbackTotal]] = await Promise.all([
-    db
-      .select({ id: tables.files.id, r2Key: tables.files.r2Key })
-      .from(tables.files)
-      .where(eq(tables.files.userId, userId)),
-    db.select({ total: count() }).from(tables.mcpConnectCodes).where(eq(tables.mcpConnectCodes.userId, userId)),
-    db
-      .select({ total: count() })
-      .from(tables.notificationPreferences)
-      .where(eq(tables.notificationPreferences.userId, userId)),
-    db.select({ total: count() }).from(tables.feedback).where(eq(tables.feedback.userId, userId)),
-  ])
+  const [files, [connectCodeTotal], [magicLinkTotal], [notificationTotal], [feedbackTotal]] =
+    await Promise.all([
+      db
+        .select({ id: tables.files.id, r2Key: tables.files.r2Key })
+        .from(tables.files)
+        .where(eq(tables.files.userId, userId)),
+      db
+        .select({ total: count() })
+        .from(tables.mcpConnectCodes)
+        .where(eq(tables.mcpConnectCodes.userId, userId)),
+      // Keyed by address, not user id — a magic link is minted for an address
+      // before we know whether it has an account (server/db/schema.ts).
+      db
+        .select({ total: count() })
+        .from(tables.magicLinkTokens)
+        .where(eq(tables.magicLinkTokens.email, user.email)),
+      db
+        .select({ total: count() })
+        .from(tables.notificationPreferences)
+        .where(eq(tables.notificationPreferences.userId, userId)),
+      db.select({ total: count() }).from(tables.feedback).where(eq(tables.feedback.userId, userId)),
+    ])
 
   const metadata: AuditMetadata = {
     filesCount: files.length,
     connectCodesCount: connectCodeTotal?.total ?? 0,
+    magicLinkTokensCount: magicLinkTotal?.total ?? 0,
     notificationPreferencesCount: notificationTotal?.total ?? 0,
     feedbackCount: feedbackTotal?.total ?? 0,
   }
@@ -174,6 +195,18 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
         .where(eq(tables.mcpConnectCodes.userId, userId))
         .returning({ id: tables.mcpConnectCodes.id })
 
+      // Outstanding sign-in links are live credentials for this address, the
+      // same class of thing as the connect codes above, and deleting an account
+      // has to revoke the credentials that reach it. Without this a link minted
+      // minutes earlier stays redeemable — it would create a fresh empty
+      // account rather than resurrect this one (the tombstone address no longer
+      // matches), but "I deleted my account and a stale email signed me into a
+      // new one" is not a sentence a deletion flow should make possible.
+      const deletedMagicLinkTokens = await db
+        .delete(tables.magicLinkTokens)
+        .where(eq(tables.magicLinkTokens.email, user.email))
+        .returning({ id: tables.magicLinkTokens.id })
+
       const deletedNotificationPreferences = await db
         .delete(tables.notificationPreferences)
         .where(eq(tables.notificationPreferences.userId, userId))
@@ -202,6 +235,13 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
           // referredBy is left alone on purpose — it names the OTHER
           // account's referral code, not this one's, and this account leaving
           // doesn't get to erase where somebody else's customer came from.
+          //
+          // The one line that makes deletion mean anything on a device other
+          // than this one. Sessions are sealed cookies with no server-side
+          // record, so without this watermark the phone in the other room keeps
+          // full access to the entitlements this row still carries until its
+          // cookie expires. See server/utils/session-guard.ts.
+          sessionsInvalidBefore: new Date(),
         })
         .where(eq(tables.users.id, userId))
 
@@ -210,6 +250,7 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
         counts: {
           filesDeleted,
           connectCodesDeleted: deletedConnectCodes.length,
+          magicLinkTokensDeleted: deletedMagicLinkTokens.length,
           notificationPreferencesDeleted: deletedNotificationPreferences.length,
           feedbackScrubbed: scrubbedFeedback.length,
         },

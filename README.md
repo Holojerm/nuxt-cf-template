@@ -340,16 +340,33 @@ page instead of an empty one. The boundary is `getUserSession` / `requireSubscri
 API routes. Delete the client middleware and a gated page renders empty; delete the server check
 and it leaks.
 
+**Sessions are revocable, which sealed cookies are not by default.** Every session records the
+second it was sealed (`issuedAt`), every account can carry a `users.sessions_invalid_before`
+watermark, and `server/middleware/auth.ts` refuses any session issued before it — so deleting your
+account on a laptop ends it on the phone in the other room, instead of leaving it full paid access
+to the retained entitlements until the cookie expires. The cost is one indexed read on `users` per
+authenticated API request, uncached on purpose: caching the answer would reintroduce a window in
+which a revoked session still works, which is the bug. See
+[`server/utils/session-guard.ts`](./server/utils/session-guard.ts). The column is a timestamp
+rather than a `deleted_at` flag so the same primitive covers "sign out everywhere" later.
+
 Adding OAuth providers, in the order they render:
 
 1. **Apple** — developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → your
    *Services ID* → Sign in with Apple → Configure. Return URL: `https://<your-app>/api/auth/apple`.
-   Four env vars, because Apple has no static client secret: the server signs a short-lived ES256
+   Five env vars, because Apple has no static client secret: the server signs a short-lived ES256
    JWT from a `.p8` key on every request. `NUXT_OAUTH_APPLE_CLIENT_ID` (the Services ID, not the App
-   ID), `_TEAM_ID`, `_KEY_ID`, `_PRIVATE_KEY` (the whole `.p8`, literal newlines written as `\n`).
-   Two things to know: its callback is a cross-site **POST**, which is why that route is
-   `apple.ts` and not `apple.get.ts`; and "Hide My Email" produces a relay address that becomes the
-   account key, so the same person signing in with Google lands on a different account.
+   ID), `_TEAM_ID`, `_KEY_ID`, `_PRIVATE_KEY` (the whole `.p8`, literal newlines written as `\n`),
+   and `_REDIRECT_URL`. Three things to know:
+   - **`_REDIRECT_URL` is required, and only for Apple.** nuxt-auth-utils' Apple handler puts that
+     value straight into the token-exchange body instead of falling back to the request's own
+     origin the way the Google and GitHub handlers do. Unset, it serialises as
+     `redirect_uri=undefined` and Apple answers `invalid_grant` *after* a successful consent
+     screen — every earlier step looks perfect. The button doesn't render until all five are set.
+   - Its callback is a cross-site **POST**, which is why that route is `apple.ts`, not
+     `apple.get.ts`.
+   - "Hide My Email" produces a relay address that becomes the account key, so the same person
+     signing in with Google lands on a different account.
 2. **Google** — Cloud Console → APIs & Services → Credentials → OAuth client ID. Authorized
    redirect URI: `https://<your-app>/api/auth/google`. `NUXT_OAUTH_GOOGLE_CLIENT_ID` / `_SECRET`.
 3. **GitHub** — optional, and **off by default**. It is a developer credential: on a consumer
@@ -377,6 +394,17 @@ Two honest caveats, both deliberate:
   spray from many colos can overshoot for a beat. This is front-door abuse control, not metering.
   Anything you bill on belongs in a Durable Object, which is strongly consistent.
 
+**Limits keyed by something other than the caller need a different shape.** The magic-link
+endpoint's per-address budget (5 per 15 min) does not use the `rateLimit()` wrapper, and that is the
+point: the wrapper sets `X-RateLimit-Remaining` and throws 429, and keyed by *address* both of those
+answer "is this stranger signing in right now?" for anyone willing to POST their email. It calls the
+pure `consumeRateLimit()` instead, which sets no headers, and reports exhaustion as the same
+`{ ok: true }` every other request gets. It charges two buckets — the exact address and the
+canonical mailbox — because `victim+1@gmail.com` … `+9999` are thousands of strings that reach one
+inbox, so a limiter keyed on the exact address is one an attacker steps around with a counter.
+Identity stays on the exact address; see `canonicalizeEmailForLimiting` for why collapsing it there
+would merge two strangers' accounts.
+
 ---
 
 ## Transactional email
@@ -399,6 +427,14 @@ Which emails exist, and when they fire — decided by `decideNotification()` in
 | Subscription/pass active | Transition **into** `active`/`trialing`, or a pass actually granted |
 | Payment failed | Transition into `past_due` |
 | Access ended | Cancellation, approved refund, or chargeback |
+
+**Unsubscribing takes a click, and that is not friction.** `List-Unsubscribe` is a URL sitting in
+inbound mail, and mail security gateways GET every URL in a message on delivery — so a GET that
+performed the opt-out let a corporate scanner unsubscribe people from mail they had asked for, with
+nothing left behind but a preference row nobody set. `GET /api/email/unsubscribe` now authenticates
+the token and redirects to the public `/unsubscribe` page whose button POSTs. Gmail and Yahoo's own
+one-click button POSTs directly (RFC 8058), so the experience their bulk-sender rules are written
+about is untouched.
 
 They fire on **status transitions, not events**. Paddle sends a `subscription.updated` for a card
 edit or a metadata tweak; emailing on every one teaches people to filter you — and the
@@ -451,6 +487,7 @@ Going live: swap the token/secret for live ones and set `NUXT_PUBLIC_PADDLE_ENV=
 | `/pricing` | Public | Three plans from `app/utils/plans.ts` + price IDs in runtime config. Indexed. |
 | `/login` | Public | Magic-link form, then buttons for configured OAuth providers, then dev sign-in. `noindex`. |
 | `/auth/verify` | Public | Where a magic link lands. Confirming is what spends the token. `noindex`. |
+| `/unsubscribe` | Public | Where an email footer's unsubscribe link lands. Confirming is what opts you out — a GET must not, because mail gateways fetch it. `noindex`. |
 | `/account` | Signed in | Plan status, billing history, self-serve cancel, MCP connect code, sign out. |
 | `/dashboard` | Signed in **and** paying | The gated example. Replace with your product. |
 | `/terms`, `/privacy` | Public | Templates written to match what this codebase actually does. **Have a lawyer read them.** |

@@ -29,6 +29,7 @@ beforeEach(async () => {
   await db.delete(schema.notificationPreferences)
   await db.delete(schema.files)
   await db.delete(schema.mcpConnectCodes)
+  await db.delete(schema.magicLinkTokens)
   await db.delete(schema.entitlements)
   await db.delete(schema.users)
 
@@ -133,6 +134,40 @@ describe('deleteAccount', () => {
     ).toHaveLength(0)
   })
 
+  it('revokes outstanding magic-link tokens for the address', async () => {
+    // A sign-in link is a live credential for this mailbox, the same class of
+    // thing as the connect codes above — deleting an account has to revoke the
+    // credentials that reach it. Keyed by address, not user id: a link is minted
+    // before we know whether the address has an account at all.
+    await db.insert(schema.magicLinkTokens).values([
+      {
+        id: 'link-1',
+        email: `${USER}@example.com`,
+        tokenHash: 'h1',
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+      {
+        id: 'link-2',
+        email: `${USER}@example.com`,
+        tokenHash: 'h2',
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+      // Somebody else's link, in the same table, must survive.
+      {
+        id: 'link-other',
+        email: 'other@example.com',
+        tokenHash: 'h3',
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    ])
+
+    const outcome = await deleteAccount(db, USER)
+    expect(outcome).toMatchObject({ outcome: 'deleted', counts: { magicLinkTokensDeleted: 2 } })
+
+    const remaining = await db.select().from(schema.magicLinkTokens)
+    expect(remaining.map((row) => row.id)).toEqual(['link-other'])
+  })
+
   it('scrubs PII off a feedback row but keeps the message itself', async () => {
     await db.insert(schema.feedback).values({
       id: 'fb-1',
@@ -170,7 +205,10 @@ describe('deleteAccount', () => {
     await deleteAccount(db, USER)
 
     const rows = await db.query.auditLog.findMany({
-      where: and(eq(schema.auditLog.actorUserId, USER), eq(schema.auditLog.action, 'account.deleted')),
+      where: and(
+        eq(schema.auditLog.actorUserId, USER),
+        eq(schema.auditLog.action, 'account.deleted'),
+      ),
     })
     expect(rows).toHaveLength(1)
     const row = rows[0]!
@@ -209,20 +247,62 @@ describe('deleteAccount', () => {
     ).toHaveLength(0)
   })
 
-  it('does not block on a past_due subscription or a comp/pass', async () => {
-    await db.insert(schema.entitlements).values([
-      {
-        id: 'ent-past-due',
+  it.each(['past_due', 'paused'])(
+    'blocks on a %s subscription, which still bills',
+    async (status) => {
+      // These two are the reason this guard keys on billing-liveness rather than
+      // on ACTIVE_STATUSES. Neither grants access, so the access rule reads them
+      // as dead — and both go on to charge a card: past_due when a dunning retry
+      // succeeds, paused when the customer unpauses. Deleting here is the exact
+      // outcome the guard exists to prevent, a renewal against an account nobody
+      // can look up.
+      await db.insert(schema.entitlements).values({
+        id: `ent-${status}`,
         userId: USER,
-        paddleSubscriptionId: 'sub_expired',
+        paddleSubscriptionId: `sub_${status}`,
         productKey: 'default',
-        status: 'past_due',
+        status,
         currentPeriodEnd: new Date(Date.now() - 1000),
-      },
+      })
+
+      expect(await deleteAccount(db, USER)).toEqual({
+        outcome: 'live_subscription',
+        subscriptionId: `sub_${status}`,
+      })
+    },
+  )
+
+  it.each(['canceled', 'refunded', 'chargeback'])(
+    'does not block on a %s subscription — nothing will ever bill it again',
+    async (status) => {
+      await db.insert(schema.entitlements).values({
+        id: `ent-${status}`,
+        userId: USER,
+        paddleSubscriptionId: `sub_${status}`,
+        productKey: 'default',
+        status,
+        currentPeriodEnd: new Date(Date.now() - 1000),
+      })
+
+      expect((await deleteAccount(db, USER)).outcome).toBe('deleted')
+    },
+  )
+
+  it('does not block on a comp or a pass, whatever their status', async () => {
+    // Nothing renews these, so deleting simply forfeits the time left on them.
+    await db.insert(schema.entitlements).values([
       {
         id: 'ent-comp',
         userId: USER,
         paddleSubscriptionId: 'comp_abc',
+        productKey: 'default',
+        status: 'active',
+        currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24),
+      },
+      {
+        id: 'ent-pass',
+        userId: USER,
+        paddleSubscriptionId: 'txn_abc',
         productKey: 'default',
         status: 'active',
         currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24),

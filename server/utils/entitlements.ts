@@ -65,6 +65,33 @@ export function passEndDates(base: Date, passes: number): Date[] {
 /** Statuses we write when access is taken away for a money reason. */
 export const REVOKED_STATUS = { refund: 'refunded', chargeback: 'chargeback' } as const
 
+/**
+ * Statuses in which a `sub_` row will never charge a card again.
+ *
+ * ── Not the same question as ACTIVE_STATUSES, and the difference is money ────
+ * ACTIVE_STATUSES answers "does this grant access right now" — an ACCESS rule,
+ * which is why `past_due` is absent from it (a lapsed card should not keep the
+ * product open). Whether Paddle will bill again is a different question with a
+ * different answer for the same row: `past_due` and `paused` are precisely the
+ * states that RESUME billing, one after a dunning retry succeeds and one when
+ * the customer unpauses.
+ *
+ * Reading the access rule as the billing rule is how a deletion guard lets
+ * someone delete an account out from under a subscription that then renews
+ * against a card nobody can look up anymore. So the billing-liveness test is
+ * stated as the complement: anything not terminal is live.
+ */
+export const BILLING_TERMINAL_STATUSES = [
+  'canceled',
+  REVOKED_STATUS.refund,
+  REVOKED_STATUS.chargeback,
+] as const
+
+/** Will Paddle ever bill this subscription row again? */
+export function isBillingLive(status: string): boolean {
+  return !(BILLING_TERMINAL_STATUSES as readonly string[]).includes(status)
+}
+
 /** The user's granting entitlement for a product, or null. */
 export async function findActiveEntitlement(
   db: EntitlementDb,
@@ -429,7 +456,9 @@ export async function getBillingOverview(
     active,
     subscriptionIds: history
       // Through the predicate, not a fourth hand-rolled `startsWith('sub_')`.
-      .filter((e) => isSubscriptionRef(e.paddleSubscriptionId) && ACTIVE_STATUSES.includes(e.status))
+      .filter(
+        (e) => isSubscriptionRef(e.paddleSubscriptionId) && ACTIVE_STATUSES.includes(e.status),
+      )
       .map((e) => e.paddleSubscriptionId),
     // Prefer the customer behind the LIVE entitlement — that's whose portal a
     // cancel link has to open. Fall back to any customer id we've ever seen so

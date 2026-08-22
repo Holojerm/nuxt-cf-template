@@ -49,10 +49,19 @@ const items = computed(() => [
   </UDropdownMenu>
 
   <!-- Nothing to show on /login itself: the button would link to the page it's
-       already on, nesting `?redirect=/login?redirect=…` one level per visit. -->
+       already on, nesting `?redirect=/login?redirect=…` one level per visit.
+
+       `route.path`, not `route.fullPath`, for two reasons that happen to point
+       the same way. Correctness: the fragment does not exist during SSR, so
+       fullPath renders one href on the server and a different one on the
+       client, which is a hydration mismatch on every page that has a hash.
+       Security: on /auth/verify and /unsubscribe the fragment IS a live
+       credential, and fullPath would copy it into `?redirect=` — onto the wire,
+       into the access log, and from there into the redirect cookie and a
+       magic_link_tokens row. The path alone is all this link needs. -->
   <UButton
     v-else-if="!isLoginPage"
-    :to="{ path: '/login', query: { redirect: route.fullPath } }"
+    :to="{ path: '/login', query: { redirect: route.path } }"
     size="sm"
     class="min-touch"
   >

@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `sessions_invalid_before` integer;

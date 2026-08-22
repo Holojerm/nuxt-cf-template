@@ -34,8 +34,20 @@ import { expect, test } from '@playwright/test'
  * Landing, the checkout entry point, and the auth surface — both halves of the
  * latter, since /auth/verify is the only page that fetches on mount and
  * `connect-src` is the directive nobody notices breaking until sign-in stops.
+ *
+ * /auth/verify carries a syntactically valid dummy token on purpose. Visited
+ * bare, the page short-circuits to its "no token" state and never issues the
+ * lookup — so the route was in this list while exercising none of the
+ * connect-src it was added to cover. The token is 43 base64url characters, the
+ * shape MAGIC_LINK_TOKEN_PATTERN accepts, so the request is really made and
+ * really answered (with `invalid`, which is the correct answer and irrelevant
+ * here — what matters is that the browser was allowed to ask).
+ *
+ * In the fragment, because that is where a real link puts it.
  */
-const ROUTES = ['/', '/pricing', '/login', '/auth/verify']
+const DUMMY_TOKEN = 'A'.repeat(43)
+
+const ROUTES = ['/', '/pricing', '/login', `/auth/verify#token=${DUMMY_TOKEN}`]
 
 interface CspViolation {
   directive: string

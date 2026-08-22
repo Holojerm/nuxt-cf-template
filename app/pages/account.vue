@@ -16,7 +16,6 @@ definePageMeta({ middleware: 'auth' })
 
 const { user, clear: clearSession } = useUserSession()
 const toast = useToast()
-const route = useRoute()
 const config = useRuntimeConfig()
 
 const { data: billing, status } = await useFetch('/api/billing/entitlement')
@@ -43,17 +42,11 @@ async function toggleNotification(eventType: string, enabled: boolean): Promise<
   }
 }
 
-// Landed here from an email footer's unsubscribe link
-// (GET /api/email/unsubscribe already performed the opt-out and redirected
-// here) — confirm it took effect. The toggle above already reflects it since
-// notificationPrefs was fetched after the redirect.
-if (route.query.unsubscribed) {
-  toast.add({
-    title: 'Unsubscribed',
-    description: "You won't get that email anymore. You can turn it back on below any time.",
-    color: 'success',
-  })
-}
+// No `?unsubscribed=` toast here any more: an email footer's unsubscribe link
+// now lands on /unsubscribe, which is public and shows its own confirmation.
+// It has to be — this page is auth-gated, so anyone reading their mail on a
+// device they weren't signed in on used to get bounced to /login with no idea
+// whether the opt-out had worked. See server/api/email/unsubscribe.get.ts.
 
 const portalPending = ref(false)
 

@@ -7,7 +7,12 @@
 // in its UI; the plain link in unsubscribe.get.ts is the fallback for clients
 // that don't.
 //
-// Performs the identical write as the GET handler. The POST body itself
+// This is the only verb that writes. The GET half authenticates and hands off
+// to a confirmation page, because a URL in inbound mail is fetched by security
+// gateways before a human sees it — see unsubscribe.get.ts. Two callers reach
+// this handler: a mail provider's one-click button, and that page's button.
+//
+// The POST body itself
 // (`List-Unsubscribe=One-Click`) carries no information this endpoint needs —
 // everything required to identify the subscriber and event type is already
 // in the URL from the List-Unsubscribe header, so there's nothing to read off
@@ -23,7 +28,7 @@ export default defineEventHandler(async (event) => {
   // so many opt-outs can legitimately share an IP.
   await rateLimit(event, { name: 'email-unsubscribe', limit: 30, windowSeconds: 60 })
 
-  await resolveUnsubscribeRequest(event, db)
+  await applyUnsubscribeRequest(event, db)
 
   // RFC 8058 doesn't prescribe a response body — the mail client doesn't
   // render one. 200 is the whole contract.

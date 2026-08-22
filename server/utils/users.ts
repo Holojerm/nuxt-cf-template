@@ -44,6 +44,96 @@ export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
 }
 
+/**
+ * Addresses this app must never mail, and must never mint a credential for.
+ *
+ * ── The one that matters: deleted-account tombstones ─────────────────────────
+ * Deleting an account anonymizes the `users` row in place rather than removing
+ * it (server/utils/account.ts — the id has to survive, because
+ * `entitlements.user_id` is a real foreign key and billing records are kept for
+ * tax law). The scrubbed row keeps a synthetic address,
+ * `deleted-<id>@deleted.invalid`.
+ *
+ * That address is still an address, and identity here is the email. Mint a
+ * magic link for it and redeeming that link would find the tombstone row by
+ * email and hand out a session for the deleted account's id — with its
+ * entitlement history, its audit trail, and whatever `role` it had. Account
+ * resurrection, from nothing but a leaked user id.
+ *
+ * In practice Resend refuses `.invalid` today, so the mail never leaves. That
+ * is not a guard, it's a coincidence: it depends on a third party's address
+ * validation, and a fork that swaps mail providers or points a catch-all domain
+ * at itself loses it silently. An authentication boundary does not get to live
+ * in someone else's input validation.
+ *
+ * ── Why the whole TLD, not the exact tombstone string ────────────────────────
+ * `.invalid` is reserved by RFC 2606 precisely so that it can never resolve, so
+ * refusing all of it costs zero real users and survives the tombstone's
+ * spelling changing later. The sibling reservations are deliberately NOT here:
+ * `.example` is what this repo's own fixtures and dev sign-in run on.
+ *
+ * Lives beside normalizeEmail() rather than with the magic-link code because it
+ * is a rule about the identity key itself — the session guard
+ * (server/utils/session-guard.ts) reads it too.
+ */
+export function isUndeliverableAddress(email: string): boolean {
+  const domain = normalizeEmail(email).split('@').pop() ?? ''
+  return domain === 'invalid' || domain.endsWith('.invalid')
+}
+
+/**
+ * Providers that deliver every dotted spelling of a local part to one mailbox,
+ * and treat their alternate domain as the same account.
+ */
+const DOT_INSENSITIVE_DOMAINS = new Map([
+  ['gmail.com', 'gmail.com'],
+  ['googlemail.com', 'gmail.com'],
+])
+
+/**
+ * The one mailbox an address actually reaches, for rate-limiting purposes only.
+ *
+ * ── Why normalizeEmail() is not enough ───────────────────────────────────────
+ * Trim-and-lowercase makes `Ada@Example.com` and `ada@example.com` one bucket,
+ * and stops there. But `victim+1@gmail.com` … `victim+9999@gmail.com` are
+ * thousands of distinct strings that all land in ONE inbox, so a per-address
+ * limiter keyed on the normalized form is a limiter an attacker steps around by
+ * incrementing a counter — while every message still arrives at the person
+ * being flooded. Gmail also ignores dots, so `v.i.c.t.i.m@gmail.com` multiplies
+ * that again.
+ *
+ * ── Why this is NOT the identity key ─────────────────────────────────────────
+ * Two different people can legitimately own `a.b@example.com` and
+ * `ab@example.com` on a provider that treats dots as significant — which is
+ * most of them, and which is why this function only special-cases the two
+ * domains that document otherwise. Collapsing identities on a guess would merge
+ * two strangers' accounts. Accounts stay keyed on normalizeEmail(); this is
+ * only ever a KV bucket name, where a false merge costs one person a slower
+ * retry and nothing else.
+ *
+ * Callers limit on BOTH this and the exact address, so sub-addressing cannot
+ * widen a budget and a shared canonical form cannot narrow someone else's.
+ */
+export function canonicalizeEmailForLimiting(email: string): string {
+  const normalized = normalizeEmail(email)
+  const at = normalized.lastIndexOf('@')
+  if (at <= 0) return normalized
+
+  let local = normalized.slice(0, at)
+  const rawDomain = normalized.slice(at + 1)
+  const domain = DOT_INSENSITIVE_DOMAINS.get(rawDomain) ?? rawDomain
+
+  // `plus > 0`, not `>= 0`: an address whose local part IS the tag (`+x@…`)
+  // would otherwise canonicalize to `@domain` and put every such address in one
+  // shared bucket.
+  const plus = local.indexOf('+')
+  if (plus > 0) local = local.slice(0, plus)
+
+  if (DOT_INSENSITIVE_DOMAINS.has(rawDomain)) local = local.replaceAll('.', '')
+
+  return local ? `${local}@${domain}` : normalized
+}
+
 /** Fall back to the local-part when a provider has no display name (common on GitHub). */
 function displayName(profile: OAuthProfile, email: string): string {
   const name = profile.name?.trim()

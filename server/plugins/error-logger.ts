@@ -21,7 +21,10 @@ export default defineNitroPlugin((nitro) => {
         status,
         message: err.message,
         stack: err.stack,
-        path: event?.path,
+        // Never event.path — the unsubscribe and magic-link routes carry a live
+        // credential in their query string, and a 5xx is precisely when it is
+        // still unspent. See server/utils/log.ts.
+        path: pathForLog(event?.path),
         method: event?.method,
       }),
     )
@@ -52,7 +55,10 @@ export default defineNitroPlugin((nitro) => {
         ],
         $exception_message: err.message,
         $exception_type: err.name || 'Error',
-        path: event?.path,
+        // Never event.path — the unsubscribe and magic-link routes carry a live
+        // credential in their query string, and a 5xx is precisely when it is
+        // still unspent. See server/utils/log.ts.
+        path: pathForLog(event?.path),
         method: event?.method,
         status,
       },

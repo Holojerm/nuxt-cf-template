@@ -362,7 +362,16 @@ export default defineNuxtConfig({
       // is four values rather than two: `clientId` is the Services ID, and
       // `privateKey` is the .p8 contents with literal newlines written as \n.
       // A real secret — `wrangler secret put`, never wrangler.toml [vars].
-      apple: { clientId: '', teamId: '', keyId: '', privateKey: '' },
+      //
+      // `redirectURL` is the fifth, and it is REQUIRED for Apple specifically —
+      // the only provider here that needs one. nuxt-auth-utils' Apple handler
+      // puts the raw value into the token-exchange body instead of falling back
+      // to the request's own origin the way the Google and GitHub handlers do,
+      // so leaving it empty sends `redirect_uri=undefined` to Apple and the
+      // sign-in dies with `invalid_grant` at the very last step. Set
+      // NUXT_OAUTH_APPLE_REDIRECT_URL to exactly the Return URL registered with
+      // Apple: https://<your-app>/api/auth/apple
+      apple: { clientId: '', teamId: '', keyId: '', privateKey: '', redirectURL: '' },
       google: { clientId: '', clientSecret: '' },
       github: { clientId: '', clientSecret: '' },
     },

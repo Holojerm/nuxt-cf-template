@@ -23,6 +23,22 @@ declare module '#auth-utils' {
 
   interface UserSession {
     user: User
+    /**
+     * Unix seconds at which this session was sealed.
+     *
+     * The half of session revocation that lives in the cookie: `users.
+     * sessions_invalid_before` says when an account's sessions died, and this
+     * says whether THIS one predates that. Without it a sealed cookie is
+     * unfalsifiable — there is no server-side session record to delete, so
+     * "sign out everywhere" and "this account was deleted" would both be
+     * unenforceable. Checked on every authenticated request by
+     * server/middleware/auth.ts.
+     *
+     * Optional because sessions sealed before this shipped don't carry it. The
+     * guard treats a missing value as revoked *only* when the account has a
+     * revocation instant set, so nobody is logged out by the upgrade itself.
+     */
+    issuedAt?: number
   }
 }
 

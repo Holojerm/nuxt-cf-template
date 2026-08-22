@@ -33,6 +33,15 @@ export default defineNuxtPlugin((nuxtApp) => {
 
     person_profiles: 'identified_only',
 
+    // Nothing secret may reach the analytics warehouse. Two flows in this app
+    // put a single-use credential in a URL (the magic-link confirmation page
+    // and the one-click unsubscribe link), and autocapture attaches
+    // `window.location.href` to every event it records — so without this hook a
+    // live sign-in token is written to PostHog before the user has clicked
+    // anything, readable by everyone with project access. See
+    // app/utils/analytics-privacy.ts for the full chain of defences.
+    sanitize_properties: sanitizeAnalyticsProperties,
+
     // Manual pageview capture below — Nuxt's SPA router doesn't emit the
     // navigation events posthog-js listens for by default.
     capture_pageview: false,
@@ -68,7 +77,12 @@ export default defineNuxtPlugin((nuxtApp) => {
   const router = useRouter()
   router.afterEach((to) => {
     nextTick(() => {
-      posthog.capture('$pageview', { $current_url: to.fullPath })
+      // `to.path`, never `to.fullPath`. fullPath carries the query string and
+      // fragment, which on /auth/verify and /unsubscribe is a live credential.
+      // The sanitizer above would catch it anyway; not putting it there in the
+      // first place is cheaper and does not depend on a regex staying correct.
+      // Analytics wants to know which page was viewed, and the path is the page.
+      posthog.capture('$pageview', { $current_url: to.path })
     })
   })
 

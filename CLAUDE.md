@@ -306,9 +306,17 @@ Three rules the magic-link flow depends on, each of which is a real bug if broke
 - **Reserved addresses are refused at mint time.** Deletion anonymizes the `users`
   row and keys it `deleted-<id>@deleted.invalid`, so a link for that tombstone
   would redeem into the deleted account. `isUndeliverableAddress()` refuses the
-  `.invalid` TLD — same success body, and after the rate limiter so its headers
-  don't leak the difference. The sign-in email is `security.sign_in_link`, which
-  the taxonomy classifies as mandatory, so it can never carry List-Unsubscribe.
+  `.invalid` TLD. The sign-in email is `security.sign_in_link`, which the
+  taxonomy classifies as mandatory, so it can never carry List-Unsubscribe.
+- **The token rides in the URL fragment**, never the query string. A fragment is
+  never transmitted, so it reaches no access log, no `Referer`, and no proxy —
+  which matters because PostHog autocapture attaches `location.href` to every
+  event. `app/utils/analytics-privacy.ts` scrubs whatever gets past that.
+- **Nothing about the address is observable from outside.** The per-address rate
+  limit calls the pure `consumeRateLimit()` rather than `rateLimit()`, because
+  the wrapper's `X-RateLimit-Remaining` header and 429 would each answer "is this
+  stranger mid-sign-in?" to anyone who POSTs their address. Exhaustion, a
+  reserved address, and a provider-rejected send all return the same `{ ok: true }`.
 
 GitHub ships **unconfigured on purpose** — it is a developer credential, and a
 consumer sign-in page that leads with it tells most visitors the product isn't for
@@ -336,6 +344,16 @@ and `app/middleware/subscription.ts` run in the browser and exist so people see
 a login page instead of an empty one. Every paid API route must call
 `requireSubscription(event)` itself, or the gate is decorative.
 
+**Sessions are revocable.** A sealed cookie has no server-side record, so
+revocation needs both halves: every session carries `issuedAt`, and
+`users.sessions_invalid_before` is the watermark that kills everything older.
+`server/middleware/auth.ts` checks it on every `/api/*` request that carries a
+session — one indexed read, deliberately uncached (`server/utils/session-guard.ts`
+explains why a cache would reintroduce the bug). Deletion sets the watermark;
+that is what makes "delete my account" end the session on the user's other
+devices instead of only the one they clicked from. Anything else that must
+invalidate sessions sets the same column — do not add a second mechanism.
+
 **Identity is the verified email address.** Signing in with a magic link today
 and Google tomorrow on the same address lands on the same account by design.
 That's only safe because every caller of `establishSession()` passes an explicit
@@ -347,8 +365,19 @@ token was mailed to that address and came back.
 Adding a provider is three steps: add the `oauth.<name>` keys to
 `nuxt.config.ts`, write `server/api/auth/<name>.get.ts` mapping the provider's
 user shape onto `OAuthProfile`, and add a row to `server/api/auth/providers.get.ts`
-so `/login` renders the button. (Apple is the exception to step two: its callback
-is a cross-site form POST, so that route is `apple.ts` with no method suffix.)
+so `/login` renders the button. (Apple is the exception to step two twice over:
+its callback is a cross-site form POST, so that route is `apple.ts` with no
+method suffix, and it needs `NUXT_OAUTH_APPLE_REDIRECT_URL` because its handler
+does not fall back to the request origin the way the others do.)
+
+**Never put a secret in a URL a browser will keep.** Two flows here have to hand
+someone a credential in a link — the sign-in link and the unsubscribe link — and
+three places will happily record it: Cloudflare Logs (`event.path` includes the
+query; use `pathForLog()`), the `Referer` the `/ingest` proxy forwards to
+PostHog, and PostHog autocapture, which attaches `location.href` to every event.
+Put the token in the **fragment** where possible, and scrub the rest through
+`app/utils/analytics-privacy.ts`. Analytics access is handed out far more freely
+than database access, which is exactly why nothing secret may travel there.
 
 ### Rate Limiting
 

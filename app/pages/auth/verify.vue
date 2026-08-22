@@ -1,5 +1,15 @@
 <script setup lang="ts">
-// /auth/verify?token=… — the page a sign-in link opens.
+// /auth/verify#token=… — the page a sign-in link opens.
+//
+// ── Why the token is in the fragment ─────────────────────────────────────────
+// A URL fragment is the one part of a URL the browser never puts on the wire.
+// As `?token=` the live credential was written to Cloudflare Logs on every
+// visit, forwarded to PostHog as a same-origin `Referer` by the /ingest proxy,
+// and attached to every autocaptured event as `window.location.href` — so it sat
+// in the analytics warehouse, readable by everyone with project access, for the
+// whole fifteen-minute window and *before* the user had clicked confirm. As a
+// fragment it reaches no log and no proxy, and only this page ever sees it.
+// The layers behind this one are in app/utils/analytics-privacy.ts.
 //
 // ── Why the link lands on a page with a button, and not on an API route ──────
 // Because opening the link is not proof that a person opened it. Mail security
@@ -29,15 +39,51 @@ const route = useRoute()
 const { fetch: refreshSession } = useUserSession()
 const config = useRuntimeConfig()
 
-const token = computed(() => (typeof route.query.token === 'string' ? route.query.token : ''))
+const token = ref('')
+/** Has the browser had a chance to read the URL yet? False through SSR. */
+const resolved = ref(false)
 
-const { data: link, status } = await useFetch('/api/auth/magic-link/verify', {
+const { data: link, status, execute } = await useFetch('/api/auth/magic-link/verify', {
   query: { token },
   server: false,
-  immediate: Boolean(token.value),
+  // Not `Boolean(token)`: a fragment is not sent to the server, so during SSR
+  // there is nothing to test and the token can only be read after mount.
+  immediate: false,
 })
 
-const checking = computed(() => Boolean(token.value) && ['idle', 'pending'].includes(status.value))
+function syncToken() {
+  token.value = readToken()
+  resolved.value = true
+  if (token.value) execute()
+}
+
+// Read on mount because the fragment does not exist during SSR, and re-read on
+// change because a hash-only navigation does not remount the component — so
+// without the watcher a second link opened in the same tab would be checked
+// against the first link's token.
+onMounted(syncToken)
+watch(() => route.hash, syncToken)
+
+/**
+ * Fragment first, query second.
+ *
+ * The query fallback is not a second supported spelling — nothing mints one any
+ * more. It is there for a link created by an older deploy, and for a URL
+ * reassembled by hand, both of which should still work rather than read as
+ * "invalid". Anything arriving that way is scrubbed out of analytics by
+ * app/utils/analytics-privacy.ts.
+ */
+function readToken(): string {
+  const fragment = new URLSearchParams(route.hash.replace(/^#/, '')).get('token')
+  if (fragment) return fragment
+  return typeof route.query.token === 'string' ? route.query.token : ''
+}
+
+// Before mount there is nothing to say yet — rendering the failure state during
+// SSR would flash "we don't recognise that link" at every valid link.
+const checking = computed(
+  () => !resolved.value || (Boolean(token.value) && ['idle', 'pending'].includes(status.value)),
+)
 const valid = computed(() => link.value?.status === 'valid')
 
 /** The reason this link is unusable, as a code the shared error map knows. */
@@ -99,7 +145,10 @@ useSeo({
           <UIcon name="i-lucide-mail-open" class="mt-1 size-5 shrink-0 text-primary" />
           <p class="text-muted">
             You're about to sign in as
-            <span class="text-highlighted">{{ link?.email }}</span>
+            <!-- data-private is the maskTextSelector configured in
+                 app/plugins/posthog.client.ts: session replay records this page,
+                 and the address is the one piece of PII on it. -->
+            <span class="text-highlighted" data-private>{{ link?.email }}</span>
             — if that isn't the account you wanted, request a link for the right address instead.
           </p>
         </div>

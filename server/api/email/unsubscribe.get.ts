@@ -1,22 +1,27 @@
 // One-click unsubscribe — the human-facing half. Someone clicked the
 // "Unsubscribe" link in an email's footer, which is a plain `<a href>` and
-// therefore always a GET. RFC 8058's List-Unsubscribe-Post is what mail
-// clients use instead of a click-through (see unsubscribe.post.ts) — this
-// file exists for the rest of the world: anyone reading the email in a
-// client that doesn't surface the one-click button, or just clicking the
-// link in the footer text directly.
+// therefore always a GET.
 //
-// Performs the opt-out immediately and redirects, rather than rendering a
-// confirmation page with a second "yes, really unsubscribe" button — an extra
-// click is exactly the friction this feature exists to remove under Gmail
-// and Yahoo's bulk-sender rules, and getting it wrong here is a spam
-// complaint, not a support ticket. Landing on /account afterwards (rather
-// than a bare 200) means a signed-in visitor sees it took effect and can turn
-// it back on from the same screen if they clicked by mistake.
+// ── This GET does not unsubscribe anyone ─────────────────────────────────────
+// It used to, and that was the same mistake the magic-link flow is built to
+// avoid: this URL sits in inbound mail, and inbound mail is fetched by machines
+// before a human ever sees it. Defender Safe Links, Proofpoint, and Mimecast
+// GET every link in a message on delivery. A GET that wrote the opt-out meant a
+// corporate mail gateway could unsubscribe someone from mail they had asked
+// for, leaving nothing behind but a preference row nobody set.
+//
+// So this authenticates the token and redirects to a public confirmation page
+// whose button POSTs (app/pages/unsubscribe.vue). The friction argument that
+// justified writing on GET was about Gmail and Yahoo's bulk-sender rules — and
+// those are satisfied by unsubscribe.post.ts, which is the endpoint their own
+// one-click button actually calls. Nothing about that path gains a step.
+//
+// The old behaviour also landed people on /account, which is auth-gated: a
+// signed-out clicker was bounced to /login having no idea whether it worked.
+// The confirmation page needs no session.
 //
 // Public — no session exists on this request. Allowlisted by exact path in
-// server/middleware/auth.ts, same shape as the /api/feedback entry next to
-// it.
+// server/middleware/auth.ts, same shape as the /api/feedback entry next to it.
 
 export default defineEventHandler(async (event) => {
   // IP-keyed like every other unauthenticated endpoint here. Worth naming the
@@ -27,7 +32,15 @@ export default defineEventHandler(async (event) => {
   // against a script hammering the endpoint, not a per-user quota.
   await rateLimit(event, { name: 'email-unsubscribe', limit: 30, windowSeconds: 60 })
 
-  const { eventType } = await resolveUnsubscribeRequest(event, db)
+  // Verified here rather than left to the POST so the page can say "this link
+  // isn't valid" straight away instead of after a click. No write happens.
+  const { userId, eventType, token } = await authenticateUnsubscribeRequest(event)
 
-  return sendRedirect(event, `/account?unsubscribed=${encodeURIComponent(eventType)}`)
+  // The parameters travel in the FRAGMENT, so the page's own request carries no
+  // credential: fragments are never sent to a server, so the page view lands in
+  // no access log and no `Referer`. The signed token was unavoidably in the
+  // query of *this* request — RFC 8058 requires it there — but there is no
+  // reason to repeat that on the next one.
+  const params = new URLSearchParams({ u: userId, e: eventType, t: token })
+  return sendRedirect(event, `/unsubscribe#${params.toString()}`)
 })

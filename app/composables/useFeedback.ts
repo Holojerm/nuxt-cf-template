@@ -47,7 +47,12 @@ export function useFeedback() {
           message: payload.message,
           rating: payload.rating ?? null,
           email: payload.email || null,
-          path: route.fullPath,
+          // Scrubbed, not raw. This string is written to `feedback.path` in D1
+          // and rendered in the admin console, and the widget is on every page
+          // — including /auth/verify and /unsubscribe, where the URL carries a
+          // live credential. The query is worth keeping (a bug report about
+          // /pricing?plan=yearly needs it); the token is not.
+          path: scrubUrl(route.fullPath),
           replayUrl: sessionReplayUrl(),
           posthogDistinctId: posthog()?.get_distinct_id() ?? null,
         },
