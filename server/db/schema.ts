@@ -199,8 +199,10 @@ export const auditLog = sqliteTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
     actorUserId: text('actor_user_id').notNull(),
-    // admin | system — notNull with a default because a null here makes a row
-    // ambiguous forever, and an ambiguous audit row is not evidence.
+    // admin | system | user — notNull with a default because a null here makes
+    // a row ambiguous forever, and an ambiguous audit row is not evidence.
+    // 'user' is a person acting on their own account (e.g. self-serve
+    // deletion) — actorUserId and targetId are the same id on those rows.
     actorType: text('actor_type').notNull().default('admin'),
     // Verb, past tense and namespaced: 'user.role_changed', 'feedback.replied'.
     action: text('action').notNull(),

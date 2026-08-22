@@ -17,6 +17,7 @@ definePageMeta({ middleware: 'auth' })
 const { user, clear: clearSession } = useUserSession()
 const toast = useToast()
 const route = useRoute()
+const config = useRuntimeConfig()
 
 const { data: billing, status } = await useFetch('/api/billing/entitlement')
 
@@ -140,6 +141,81 @@ async function signOut() {
   await $fetch('/api/auth/logout', { method: 'POST' })
   await clearSession()
   await navigateTo('/')
+}
+
+// ── Your data ────────────────────────────────────────────────────────────────
+// Self-serve export and deletion — exactly what /privacy promises under "your
+// rights", moved off the support inbox. Routing account deletion through email
+// is the same friction app/utils/churn.ts refuses to add at the cancellation
+// flow, at the same exit door: the whole point is that leaving isn't hard.
+const exportPending = ref(false)
+
+/**
+ * `Content-Disposition` on the response doesn't make a `fetch()` download
+ * anything — that header only does its job on a real navigation. Building the
+ * Blob and clicking a throwaway anchor is what actually triggers "Save As"
+ * from JS.
+ */
+async function downloadData(): Promise<void> {
+  exportPending.value = true
+  try {
+    const data = await $fetch('/api/account/export')
+    const file = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(file)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = exportFilename(config.public.appName)
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    toast.add({ title: 'Could not download your data', color: 'error' })
+  } finally {
+    exportPending.value = false
+  }
+}
+
+const deleteOpen = ref(false)
+const deletePending = ref(false)
+// True when the server refused because a live subscription is still billing
+// this account — the modal switches to guidance-plus-portal-link rather than
+// just closing on an error, so the refusal isn't a dead end.
+const deleteBlockedBySubscription = ref(false)
+const confirmEmailInput = ref('')
+const canConfirmDelete = computed(
+  () => confirmEmailInput.value.trim().toLowerCase() === (user.value?.email ?? '').toLowerCase(),
+)
+
+function openDeleteModal(): void {
+  confirmEmailInput.value = ''
+  deleteBlockedBySubscription.value = false
+  deleteOpen.value = true
+}
+
+async function confirmDelete(): Promise<void> {
+  deletePending.value = true
+  try {
+    await $fetch('/api/account', {
+      method: 'DELETE',
+      body: { confirmEmail: confirmEmailInput.value },
+    })
+    deleteOpen.value = false
+    await clearSession()
+    await navigateTo('/')
+  } catch (error) {
+    const code = (error as { data?: { data?: { code?: string } } }).data?.data?.code
+    if (code === 'live_subscription') {
+      // Stays open — see deleteBlockedBySubscription above.
+      deleteBlockedBySubscription.value = true
+    } else {
+      toast.add({
+        title: 'Could not delete your account',
+        description: 'Something went wrong. Try again, or reply to any email from us.',
+        color: 'error',
+      })
+    }
+  } finally {
+    deletePending.value = false
+  }
 }
 
 // Status is never carried by colour alone (DESIGN.md › Accessibility): every
@@ -412,18 +488,60 @@ useSeo({
       </div>
     </UCard>
 
-    <div class="text-sm text-muted">
-      <p>
-        Need your data deleted? Reply to any email from us and we'll remove the account and
-        everything attached to it — see the
-        <!-- Underlined: a prose link distinguished by colour alone is the one
-             thing DESIGN.md › Accessibility rules out, and axe agrees
-             (link-in-text-block). It went unseen because /account redirects
-             when signed out, so the a11y suite never scans it. -->
-        <ULink to="/privacy" class="text-primary underline underline-offset-2">Privacy Policy</ULink
-        >.
-      </p>
-    </div>
+    <!-- Your data — self-serve export and deletion. The only genuinely
+         destructive control on this page, so it's the only one styled that
+         way; "Download your data" beside it is a plain secondary action. -->
+    <UCard>
+      <template #header>
+        <h2 class="text-xl text-highlighted">Your data</h2>
+      </template>
+
+      <div class="flex flex-col gap-4">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p class="text-default">Download a copy of your data</p>
+            <p class="text-sm text-muted">
+              One JSON file: your profile, billing history, feedback, and notification settings.
+            </p>
+          </div>
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-download"
+            :loading="exportPending"
+            @click="downloadData"
+          >
+            Download
+          </UButton>
+        </div>
+
+        <USeparator />
+
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p class="text-default">Delete your account</p>
+            <p class="text-sm text-muted">
+              Removes your account and its contents. Billing records are kept as tax law requires
+              — see the
+              <!-- Underlined: a prose link distinguished by colour alone is the
+                   one thing DESIGN.md › Accessibility rules out, and axe agrees
+                   (link-in-text-block). -->
+              <ULink to="/privacy" class="text-primary underline underline-offset-2">
+                Privacy Policy </ULink
+              >.
+            </p>
+          </div>
+          <UButton
+            color="error"
+            variant="outline"
+            icon="i-lucide-trash-2"
+            @click="openDeleteModal"
+          >
+            Delete account
+          </UButton>
+        </div>
+      </div>
+    </UCard>
 
     <!-- Cancellation prompt. Every control here leads out; there is no path
          that keeps someone subscribed against their intent. -->
@@ -458,6 +576,74 @@ useSeo({
           <UButton color="neutral" variant="ghost" @click="cancelOpen = false">
             Never mind
           </UButton>
+        </div>
+      </template>
+    </UModal>
+
+    <!-- Delete-account confirmation. Typed-email match is the safeguard
+         against a stray click — not an "are you sure?" dialog, which people
+         dismiss by reflex without reading. The live-subscription refusal
+         swaps the body for guidance and the same portal action /account
+         already uses to cancel, so a 409 isn't a dead end. -->
+    <UModal v-model:open="deleteOpen" title="Delete your account">
+      <template #body>
+        <div class="flex flex-col gap-5">
+          <template v-if="deleteBlockedBySubscription">
+            <UAlert
+              color="warning"
+              variant="subtle"
+              icon="i-lucide-triangle-alert"
+              title="Cancel your subscription first"
+              description="Deleting your account wouldn't stop the charges — Paddle owns the subscription, not this account. Cancel it from the billing portal, then come back and delete."
+            />
+            <UButton
+              :loading="portalPending"
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-external-link"
+              @click="openBillingPortal"
+            >
+              Open billing portal
+            </UButton>
+          </template>
+          <template v-else>
+            <p class="text-muted">
+              This deletes your account and its contents: uploaded files, your notification
+              settings, and the AI client connection. Feedback you've sent stays, with anything
+              that identifies you removed from it.
+            </p>
+            <p class="text-muted">
+              Billing records are kept as tax law requires — see the
+              <ULink to="/privacy" class="text-primary underline underline-offset-2">
+                Privacy Policy </ULink
+              >. There's no undo after this.
+            </p>
+            <UFormField label="Type your email to confirm" name="confirm-email">
+              <UInput
+                v-model="confirmEmailInput"
+                type="email"
+                class="w-full"
+                :placeholder="user?.email"
+                autocomplete="off"
+              />
+            </UFormField>
+          </template>
+        </div>
+      </template>
+
+      <template #footer>
+        <div class="flex flex-wrap gap-3">
+          <template v-if="!deleteBlockedBySubscription">
+            <UButton
+              color="error"
+              :disabled="!canConfirmDelete"
+              :loading="deletePending"
+              @click="confirmDelete"
+            >
+              Delete my account
+            </UButton>
+          </template>
+          <UButton color="neutral" variant="ghost" @click="deleteOpen = false"> Never mind </UButton>
         </div>
       </template>
     </UModal>

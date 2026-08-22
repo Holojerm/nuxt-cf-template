@@ -82,7 +82,8 @@ export type AuditDb = ReturnType<typeof drizzle<typeof tables>>
  * back short. Adding an action is one line here.
  *
  * Naming: past tense, namespaced by surface. `admin.*` is a human acting on
- * someone else's data through the console.
+ * someone else's data through the console. `account.*` is a signed-in person
+ * acting on their own account — actorUserId and targetId are the same id.
  */
 export const AUDIT_ACTIONS = [
   /** An admin searched the user directory by email. Records the needle. */
@@ -104,6 +105,14 @@ export const AUDIT_ACTIONS = [
    * record was already audited.
    */
   'feedback.replied',
+  /**
+   * A person deleted their own account through self-serve /account —
+   * `actorType: 'user'`, the one action in this list nobody but the account's
+   * own owner can take. `metadata` carries row counts only (see
+   * server/utils/account.ts) — the whole point of this row is to survive the
+   * account it describes, so nothing that identifies the person may live here.
+   */
+  'account.deleted',
 ] as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]
@@ -115,7 +124,7 @@ export interface AuditEntry {
    * for `actorType: 'system'` this is a sentinel like `system` rather than a row.
    */
   actorUserId: string
-  actorType?: 'admin' | 'system'
+  actorType?: 'admin' | 'system' | 'user'
   action: AuditAction
   /** What was acted on — 'user', 'feedback', 'entitlement'. Null for bulk reads. */
   targetType?: string | null
