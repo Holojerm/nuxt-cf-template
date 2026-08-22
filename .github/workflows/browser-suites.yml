@@ -1,0 +1,82 @@
+# Browser suites — axe accessibility, Content-Security-Policy, and E2E.
+#
+# These live here rather than in `bun run ci` for one reason: Workers Builds
+# runs as a NON-ROOT user on an image with no Chromium system libraries, so
+# Playwright cannot launch a browser there. Both halves of that are proven, not
+# assumed:
+#
+#     error while loading shared libraries: libatk-1.0.so.0:
+#       cannot open shared object file: No such file or directory
+#
+#     $ playwright install --with-deps chromium
+#     Switching to root user to install dependencies...
+#     Password: su: Authentication failure
+#
+# `--with-deps` is the documented first fix and it cannot work without root, so
+# the documented fallback applies: run them somewhere that has a browser.
+# GitHub's ubuntu runners do, and `--with-deps` succeeds there.
+#
+# WHAT MOVED. `bun run test:a11y` is three Playwright projects, not one —
+# `a11y` (axe over every public route, light and dark), `csp` (the
+# Content-Security-Policy spec) and `e2e`. Moving it moved all three, which
+# means the SECURITY-HEADER gate now lives here too. That is the trap CLAUDE.md
+# warns about: a broken CSP fails silently, in exactly the way that gate exists
+# to catch. If you ever delete this workflow, you are deleting the CSP gate.
+#
+# Everything else still runs in Workers Builds via `bun run ci` — lint, the
+# design/brand/mirror/seo gates, typecheck, the unit tests and the build. Those
+# are the gates that block a deploy; these three block a merge.
+
+name: Browser suites
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# A second push to the same branch makes the first run irrelevant.
+concurrency:
+  group: browser-suites-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-suites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # @nuxt/content parses content/ with node:sqlite, which is only
+      # unflagged from 22.13 — see CLAUDE.md › Gotchas. `.node-version` is the
+      # single source of truth so this cannot drift from Workers Builds.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - run: bun install --frozen-lockfile
+
+      # Succeeds here because the runner is root-capable. This is the exact
+      # command that fails on Workers Builds.
+      - run: bun run playwright:install
+
+      # The suite boots its own `nuxt dev`, and nuxt-auth-utils refuses to start
+      # a session layer without this — every /api/* route would 500 and the
+      # pages under test would render against broken endpoints. Generated per
+      # run: it seals nothing that outlives the job, so it must NOT be a repo
+      # secret that someone later mistakes for the production one.
+      - name: Run axe, CSP and E2E suites
+        run: |
+          export NUXT_SESSION_PASSWORD="$(openssl rand -base64 32)"
+          bun run test:a11y
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

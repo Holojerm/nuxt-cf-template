@@ -58,7 +58,8 @@ When working with AI assistants (Claude, etc.), always reference this file first
 │   └── blog/               # One markdown file per post; the filename is the URL
 ├── scripts/                # One-off scripts (bun seed, etc.)
 ├── public/                 # Static assets — og.png, favicon.svg, apple-touch-icon.png
-├── .github/                # Dependabot config (CI/CD lives in Cloudflare Workers Builds)
+├── .github/                # Dependabot + browser-suites.yml (axe/CSP/E2E — the only CI
+│                           # not in Workers Builds; that image can't launch Chromium)
 ├── content.config.ts       # Blog collection + frontmatter schema
 ├── drizzle.config.ts       # Drizzle Kit config
 ├── nuxt.config.ts
@@ -630,7 +631,9 @@ bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db)
 bun run rename <name> # Rewrite the `my-app` placeholder across wrangler.toml, package.json,
                       # .mcp.json and mcp/ — all six occurrences, in one go
-bun run ci            # Lint + design/brand/seo gates + typecheck + test + browser suites (a11y + CSP) + build — Workers Builds runs this
+bun run ci            # Lint + design/brand/seo gates + typecheck + test + build — Workers Builds runs this.
+                      # NO browser suites: Workers Builds cannot launch Chromium (see Gotchas).
+bun run ci:browser    # playwright:install + test:a11y — what GitHub Actions runs
 bun run deploy        # Manual deploy to Cloudflare via wrangler (normally unnecessary —
                       # Workers Builds deploys automatically on push to main).
                       # Requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars
@@ -938,23 +941,42 @@ move every time the branch did. `bun dev:app` bypasses the proxy entirely.
 
 CI/CD runs on Cloudflare Workers Builds (repo connected in the dashboard under Worker → Settings → Build). The Worker's name in the dashboard must exactly match `name` in the root `wrangler.toml`, or every build fails before it starts. When you fork and rename the project, reconnect the repo to a Worker with the new name. Build settings live in the dashboard, not in the repo: build command `bun run ci`, deploy command `bunx wrangler --cwd .output deploy`, preview deploy command (non-production branches) `bunx wrangler --cwd .output versions upload`. `NUXT_SESSION_PASSWORD` must be set as a build variable there too — the old GitHub Actions secrets are gone.
 
-### The a11y suite needs a browser, and CI installs it inside `bun run ci`
+### The browser suites run in GitHub Actions, NOT in `bun run ci`
 
-`bun run test:a11y` runs axe through Playwright/Chromium, so CI needs a browser binary.
-Rather than change the Workers Builds *build command* (which lives in the dashboard, not the
-repo — so every fork would have to edit it), `bun run ci` calls `bun run playwright:install`
-itself. It's idempotent and a no-op once the download is cached.
+They used to be in `ci`. They were moved on 2026-08-22, because Workers Builds
+**cannot run a browser** and the two documented fixes were both tried and both failed —
+so don't move them back without reading this.
 
-Two things to know when it breaks:
+What was observed, on every branch, since the moment the repo was connected:
 
-- **Missing system libraries.** The headless shell needs `libnss3`, `libatk-1.0`, and
-  friends. Most Ubuntu-based images have them; if the build fails with a linker error, the
-  fix is `playwright install --with-deps chromium`, which needs root and may not be
-  available on Workers Builds. The fallback is to drop `test:a11y` from `ci` and run it in a
-  GitHub Action instead — the suite doesn't care what runs it. **Note what else that drops:**
-  `test:a11y` runs the CSP spec (`test/csp/`) as well as the axe sweep, so removing it takes
-  the security-header gate with it — and a broken CSP fails silently in exactly the way that
-  gate exists to catch. Move both to the Action, not just the one you were thinking about.
+```
+error while loading shared libraries: libatk-1.0.so.0: cannot open shared object file
+  at globalSetup (test/warmup/global-setup.ts:36:34)
+```
+
+The build image ships no Chromium system libraries. The documented fix is
+`playwright install --with-deps chromium`, and it cannot work either, because the
+image is non-root:
+
+```
+$ playwright install --with-deps chromium
+Switching to root user to install dependencies...
+Password: su: Authentication failure
+```
+
+So `.github/workflows/browser-suites.yml` runs `bun run ci:browser` on GitHub's
+ubuntu runners, where `--with-deps` succeeds. Everything else stayed in Workers
+Builds: lint, the design/brand/mirror/seo gates, typecheck, the unit tests and the
+build. Those block a **deploy**; the browser suites block a **merge**.
+
+**`test:a11y` is THREE Playwright projects, not one** — `a11y`, `csp` and `e2e`. So the
+Content-Security-Policy gate now lives in the Action too. That is the trap: a broken CSP
+fails silently, in exactly the way that gate exists to catch. Deleting that workflow
+deletes the CSP gate, and nothing will tell you.
+
+The other half of the original note still stands: because the *build command* lives in the
+Cloudflare dashboard rather than the repo, a fork cannot fix this by editing `ci` alone —
+which is why the fix is a workflow file, something a fork inherits automatically.
 - **The suite starts its own dev server** (`playwright.config.ts` → `webServer`) with
   `reuseExistingServer: false`. That is deliberate: it only produces valid results against a
   server started with `NUXT_DEVTOOLS=false`, and reusing a dev server you already had running
