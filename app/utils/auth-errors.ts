@@ -33,6 +33,16 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
     "We couldn't send the email just now. Try again in a moment, or use another sign-in option.",
   rate_limited: 'Too many sign-in attempts. Wait a few minutes and try again.',
 
+  // ── Turnstile ──────────────────────────────────────────────────────────────
+  // Three outcomes, three sentences, because the right next move differs and
+  // "something went wrong" is what every one of them used to say. `missing` and
+  // `failed` are the user's challenge to redo; `unavailable` is ours being
+  // down, and saying so stops people retyping a form they filled in correctly.
+  turnstile_missing: 'Finish the "confirm you\'re human" check, then try again.',
+  turnstile_failed: "That human check didn't pass. Try it once more.",
+  turnstile_unavailable:
+    "We couldn't run the human check just now — that's on us. Try again in a moment.",
+
   [AUTH_ERROR_FALLBACK]: 'Something went wrong signing you in. Try again.',
 }
 

@@ -35,12 +35,14 @@ export default defineNuxtPlugin((nuxtApp) => {
 
     // Nothing secret may reach the analytics warehouse. Two flows in this app
     // put a single-use credential in a URL (the magic-link confirmation page
-    // and the one-click unsubscribe link), and autocapture attaches
-    // `window.location.href` to every event it records — so without this hook a
-    // live sign-in token is written to PostHog before the user has clicked
-    // anything, readable by everyone with project access. See
-    // app/utils/analytics-privacy.ts for the full chain of defences.
-    sanitize_properties: sanitizeAnalyticsProperties,
+    // and the one-click unsubscribe link), and PostHog reads the current URL
+    // from three different places — autocapture's `location.href`, session
+    // replay's rrweb Meta event, and recorded network requests. Each needs its
+    // own switch; `sanitize_properties` covers only the first, because
+    // posthog-js returns from `calculateEventProperties` before the hook runs
+    // for `$snapshot`. All three live in one object so they cannot be
+    // half-applied. See app/utils/analytics-privacy.ts.
+    ...ANALYTICS_PRIVACY_OPTIONS,
 
     // Manual pageview capture below — Nuxt's SPA router doesn't emit the
     // navigation events posthog-js listens for by default.
@@ -60,12 +62,10 @@ export default defineNuxtPlugin((nuxtApp) => {
     // *asking* half of feedback; app/components/Feedback/FeedbackWidget.vue →
     // POST /api/feedback is the *telling* half, and lands in your own D1.
 
-    session_recording: {
-      maskAllInputs: true,
-      // Add `data-private` to any element whose text shouldn't be recorded.
-      maskTextSelector: '[data-private]',
-      recordCrossOriginIframes: false,
-    },
+    // `session_recording` is set by ANALYTICS_PRIVACY_OPTIONS above — masking
+    // rules and the network-request scrubber belong together with the rest of
+    // the privacy config, not split across two objects where one can be edited
+    // without the other.
     enable_recording_console_log: true, // include console.* in replays
 
     loaded: (ph) => {
@@ -77,12 +77,13 @@ export default defineNuxtPlugin((nuxtApp) => {
   const router = useRouter()
   router.afterEach((to) => {
     nextTick(() => {
-      // `to.path`, never `to.fullPath`. fullPath carries the query string and
-      // fragment, which on /auth/verify and /unsubscribe is a live credential.
-      // The sanitizer above would catch it anyway; not putting it there in the
-      // first place is cheaper and does not depend on a regex staying correct.
-      // Analytics wants to know which page was viewed, and the path is the page.
-      posthog.capture('$pageview', { $current_url: to.path })
+      // Scrubbed, not truncated. `to.path` alone was over-correction: it threw
+      // away the query string on EVERY pageview, so `/pricing?plan=yearly` and
+      // a `?ref=` landing became indistinguishable from a bare visit and the
+      // attribution this app deliberately records first-touch for was
+      // unanswerable in PostHog. scrubUrl keeps the params that are analytics
+      // and redacts the ones that are credentials.
+      posthog.capture('$pageview', { $current_url: scrubUrl(to.fullPath) })
     })
   })
 

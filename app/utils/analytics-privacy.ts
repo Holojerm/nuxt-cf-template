@@ -35,8 +35,46 @@
 // into D1. Anywhere a current URL is about to be *stored* rather than just
 // followed, it goes through here first.
 
+import type { CapturedNetworkRequest } from 'posthog-js'
+
 /** What a redacted value is replaced with. Kept visible so URLs stay readable. */
 export const REDACTED = 'redacted'
+
+/**
+ * The posthog-js options that keep credentials out of the pipeline, split out
+ * of the plugin so a test can assert they are set.
+ *
+ * ── Why `sanitize_properties` alone is not enough ────────────────────────────
+ * It never runs for session replay. posthog-js's `calculateEventProperties`
+ * returns EARLY for `$snapshot` events, before the sanitize hook — and rrweb's
+ * Meta event, emitted with every full snapshot, carries `window.location.href`
+ * including the fragment. So a replay of a magic-link sign-in recorded the live
+ * token even with the hook in place, and `_maskReplayUrl` is a no-op unless
+ * `disable_capture_url_hashes` (or a masking callback) is configured. The flag
+ * below is the only thing that reaches that path.
+ *
+ * Three layers, because each covers a hole the others cannot:
+ *   - `disable_capture_url_hashes` strips the fragment everywhere, including
+ *     the replay Meta event and `$pageview`'s automatic URL.
+ *   - `maskCapturedNetworkRequestFn` scrubs the query form, which the flag
+ *     above does not touch, off recorded network requests.
+ *   - `sanitize_properties` catches everything on the ordinary event path,
+ *     which is where autocapture's `location.href` lands.
+ */
+export const ANALYTICS_PRIVACY_OPTIONS = {
+  sanitize_properties: sanitizeAnalyticsProperties,
+  disable_capture_url_hashes: true,
+  session_recording: {
+    maskAllInputs: true,
+    /** Add `data-private` to any element whose text shouldn't be recorded. */
+    maskTextSelector: '[data-private]',
+    recordCrossOriginIframes: false,
+    maskCapturedNetworkRequestFn: (request: CapturedNetworkRequest): CapturedNetworkRequest => ({
+      ...request,
+      name: typeof request.name === 'string' ? scrubUrl(request.name) : request.name,
+    }),
+  },
+} as const
 
 /**
  * Query/fragment parameter names whose values are credentials.

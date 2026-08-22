@@ -42,7 +42,7 @@ export default defineEventHandler(async (event) => {
     throw createError({
       statusCode: 409,
       message:
-        "Deleting your account would not stop the charges — Paddle owns the subscription, " +
+        'Deleting your account would not stop the charges — Paddle owns the subscription, ' +
         'not this account. Cancel it from the billing portal first, then delete your account.',
       data: { code: 'live_subscription', subscriptionId: outcome.subscriptionId },
     })

@@ -9,6 +9,13 @@
 // 4xx are skipped — they're expected user mistakes (401 unauthenticated, etc.)
 // and would drown out real bugs.
 
+// Explicit, not the Nitro auto-import that every sibling also spells out. This
+// file is the one that runs while a 500 is already in flight, so a symbol that
+// resolves to `undefined` at runtime — the failure CLAUDE.md › Gotchas
+// documents — would throw inside the error handler and take the log line with
+// the exception it was trying to record.
+import { pathForLog } from '../utils/log'
+
 export default defineNitroPlugin((nitro) => {
   nitro.hooks.hook('error', async (error, { event }) => {
     const status = (error as { statusCode?: number }).statusCode ?? 500

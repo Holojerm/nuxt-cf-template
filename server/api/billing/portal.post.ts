@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
       apiKey,
       environment: config.public.paddleEnv,
       customerId: overview.paddleCustomerId,
-      subscriptionIds: overview.subscriptionIds,
+      subscriptionIds: overview.cancellableSubscriptionIds,
     })
   } catch (error) {
     console.error(

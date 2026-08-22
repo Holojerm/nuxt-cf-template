@@ -72,7 +72,6 @@ import type { Entitlement } from '../db/schema'
  */
 export const COMP_REVOKED_STATUS = 'revoked'
 
-
 export interface GrantCompPassesParams {
   userId: string
   /** How many whole passes to grant, 1…MAX_COMP_PASSES. */
@@ -179,15 +178,20 @@ export async function grantCompPasses(
   const bad = refs.find((ref) => !isCompRef(ref))
   if (bad) throw new Error(`comp refs must start with ${COMP_REF_PREFIX}: ${bad}`)
 
-  // One read for both questions: is there a live subscription (refuse), and
-  // what is currently granting access (the stacking base). `subscriptionIds` is
-  // already "live auto-renewing subscriptions" and it scans the whole history,
+  // One read for both questions: is there a subscription already GRANTING
+  // access (refuse), and what is currently granting access (the stacking base).
+  //
+  // `accessSubscriptionIds`, not `cancellableSubscriptionIds`: the question a
+  // comp asks is "would these days be redundant", which is about access, not
+  // about whether Paddle can still bill. During dunning access is paused, so
+  // "here's a week while you sort the card out" is a real support action and
+  // the days are genuine. It scans the whole history,
   // which matters — findActiveEntitlement returns a single row ordered by end
   // date, so an earlier comp stacked past the renewal would hide the very
   // subscription this check exists to find.
   const overview = await getBillingOverview(db, params.userId, productKey)
 
-  const blockedBy = overview.subscriptionIds[0]
+  const blockedBy = overview.accessSubscriptionIds[0]
   if (blockedBy) {
     return {
       outcome: 'active_subscription',

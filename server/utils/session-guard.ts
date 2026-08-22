@@ -49,8 +49,53 @@ export interface SessionClaim {
 }
 
 export type SessionVerdict =
-  | { valid: true }
+  | { valid: true; role: string }
   | { valid: false; reason: 'no_account' | 'deleted' | 'revoked' | 'undated' }
+
+/**
+ * Where the middleware parks the row it just read, for requireAdmin().
+ *
+ * A per-request cache, not a cross-request one — `event.context` dies with the
+ * request, so this cannot go stale the way the KV cache rejected in the note
+ * above would. It exists because the guard and requireAdmin() were reading the
+ * same primary key on every single admin call: two round trips for one row.
+ */
+export const SESSION_ROLE_CONTEXT_KEY = 'sessionRole'
+
+/**
+ * Should a revoked session be cleared WITHOUT aborting this request?
+ *
+ * ── The lockout this prevents ────────────────────────────────────────────────
+ * The guard used to 401 everything, including the sign-in surface — and the one
+ * cookie guaranteed to be present at the moment somebody is trying to sign in
+ * again is the stale one. So: `/login`'s SSR fetch of `/api/auth/providers`
+ * 401d and the page rendered "No sign-in method is configured" forever; a
+ * perfectly good magic link read as "we don't recognise that sign-in link"; and
+ * an OAuth callback dumped raw JSON into the browser. A dead cookie became an
+ * unrecoverable lockout from the product.
+ *
+ * The rule: anything whose whole job is to END or REPLACE the credential is
+ * allowed to proceed, because none of them read the session to decide anything.
+ *
+ *   /api/auth/*   the sign-in surface — OAuth callbacks, the magic-link mint
+ *                 and verify, the provider list, logout. How someone recovers.
+ *   /api/health   a liveness probe must not depend on a cookie.
+ *   DELETE /api/_auth/session   signing out authorizes nothing; it destroys a
+ *                 credential. 401ing it would also make
+ *                 useUserSession().clear() throw, which it does not catch.
+ *
+ * GET /api/_auth/session is deliberately NOT here. It must fail, because
+ * useUserSession().fetch() catches a failed response and nulls the session —
+ * that is what flips the other browser to signed-out. Letting it through would
+ * achieve nothing anyway: h3's clearSession drops the cached session from the
+ * request context, so the endpoint would re-unseal the same cookie and report
+ * the revoked user as present.
+ */
+export function isSessionClearOnlyPath(path: string, method: string): boolean {
+  if (path.startsWith('/api/auth/')) return true
+  if (path === '/api/health') return true
+  return path === '/api/_auth/session' && method === 'DELETE'
+}
 
 /**
  * Is the account behind this session still allowed to act?
@@ -84,14 +129,17 @@ export async function checkSession(
 ): Promise<SessionVerdict> {
   const row = await db.query.users.findFirst({
     where: eq(tables.users.id, claim.userId),
-    columns: { email: true, sessionsInvalidBefore: true },
+    // `role` is not needed here — it is fetched so requireAdmin() can reuse the
+    // row this guard has already read. Both run on every admin request, both on
+    // the same primary key, and reading two columns costs the same as one.
+    columns: { email: true, role: true, sessionsInvalidBefore: true },
   })
 
   if (!row) return { valid: false, reason: 'no_account' }
   if (isUndeliverableAddress(row.email)) return { valid: false, reason: 'deleted' }
 
   const watermark = row.sessionsInvalidBefore
-  if (!watermark) return { valid: true }
+  if (!watermark) return { valid: true, role: row.role }
 
   if (claim.issuedAt === undefined) return { valid: false, reason: 'undated' }
   // Seconds on both sides: D1 stores timestamps at second resolution, so a
@@ -101,5 +149,5 @@ export async function checkSession(
   // created by a *new* sign-in, and must survive.
   return claim.issuedAt < Math.floor(watermark.getTime() / 1000)
     ? { valid: false, reason: 'revoked' }
-    : { valid: true }
+    : { valid: true, role: row.role }
 }

@@ -17,11 +17,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
 import { MAX_COMP_PASSES } from '../shared/utils/comps'
-import {
-  COMP_REVOKED_STATUS,
-  grantCompPasses,
-  revokeCompPass,
-} from '../server/utils/admin-grants'
+import { COMP_REVOKED_STATUS, grantCompPasses, revokeCompPass } from '../server/utils/admin-grants'
 import { PASS_DAYS, findActiveEntitlement, getBillingOverview } from '../server/utils/entitlements'
 import { COMP_REF_PREFIX, compRef, isCompRef, isPass } from '../server/utils/paddle-refs'
 import { deriveBillingState } from '../server/utils/billing-state'
@@ -179,8 +175,8 @@ describe('how a comp reads back', () => {
     expect(isPass(ref)).toBe(true)
     // Nothing to cancel — a comp is not an auto-renewing subscription, so it
     // must never appear in the list a cancel link targets.
-    expect(overview.subscriptionIds).not.toContain(ref)
-    expect(overview.subscriptionIds).toHaveLength(0)
+    expect(overview.cancellableSubscriptionIds).not.toContain(ref)
+    expect(overview.cancellableSubscriptionIds).toHaveLength(0)
   })
 
   it('stops granting access once its window closes', async () => {

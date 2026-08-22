@@ -25,8 +25,9 @@
 export default defineEventHandler(async (event) => {
   // Same limit and same caveat as unsubscribe.get.ts: the caller here is
   // typically a mail provider's infrastructure, not the end user's browser,
-  // so many opt-outs can legitimately share an IP.
-  await rateLimit(event, { name: 'email-unsubscribe', limit: 30, windowSeconds: 60 })
+  // so many opt-outs can legitimately share an IP — which is also why
+  // UNSUBSCRIBE_LIMITER keeps this surface off the per-colo native binding.
+  await rateLimit(event, UNSUBSCRIBE_LIMITER)
 
   await applyUnsubscribeRequest(event, db)
 

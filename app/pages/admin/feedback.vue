@@ -28,7 +28,12 @@ const STATUS_OPTIONS = [
 
 const statusFilter = ref('new')
 
-const { data, error, status: listStatus, refresh } = await useFetch('/api/feedback', {
+const {
+  data,
+  error,
+  status: listStatus,
+  refresh,
+} = await useFetch('/api/feedback', {
   query: computed(() => ({
     // Nuxt drops undefined query params, so 'all' is simply the absent filter.
     status: statusFilter.value === 'all' ? undefined : statusFilter.value,
@@ -88,7 +93,8 @@ function openReply(item: FeedbackItem) {
 const REPLY_ERRORS: Record<string, string> = {
   no_reply_address: 'This feedback was submitted anonymously, with no address to reply to.',
   email_unconfigured: "Email isn't configured on this deployment — set NUXT_RESEND_API_KEY.",
-  email_failed: "The mail provider rejected it. Nothing was sent, and the item isn't marked replied.",
+  email_failed:
+    "The mail provider rejected it. Nothing was sent, and the item isn't marked replied.",
 }
 
 async function sendReply() {

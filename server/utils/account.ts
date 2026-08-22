@@ -36,7 +36,6 @@ import type { AuditMetadata } from '../db/schema'
 import { isBillingLive } from './entitlements'
 import { isSubscriptionRef } from './paddle-refs'
 import { withAudit } from './audit'
-import { isNotificationEnabled } from './notifications'
 import { OPTIONAL_NOTIFICATION_EVENT_TYPES } from '#shared/utils/notifications'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
@@ -76,29 +75,30 @@ async function findLiveSubscriptionRef(db: AccountDb, userId: string): Promise<s
     .select({
       paddleSubscriptionId: tables.entitlements.paddleSubscriptionId,
       status: tables.entitlements.status,
+      // Both columns isBillingLive reads. Without the scheduled change, an
+      // already-cancelled subscription reads as live for its whole notice
+      // period and blocks deletion for months.
+      scheduledChangeAction: tables.entitlements.scheduledChangeAction,
     })
     .from(tables.entitlements)
     .where(eq(tables.entitlements.userId, userId))
 
-  const live = rows.find(
-    (row) => isSubscriptionRef(row.paddleSubscriptionId) && isBillingLive(row.status),
-  )
+  const live = rows.find((row) => isSubscriptionRef(row.paddleSubscriptionId) && isBillingLive(row))
   return live?.paddleSubscriptionId ?? null
-}
-
-export interface DeleteAccountCounts {
-  filesDeleted: number
-  connectCodesDeleted: number
-  magicLinkTokensDeleted: number
-  notificationPreferencesDeleted: number
-  feedbackScrubbed: number
 }
 
 export type DeleteAccountOutcome =
   | { outcome: 'not_found' }
   /** Refused — see the policy note on deleteAccount() for why this one guard exists. */
   | { outcome: 'live_subscription'; subscriptionId: string }
-  | { outcome: 'deleted'; counts: DeleteAccountCounts }
+  /**
+   * Done. Deliberately carries no tally: what was deleted is recorded on the
+   * audit row, which is the copy that outlives the request and the one an
+   * investigation actually reads. A second count in the return value was read
+   * by nothing but the tests that asserted it, and two tallies of the same
+   * event are two things that can disagree.
+   */
+  | { outcome: 'deleted' }
 
 /**
  * Delete a self-serve account.
@@ -173,10 +173,11 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
       metadata,
     },
     async (): Promise<DeleteAccountOutcome> => {
-      let filesDeleted = 0
+      // Outside the batch below, and before it, because of the R2 half: the
+      // objects have to be swept while their rows still name them, and that
+      // sweep is best-effort in a way a transaction cannot express.
       if (files.length) {
         await db.delete(tables.files).where(eq(tables.files.userId, userId))
-        filesDeleted = files.length
         // Best-effort: an R2 outage (or, in tests, no R2 binding at all) must
         // not fail the deletion the person is waiting on. The orphaned objects
         // cost storage, not correctness — the row that pointed at them, and
@@ -190,71 +191,67 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
         }
       }
 
-      const deletedConnectCodes = await db
-        .delete(tables.mcpConnectCodes)
-        .where(eq(tables.mcpConnectCodes.userId, userId))
-        .returning({ id: tables.mcpConnectCodes.id })
+      // One batch, not five awaited statements. D1 runs a batch as a single
+      // transaction and a single round trip, which matters twice here: the
+      // latency of five sequential trips is paid by a person watching a spinner
+      // on the most anxious button in the app, and — more importantly — a
+      // failure partway through the sequential version left an account half
+      // deleted, with its files gone and its identity intact. Atomic is the
+      // property this operation should have had from the start.
+      //
+      // The order inside the batch is still meaningful for reading: credentials
+      // first, then owned rows, then the identity itself.
+      await db.batch([
+        db.delete(tables.mcpConnectCodes).where(eq(tables.mcpConnectCodes.userId, userId)),
 
-      // Outstanding sign-in links are live credentials for this address, the
-      // same class of thing as the connect codes above, and deleting an account
-      // has to revoke the credentials that reach it. Without this a link minted
-      // minutes earlier stays redeemable — it would create a fresh empty
-      // account rather than resurrect this one (the tombstone address no longer
-      // matches), but "I deleted my account and a stale email signed me into a
-      // new one" is not a sentence a deletion flow should make possible.
-      const deletedMagicLinkTokens = await db
-        .delete(tables.magicLinkTokens)
-        .where(eq(tables.magicLinkTokens.email, user.email))
-        .returning({ id: tables.magicLinkTokens.id })
+        // Outstanding sign-in links are live credentials for this address, the
+        // same class of thing as the connect codes above, and deleting an
+        // account has to revoke the credentials that reach it. Without this a
+        // link minted minutes earlier stays redeemable — it would create a
+        // fresh empty account rather than resurrect this one (the tombstone
+        // address no longer matches), but "I deleted my account and a stale
+        // email signed me into a new one" is not a sentence a deletion flow
+        // should make possible.
+        db.delete(tables.magicLinkTokens).where(eq(tables.magicLinkTokens.email, user.email)),
 
-      const deletedNotificationPreferences = await db
-        .delete(tables.notificationPreferences)
-        .where(eq(tables.notificationPreferences.userId, userId))
-        .returning({ id: tables.notificationPreferences.id })
+        db
+          .delete(tables.notificationPreferences)
+          .where(eq(tables.notificationPreferences.userId, userId)),
 
-      // See the file header for why the message survives and only these three
-      // columns are scrubbed.
-      const scrubbedFeedback = await db
-        .update(tables.feedback)
-        .set({ email: null, userAgent: null, ipHash: null })
-        .where(eq(tables.feedback.userId, userId))
-        .returning({ id: tables.feedback.id })
+        // See the file header for why the message survives and only these three
+        // columns are scrubbed.
+        db
+          .update(tables.feedback)
+          .set({ email: null, userAgent: null, ipHash: null })
+          .where(eq(tables.feedback.userId, userId)),
 
-      await db
-        .update(tables.users)
-        .set({
-          email: tombstoneEmail(userId),
-          name: 'Deleted user',
-          avatarUrl: null,
-          provider: null,
-          signupSource: null,
-          signupMedium: null,
-          signupCampaign: null,
-          signupReferrer: null,
-          referralCode: null,
-          // referredBy is left alone on purpose — it names the OTHER
-          // account's referral code, not this one's, and this account leaving
-          // doesn't get to erase where somebody else's customer came from.
-          //
-          // The one line that makes deletion mean anything on a device other
-          // than this one. Sessions are sealed cookies with no server-side
-          // record, so without this watermark the phone in the other room keeps
-          // full access to the entitlements this row still carries until its
-          // cookie expires. See server/utils/session-guard.ts.
-          sessionsInvalidBefore: new Date(),
-        })
-        .where(eq(tables.users.id, userId))
+        db
+          .update(tables.users)
+          .set({
+            email: tombstoneEmail(userId),
+            name: 'Deleted user',
+            avatarUrl: null,
+            provider: null,
+            signupSource: null,
+            signupMedium: null,
+            signupCampaign: null,
+            signupReferrer: null,
+            referralCode: null,
+            // referredBy is left alone on purpose — it names the OTHER
+            // account's referral code, not this one's, and this account leaving
+            // doesn't get to erase where somebody else's customer came from.
+            //
+            // The one line that makes deletion mean anything on a device other
+            // than this one. Sessions are sealed cookies with no server-side
+            // record, so without this watermark the phone in the other room
+            // keeps full access to the entitlements this row still carries
+            // until its cookie expires. See server/utils/session-guard.ts.
+            sessionsInvalidBefore: new Date(),
+          })
+          .where(eq(tables.users.id, userId)),
+      ])
 
-      return {
-        outcome: 'deleted',
-        counts: {
-          filesDeleted,
-          connectCodesDeleted: deletedConnectCodes.length,
-          magicLinkTokensDeleted: deletedMagicLinkTokens.length,
-          notificationPreferencesDeleted: deletedNotificationPreferences.length,
-          feedbackScrubbed: scrubbedFeedback.length,
-        },
-      }
+      return { outcome: 'deleted' }
     },
   )
 }
@@ -341,7 +338,7 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
   const user = await db.query.users.findFirst({ where: eq(tables.users.id, userId) })
   if (!user) return null
 
-  const [entitlementRows, feedbackRows, notificationPreferences, auditRows] = await Promise.all([
+  const [entitlementRows, feedbackRows, preferenceRows, auditRows] = await Promise.all([
     db.query.entitlements.findMany({
       where: eq(tables.entitlements.userId, userId),
       orderBy: desc(tables.entitlements.createdAt),
@@ -350,17 +347,26 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
       where: eq(tables.feedback.userId, userId),
       orderBy: desc(tables.feedback.createdAt),
     }),
-    Promise.all(
-      OPTIONAL_NOTIFICATION_EVENT_TYPES.map(async (eventType) => ({
-        eventType,
-        enabled: await isNotificationEnabled(db, userId, eventType),
-      })),
-    ),
+    // One read for every optional type, not one read each. isNotificationEnabled
+    // is a point lookup per event type, so calling it in a loop meant three
+    // round trips to answer a question about three rows in one table. The
+    // default-on rule (absence of a row means enabled — see schema.ts) is
+    // applied here, over whatever the single query returned.
+    db.query.notificationPreferences.findMany({
+      where: eq(tables.notificationPreferences.userId, userId),
+      columns: { eventType: true, enabled: true },
+    }),
     db.query.auditLog.findMany({
       where: and(eq(tables.auditLog.targetType, 'user'), eq(tables.auditLog.targetId, userId)),
       orderBy: desc(tables.auditLog.createdAt),
     }),
   ])
+
+  const overrides = new Map(preferenceRows.map((row) => [row.eventType, row.enabled]))
+  const notificationPreferences = OPTIONAL_NOTIFICATION_EVENT_TYPES.map((eventType) => ({
+    eventType,
+    enabled: overrides.get(eventType) ?? true,
+  }))
 
   return {
     exportedAt: new Date().toISOString(),

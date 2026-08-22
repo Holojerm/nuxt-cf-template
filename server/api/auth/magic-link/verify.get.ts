@@ -28,12 +28,38 @@
 // link expired" is a correct answer to the question, not a failed request, and
 // modelling it as a 4xx would only make the page render a generic error instead
 // of the sentence that tells someone what to do next.
+//
+// The token arrives in a request HEADER, not the query string — Cloudflare logs
+// request URIs upstream of anything this Worker can redact. See readToken().
 
 import { z } from 'zod'
 
 import { inspectMagicLinkToken, MAGIC_LINK_TOKEN_PATTERN } from '../../../utils/magic-link'
 
-const querySchema = z.object({ token: z.string().regex(MAGIC_LINK_TOKEN_PATTERN) })
+const tokenSchema = z.string().regex(MAGIC_LINK_TOKEN_PATTERN)
+
+/**
+ * Header for the app's own lookup, query string as a fallback.
+ *
+ * ── Why the header is preferred ──────────────────────────────────────────────
+ * Cloudflare's edge records the request URI of every request, upstream of the
+ * Worker and therefore upstream of `pathForLog()` — so a token in the query
+ * string is logged where nothing in this codebase can redact it. That is the
+ * exact exposure the fragment was introduced to avoid, and sending the token
+ * back as `?token=` on the very next request would have handed it straight
+ * back. /auth/verify sends `x-magic-link-token`.
+ *
+ * The query form is kept, not removed, because it is the only spelling
+ * available to a link minted by an older deploy or a URL someone reassembled by
+ * hand. Those should still work rather than read as "invalid"; they are simply
+ * no longer what this app produces.
+ */
+function readToken(event: Parameters<typeof getQuery>[0]): string | null {
+  const header = getRequestHeader(event, 'x-magic-link-token')
+  const candidate = header ?? (getQuery(event).token as unknown)
+  const parsed = tokenSchema.safeParse(candidate)
+  return parsed.success ? parsed.data : null
+}
 
 /** One shape for every outcome, so the page has one thing to type against. */
 interface VerifyLookup {
@@ -45,10 +71,10 @@ interface VerifyLookup {
 export default defineEventHandler(async (event): Promise<VerifyLookup> => {
   // Shape-checked before it costs a database round trip. A token that cannot
   // exist is indistinguishable, to the caller, from one that never did.
-  const parsed = querySchema.safeParse(getQuery(event))
-  if (!parsed.success) return { status: 'invalid', email: null }
+  const token = readToken(event)
+  if (!token) return { status: 'invalid', email: null }
 
-  const result = await inspectMagicLinkToken(db, parsed.data.token)
+  const result = await inspectMagicLinkToken(db, token)
   if (!result.ok) return { status: result.reason, email: null }
 
   // The address is returned so the page can say who is about to be signed in —

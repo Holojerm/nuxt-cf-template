@@ -27,31 +27,24 @@ interface UnsubscribeParams {
   t: string
 }
 
-const route = useRoute()
-
-const params = ref<UnsubscribeParams | null>(null)
-const resolved = ref(false)
 const pending = ref(false)
 const done = ref(false)
 const failed = ref(false)
 
-function readParams() {
-  const fragment = new URLSearchParams(route.hash.replace(/^#/, ''))
-  const u = fragment.get('u')
-  const e = fragment.get('e')
-  const t = fragment.get('t')
-  params.value = u && e && t ? { u, e, t } : null
+// The SSR / hash-change / not-yet-read handling lives in useFragmentParams().
+// The callback resets the outcome state, so a second link opened in the same
+// tab does not show the first one's "Done".
+const { params: fragment, resolved } = useFragmentParams(() => {
   done.value = false
   failed.value = false
-  resolved.value = true
-}
+})
 
-// Read on mount because the fragment does not exist during SSR, and re-read on
-// change because a hash-only navigation does not remount the component — so
-// without the watcher a second link opened in the same tab would act on the
-// first link's parameters.
-onMounted(readParams)
-watch(() => route.hash, readParams)
+const params = computed<UnsubscribeParams | null>(() => {
+  const u = fragment.value?.get('u')
+  const e = fragment.value?.get('e')
+  const t = fragment.value?.get('t')
+  return u && e && t ? { u, e, t } : null
+})
 
 /**
  * What the reader is about to switch off, in the same words the /account
@@ -75,8 +68,14 @@ async function confirm() {
   pending.value = true
   failed.value = false
   try {
-    // Same endpoint a mail provider's one-click button POSTs to (RFC 8058).
-    await $fetch('/api/email/unsubscribe', { method: 'POST', query: params.value })
+    // Same endpoint a mail provider's one-click button POSTs to (RFC 8058),
+    // but the parameters go in the BODY. The signed token is a credential, and
+    // Cloudflare's edge records request URIs upstream of anything this app can
+    // redact — sending it as a query string here would put it back in a log
+    // after the redirect deliberately moved it into the fragment. The server
+    // reads a body first and falls back to the query, which is what the
+    // one-click callers and the plain footer link still use.
+    await $fetch('/api/email/unsubscribe', { method: 'POST', body: params.value })
     done.value = true
   } catch {
     failed.value = true
@@ -139,8 +138,8 @@ useSeo({
         <div class="flex items-start gap-3">
           <UIcon name="i-lucide-circle-alert" class="mt-1 size-5 shrink-0 text-muted" />
           <p class="text-muted">
-            This unsubscribe link is incomplete — mail clients sometimes cut long links in half.
-            You can change any email preference from your account settings instead.
+            This unsubscribe link is incomplete — mail clients sometimes cut long links in half. You
+            can change any email preference from your account settings instead.
           </p>
         </div>
         <UButton to="/account" size="lg" block>Go to account settings</UButton>

@@ -92,8 +92,8 @@ async function updatePaymentMethod(): Promise<void> {
     <template #description>
       <div class="flex flex-col gap-3">
         <p>
-          Your subscription is paused while it's unpaid. Paddle, our payment processor, retries
-          the card automatically.
+          Your subscription is paused while it's unpaid. Paddle, our payment processor, retries the
+          card automatically.
         </p>
 
         <!-- Longer explanation on /account, where there's room for it. -->

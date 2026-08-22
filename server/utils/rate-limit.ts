@@ -131,6 +131,28 @@ export const NATIVE_LIMITER: {
   windowSeconds: 60,
 }
 
+/**
+ * The unsubscribe surface's budget, named rather than typed as a literal at two
+ * call sites.
+ *
+ * ── Why these numbers are NOT NATIVE_LIMITER's ───────────────────────────────
+ * They were, by accident: both handlers passed a literal `30`/`60`, which is an
+ * exact match for the binding, so `chooseBackend` silently routed the whole
+ * unsubscribe surface onto the native limiter. Two consequences nobody chose.
+ * The binding counts PER COLO, so "30 a minute" became 30 per Cloudflare
+ * location — and this is the one endpoint whose realistic caller is a mail
+ * provider's infrastructure fanning out across many of them. And retuning the
+ * auth limit would have silently retuned unsubscribe with it, because the only
+ * thing joining them was two literals that happened to agree.
+ *
+ * 60/120s keeps the same requests-per-second while being deliberately
+ * unmatchable by the current binding, so this surface stays on KV: globally
+ * counted, and independent of whatever the auth budget becomes. A window the
+ * binding cannot express (120 is not 10 or 60) makes that structural rather
+ * than a coincidence in the other direction.
+ */
+export const UNSUBSCRIBE_LIMITER = { name: 'email-unsubscribe', limit: 60, windowSeconds: 120 }
+
 /** Why a call site fell back to KV. Reported once per call site, per isolate. */
 export type KvFallbackReason = 'binding-absent' | 'window-mismatch' | 'limit-mismatch'
 

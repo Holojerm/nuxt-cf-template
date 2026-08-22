@@ -25,13 +25,19 @@
 // as a confirmation step rather than as friction, and it is also where we get to
 // show which address is about to be signed in.
 //
-// ── Why that lookup is client-only ──────────────────────────────────────────
-// `server: false`, and deliberately. Rendered on the server, this fetch would be
-// an internal request whose client IP the auth surface's per-IP rate limiter
-// cannot see, so every visitor's lookup would share one bucket and a busy minute
-// would 429 real sign-ins. Client-side it is one request from the real address,
-// counted against the real caller. It also keeps the token out of the SSR
-// payload, and leaves this page's HTML identical for everyone.
+// Neither request puts the token in a URL. The lookup sends it as an
+// `x-magic-link-token` header and the confirm sends it in a POST body, because
+// Cloudflare's edge records the request URI of every request upstream of
+// anything this app controls — putting the token back in a query string here
+// would have undone the fragment.
+//
+// ── Why the lookup runs only in the browser ─────────────────────────────────
+// Deliberate, for two reasons beyond the obvious one that a fragment does not
+// exist during SSR. Rendered on the server it would be an internal request whose
+// client IP the auth surface's per-IP limiter cannot see, so every visitor's
+// lookup would share one bucket and a busy minute would 429 real sign-ins.
+// It also keeps the token out of the SSR payload, and leaves this page's HTML
+// identical for everyone.
 
 definePageMeta({ layout: 'default' })
 
@@ -39,30 +45,41 @@ const route = useRoute()
 const { fetch: refreshSession } = useUserSession()
 const config = useRuntimeConfig()
 
-const token = ref('')
-/** Has the browser had a chance to read the URL yet? False through SSR. */
-const resolved = ref(false)
-
-const { data: link, status, execute } = await useFetch('/api/auth/magic-link/verify', {
-  query: { token },
-  server: false,
-  // Not `Boolean(token)`: a fragment is not sent to the server, so during SSR
-  // there is nothing to test and the token can only be read after mount.
-  immediate: false,
-})
-
-function syncToken() {
-  token.value = readToken()
-  resolved.value = true
-  if (token.value) execute()
+interface LinkLookup {
+  status: 'valid' | 'invalid' | 'expired' | 'used'
+  email: string | null
 }
 
-// Read on mount because the fragment does not exist during SSR, and re-read on
-// change because a hash-only navigation does not remount the component — so
-// without the watcher a second link opened in the same tab would be checked
-// against the first link's token.
-onMounted(syncToken)
-watch(() => route.hash, syncToken)
+const link = ref<LinkLookup | null>(null)
+const status = ref<'idle' | 'pending' | 'success' | 'error'>('idle')
+
+/**
+ * Plain `$fetch`, not `useFetch`, and the token travels in a HEADER.
+ *
+ * Two problems solved at once. The token was going out as `?token=` on this
+ * lookup, which put it straight back into the request URI that Cloudflare's
+ * edge logs record — upstream of `pathForLog`, so nothing in this app could
+ * redact it. Moving the token off the URL and into a request header is the
+ * whole point of having put it in the fragment in the first place. And
+ * `useFetch` with reactive options fired this twice per link: the options
+ * watcher triggered on the `token.value =` assignment and `execute()` ran
+ * again. One imperative call has neither problem.
+ *
+ * Still a GET, so nothing here spends the token — that is what the confirm
+ * button below is for.
+ */
+async function inspect(value: string) {
+  status.value = 'pending'
+  try {
+    link.value = await $fetch<LinkLookup>('/api/auth/magic-link/verify', {
+      headers: { 'x-magic-link-token': value },
+    })
+    status.value = 'success'
+  } catch {
+    link.value = null
+    status.value = 'error'
+  }
+}
 
 /**
  * Fragment first, query second.
@@ -72,12 +89,25 @@ watch(() => route.hash, syncToken)
  * reassembled by hand, both of which should still work rather than read as
  * "invalid". Anything arriving that way is scrubbed out of analytics by
  * app/utils/analytics-privacy.ts.
+ *
+ * The SSR / hash-change / not-yet-read handling all lives in
+ * useFragmentParams(); this page only says what to do with the value.
  */
-function readToken(): string {
-  const fragment = new URLSearchParams(route.hash.replace(/^#/, '')).get('token')
-  if (fragment) return fragment
+const { params: fragment, resolved } = useFragmentParams()
+
+const token = computed(() => {
+  if (!resolved.value) return ''
+  const fromFragment = fragment.value?.get('token')
+  if (fromFragment) return fromFragment
   return typeof route.query.token === 'string' ? route.query.token : ''
-}
+})
+
+// One watcher, not a mount hook plus a hash watcher, so the lookup runs exactly
+// once per distinct token. The double-fetch this page used to do came from
+// having two triggers for one event.
+watch(token, (value) => {
+  if (value) void inspect(value)
+})
 
 // Before mount there is nothing to say yet — rendering the failure state during
 // SSR would flash "we don't recognise that link" at every valid link.

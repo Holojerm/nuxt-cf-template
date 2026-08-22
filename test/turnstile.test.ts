@@ -17,6 +17,7 @@ import * as schema from '../server/db/schema'
 import { createMagicLinkToken } from '../server/utils/magic-link'
 import {
   decideTurnstile,
+  resolveTurnstile,
   turnstileTokenSchema,
   type TurnstileVerifier,
 } from '../server/utils/turnstile'
@@ -285,5 +286,72 @@ describe('the magic-link mint path', () => {
 
     expect(result.minted).toBe(true)
     expect(await mintedRowCount()).toBe(1)
+  })
+})
+
+// ── A broken siteverify is a refusal, not a 500 ─────────────────────────────
+// decideTurnstile lets a verifier throw on purpose: failing OPEN on a network
+// blip would hand an attacker a bypass they can trigger on demand by making
+// siteverify slow. But "the throw propagates and the caller turns it into a
+// 400" described something no caller did — it escaped requireTurnstile as a
+// bare 500 with no `data.code`, so the form said "something went wrong", the
+// client could not tell the user to retry, and every hiccup was an $exception.
+//
+// resolveTurnstile is the conversion, split out so it can be driven with a
+// verifier that throws. requireTurnstile itself cannot be tested here — it
+// reaches for useRuntimeConfig.
+
+describe('resolveTurnstile', () => {
+  const CONFIGURED = { secretKey: 'secret', token: 'a-token' }
+
+  it('still fails CLOSED when the verifier throws', async () => {
+    const outcome = await resolveTurnstile({
+      ...CONFIGURED,
+      verify: () => Promise.reject(new Error('siteverify unreachable')),
+    })
+
+    expect(outcome.ok).toBe(false)
+  })
+
+  it('reports it as turnstile_unavailable, distinct from a failed challenge', async () => {
+    // Three codes, three sentences on the client. "Solve it again" and "our
+    // check is down" are different instructions, and a user who retypes a form
+    // that was never the problem is the cost of collapsing them.
+    const broken = await resolveTurnstile({
+      ...CONFIGURED,
+      verify: () => Promise.reject(new Error('boom')),
+    })
+    const failed = await resolveTurnstile({
+      ...CONFIGURED,
+      verify: async () => ({ success: false, 'error-codes': ['invalid-input-response'] }),
+    })
+
+    expect(broken).toMatchObject({ ok: false, code: 'turnstile_unavailable' })
+    expect(failed).toMatchObject({ ok: false, code: 'turnstile_failed' })
+  })
+
+  it('carries no error text into the outcome, only a marker', async () => {
+    // The code reaches a client. Whatever siteverify's client threw is for the
+    // log, not for a browser.
+    const outcome = await resolveTurnstile({
+      ...CONFIGURED,
+      verify: () => Promise.reject(new Error('DNS lookup failed for 10.1.2.3')),
+    })
+
+    expect(JSON.stringify(outcome)).not.toContain('10.1.2.3')
+  })
+
+  it('passes an ordinary decision straight through, untouched', async () => {
+    expect(
+      await resolveTurnstile({ ...CONFIGURED, verify: async () => ({ success: true }) }),
+    ).toEqual({ ok: true, checked: true })
+
+    expect(
+      await resolveTurnstile({
+        secretKey: '',
+        token: null,
+        verify: async () => ({ success: true }),
+      }),
+    ).toEqual({ ok: true, checked: false })
   })
 })

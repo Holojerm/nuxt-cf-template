@@ -163,9 +163,11 @@ useSeo({
       <section class="flex flex-col gap-3">
         <h2 class="text-2xl text-highlighted">Your rights</h2>
         <p>
-          You can download a copy of your data or delete your account and its contents yourself,
-          any time, from
-          <ULink to="/account" class="text-primary underline underline-offset-2">your account page</ULink>
+          You can download a copy of your data or delete your account and its contents yourself, any
+          time, from
+          <ULink to="/account" class="text-primary underline underline-offset-2"
+            >your account page</ULink
+          >
           — no waiting on a reply. For correction of anything wrong, or anything else, email
           <ULink :to="`mailto:${support}`" class="text-primary underline underline-offset-2">{{
             support

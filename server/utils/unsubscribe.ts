@@ -25,13 +25,17 @@
 // guessed token was correct through response timing.
 
 import { z } from 'zod'
+import { eq } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import {
   isMandatoryNotification,
   OPTIONAL_NOTIFICATION_EVENT_TYPES,
   type OptionalNotificationEventType,
 } from '#shared/utils/notifications'
+import * as tables from '../db/schema'
 import type { NotificationDb } from './notifications'
+import { base64url, timingSafeEqual } from './hash'
+import { isUndeliverableAddress } from './users'
 
 const encoder = new TextEncoder()
 
@@ -40,7 +44,29 @@ const HKDF_INFO = 'nuxt-cf-template:email-unsubscribe:v1'
 // secrecy — all the secret entropy is in sessionPassword.
 const HKDF_SALT = 'email-unsubscribe'
 
-async function deriveKey(sessionPassword: string): Promise<CryptoKey> {
+/**
+ * Derived keys, memoised per isolate and keyed by the password they came from.
+ *
+ * HKDF is two Web Crypto calls, and this function ran on every unsubscribe
+ * verification and every welcome email — the derivation is deterministic, so
+ * repeating it buys nothing. Keyed by password rather than cached as a single
+ * value so a config change (or a test driving two secrets) can never be served
+ * the wrong key, which is the failure a naive one-slot cache would have.
+ *
+ * A Map with no eviction is safe here only because the key space is "the
+ * deployment's session password": one entry in production, a handful in tests.
+ */
+const derivedKeys = new Map<string, Promise<CryptoKey>>()
+
+function deriveKey(sessionPassword: string): Promise<CryptoKey> {
+  const cached = derivedKeys.get(sessionPassword)
+  if (cached) return cached
+  const promise = deriveKeyUncached(sessionPassword)
+  derivedKeys.set(sessionPassword, promise)
+  return promise
+}
+
+async function deriveKeyUncached(sessionPassword: string): Promise<CryptoKey> {
   const baseKey = await crypto.subtle.importKey(
     'raw',
     encoder.encode(sessionPassword),
@@ -62,26 +88,10 @@ async function deriveKey(sessionPassword: string): Promise<CryptoKey> {
   )
 }
 
-function base64UrlEncode(bytes: ArrayBuffer): string {
-  let binary = ''
-  for (const byte of new Uint8Array(bytes)) binary += String.fromCharCode(byte)
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
 async function hmacBase64Url(sessionPassword: string, message: string): Promise<string> {
   const key = await deriveKey(sessionPassword)
   const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(message))
-  return base64UrlEncode(signature)
-}
-
-/** Mirrors server/utils/paddle.ts's timingSafeEqual — same reasoning, same shape. */
-function timingSafeEqual(a: string, b: string): boolean {
-  const ab = encoder.encode(a)
-  const bb = encoder.encode(b)
-  if (ab.length !== bb.length) return false
-  let diff = 0
-  for (let i = 0; i < ab.length; i++) diff |= ab[i]! ^ bb[i]!
-  return diff === 0
+  return base64url(signature)
 }
 
 /**
@@ -163,11 +173,7 @@ export const unsubscribeQuerySchema = z.object({
 export async function authenticateUnsubscribeRequest(
   event: H3Event,
 ): Promise<{ userId: string; eventType: OptionalNotificationEventType; token: string }> {
-  const {
-    u: userId,
-    e: eventType,
-    t: token,
-  } = await getValidatedQuery(event, unsubscribeQuerySchema.parse)
+  const { u: userId, e: eventType, t: token } = await readUnsubscribeParams(event)
 
   const sessionPassword = useRuntimeConfig(event).sessionPassword
   const valid = await verifyUnsubscribeToken(sessionPassword, userId, eventType, token)
@@ -178,12 +184,72 @@ export async function authenticateUnsubscribeRequest(
   return { userId, eventType, token }
 }
 
-/** Authenticate, then record the opt-out. The POST half of the pair above. */
+/**
+ * Body first, query second — both are legitimate, and that is why this widens
+ * rather than moves.
+ *
+ * The signed token is a credential, and Cloudflare's edge records the request
+ * URI of every request upstream of anything this Worker can redact. So the
+ * confirmation page POSTs a JSON body. But the query form cannot go away: RFC
+ * 8058 puts the parameters in the `List-Unsubscribe` URL, and a mail provider's
+ * one-click button POSTs that URL with a fixed `List-Unsubscribe=One-Click`
+ * body of its own — and the footer link a human clicks is a GET with nowhere
+ * else to put them.
+ *
+ * `safeParse` on the body rather than a method check, precisely because of that
+ * one-click body: it parses fine as a body and validates as nothing, so the
+ * fallback has to be driven by whether the parameters are THERE, not by which
+ * verb was used.
+ */
+async function readUnsubscribeParams(event: H3Event) {
+  if (event.method !== 'GET' && event.method !== 'HEAD') {
+    const body = await readBody(event).catch(() => null)
+    const parsed = unsubscribeQuerySchema.safeParse(body)
+    if (parsed.success) return parsed.data
+  }
+  return getValidatedQuery(event, unsubscribeQuerySchema.parse)
+}
+
+/**
+ * Authenticate, check the account is still live, then record the opt-out.
+ *
+ * ── Why the liveness check ───────────────────────────────────────────────────
+ * The unsubscribe token is an HMAC over `userId|eventType` with no expiry — it
+ * is valid forever, by design, because a link sitting in a two-year-old email
+ * should still work. Combined with deletion anonymizing the `users` row in
+ * place, that meant replaying any old link for a deleted account INSERTED a
+ * fresh `notification_preferences` row against the tombstone's id: data
+ * recreated for an account whose whole point is that its data is gone, and a
+ * row that would then have to be cleaned up by a deletion that already ran.
+ *
+ * Refused with the same response as success, for the same reason every other
+ * public endpoint here does: answering differently would turn a never-expiring
+ * token into an oracle for "was this account deleted?".
+ *
+ * One indexed read, on a path taken a handful of times per user per year.
+ */
 export async function applyUnsubscribeRequest(
   event: H3Event,
   db: NotificationDb,
 ): Promise<{ userId: string; eventType: OptionalNotificationEventType }> {
   const { userId, eventType } = await authenticateUnsubscribeRequest(event)
+
+  // Deliberately not checkSession(): that answers "may this SESSION act", and
+  // its `undated` refusal — a session that cannot prove it postdates a
+  // revocation — has no meaning for a link that is not a session. The question
+  // here is only whether the account still exists.
+  const user = await db.query.users.findFirst({
+    where: eq(tables.users.id, userId),
+    columns: { email: true },
+  })
+
+  if (!user || isUndeliverableAddress(user.email)) {
+    console.warn(
+      JSON.stringify({ kind: 'unsubscribe_refused', reason: user ? 'deleted' : 'no_account' }),
+    )
+    return { userId, eventType }
+  }
+
   await setNotificationPreference(db, userId, eventType, false)
   return { userId, eventType }
 }

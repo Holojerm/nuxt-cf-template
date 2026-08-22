@@ -60,6 +60,11 @@ export type TurnstileDecision =
   | { ok: true; checked: true }
   | { ok: false; code: 'turnstile_missing' | 'turnstile_failed'; errorCodes: string[] }
 
+/** A decision, plus the one outcome a decision cannot express: the check itself broke. */
+export type TurnstileOutcome =
+  | TurnstileDecision
+  | { ok: false; code: 'turnstile_unavailable'; errorCodes: string[] }
+
 export interface TurnstileInput {
   /** `runtimeConfig.turnstile.secretKey`. Empty or unset disables the check. */
   secretKey: string | undefined
@@ -82,8 +87,9 @@ export interface TurnstileInput {
  * limiters in this repo fail open because they are advisory; a bot check is
  * the opposite — failing open on a network blip would hand an attacker a
  * bypass they can cause on demand by making siteverify slow. So the throw
- * propagates and the caller turns it into a 400, and the honest trade is that
- * a Cloudflare outage takes this form down with it.
+ * propagates, and `requireTurnstile` — the only caller with an H3 event to
+ * answer — converts it into a 400 carrying `turnstile_unavailable`. The honest
+ * trade is that a Cloudflare outage takes this form down with it, visibly.
  */
 export async function decideTurnstile(input: TurnstileInput): Promise<TurnstileDecision> {
   if (!input.secretKey) {
@@ -109,6 +115,41 @@ export async function decideTurnstile(input: TurnstileInput): Promise<TurnstileD
   if (result.success) return { ok: true, checked: true }
 
   return { ok: false, code: 'turnstile_failed', errorCodes: result['error-codes'] ?? [] }
+}
+
+/**
+ * decideTurnstile, with a broken verifier turned into a refusal.
+ *
+ * ── Why this exists as its own function ──────────────────────────────────────
+ * `decideTurnstile` lets a verifier throw on purpose: failing OPEN on a network
+ * blip would hand an attacker a bypass they can cause on demand by making
+ * siteverify slow. But "the throw propagates and the caller turns it into a
+ * 400" described something no caller actually did — the throw escaped
+ * `requireTurnstile` as a bare 500 with no `data.code`, so the form showed a
+ * generic "something went wrong", the client could not tell the user it was
+ * worth retrying, and every siteverify hiccup became an $exception storm.
+ *
+ * Still fail-CLOSED: the request is refused either way. What changes is that it
+ * is refused in the shape the surrounding code documents, with a code
+ * app/utils/auth-errors.ts can phrase — and that the conversion is a pure,
+ * injectable function, so "a broken verifier does not fail open" is a tested
+ * property rather than a comment. `requireTurnstile` cannot be tested directly;
+ * it reaches for `useRuntimeConfig`.
+ */
+export async function resolveTurnstile(input: TurnstileInput): Promise<TurnstileOutcome> {
+  try {
+    return await decideTurnstile(input)
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        kind: 'turnstile_unavailable',
+        // Same rule as everywhere else that logs a path — see server/utils/log.ts.
+        path: input.event ? pathForLog(input.event.path) : undefined,
+        error: String(error),
+      }),
+    )
+    return { ok: false, code: 'turnstile_unavailable', errorCodes: ['verifier-threw'] }
+  }
 }
 
 /**
@@ -149,7 +190,7 @@ const moduleVerifier: TurnstileVerifier = async (token, event) => {
 export async function requireTurnstile(event: H3Event, token: unknown): Promise<void> {
   const config = useRuntimeConfig(event)
 
-  const decision = await decideTurnstile({
+  const decision = await resolveTurnstile({
     secretKey: config.turnstile.secretKey,
     siteKey: config.public.turnstile.siteKey,
     token,
@@ -173,7 +214,14 @@ export async function requireTurnstile(event: H3Event, token: unknown): Promise<
 
   throw createError({
     statusCode: 400,
-    message: 'Could not verify you are human. Please try again.',
+    message:
+      decision.code === 'turnstile_unavailable'
+        ? 'Could not check that you are human right now. Please try again.'
+        : 'Could not verify you are human. Please try again.',
+    // Three distinct codes, three distinct sentences on the client
+    // (app/utils/auth-errors.ts). "Solve it again" and "our check is down" are
+    // different instructions, and collapsing them into one generic failure is
+    // how a user retypes a form that was never the problem.
     data: { code: decision.code },
   })
 }

@@ -103,18 +103,25 @@ async function addressBudgetExhausted(email: string, salt: string): Promise<bool
   const spellings = [...new Set([canonicalizeEmailForLimiting(email), email])]
 
   try {
-    for (const spelling of spellings) {
-      // Hashed, not raw: KV keys are readable in the Cloudflare dashboard and
-      // land in log lines, and "which addresses asked for a sign-in link" is
-      // not something this app needs to publish in order to run.
-      const identifier = (await saltedHash(spelling, salt)) ?? spelling
-      const verdict = await consumeRateLimit(kv, {
-        key: `${MAGIC_LINK_RATE_LIMIT.name}:${identifier}`,
-        limit: MAGIC_LINK_RATE_LIMIT.limit,
-        windowSeconds: MAGIC_LINK_RATE_LIMIT.windowSeconds,
-      })
-      if (!verdict.allowed) return true
-    }
+    // In parallel, not in sequence. The two buckets are independent and BOTH
+    // are charged on every request — a short-circuit would only skip the second
+    // charge in the case where the first already refused, which is the case
+    // that returns `true` anyway. Sequential, this was two KV round trips of
+    // latency on the critical path of every sign-in for no behavioural gain.
+    const verdicts = await Promise.all(
+      spellings.map(async (spelling) => {
+        // Hashed, not raw: KV keys are readable in the Cloudflare dashboard and
+        // land in log lines, and "which addresses asked for a sign-in link" is
+        // not something this app needs to publish in order to run.
+        const identifier = (await saltedHash(spelling, salt)) ?? spelling
+        return consumeRateLimit(kv, {
+          key: `${MAGIC_LINK_RATE_LIMIT.name}:${identifier}`,
+          limit: MAGIC_LINK_RATE_LIMIT.limit,
+          windowSeconds: MAGIC_LINK_RATE_LIMIT.windowSeconds,
+        })
+      }),
+    )
+    if (verdicts.some((verdict) => !verdict.allowed)) return true
   } catch (error) {
     console.warn(
       JSON.stringify({

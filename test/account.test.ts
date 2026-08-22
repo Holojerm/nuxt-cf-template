@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
 import { deleteAccount, exportAccount } from '../server/utils/account'
+import { getBillingOverview } from '../server/utils/entitlements'
 
 const db = drizzle(env.DB, { schema })
 
@@ -117,10 +118,19 @@ describe('deleteAccount', () => {
       enabled: false,
     })
 
-    const outcome = await deleteAccount(db, USER)
-    expect(outcome).toMatchObject({
-      outcome: 'deleted',
-      counts: { filesDeleted: 1, connectCodesDeleted: 1, notificationPreferencesDeleted: 1 },
+    expect((await deleteAccount(db, USER)).outcome).toBe('deleted')
+
+    // The tally is asserted on the AUDIT ROW, which is the copy that outlives
+    // the request and the one an investigation reads. The return value
+    // deliberately carries none — two counts of the same event are two things
+    // that can disagree.
+    const audit = await db.query.auditLog.findFirst({
+      where: eq(schema.auditLog.action, 'account.deleted'),
+    })
+    expect(audit?.metadata).toMatchObject({
+      filesCount: 1,
+      connectCodesCount: 1,
+      notificationPreferencesCount: 1,
     })
 
     expect(await db.query.files.findMany({ where: eq(schema.files.userId, USER) })).toHaveLength(0)
@@ -161,8 +171,12 @@ describe('deleteAccount', () => {
       },
     ])
 
-    const outcome = await deleteAccount(db, USER)
-    expect(outcome).toMatchObject({ outcome: 'deleted', counts: { magicLinkTokensDeleted: 2 } })
+    expect((await deleteAccount(db, USER)).outcome).toBe('deleted')
+
+    const audit = await db.query.auditLog.findFirst({
+      where: eq(schema.auditLog.action, 'account.deleted'),
+    })
+    expect(audit?.metadata).toMatchObject({ magicLinkTokensCount: 2 })
 
     const remaining = await db.select().from(schema.magicLinkTokens)
     expect(remaining.map((row) => row.id)).toEqual(['link-other'])
@@ -416,5 +430,56 @@ describe('exportAccount', () => {
     expect(result.auditEntries[0]).not.toHaveProperty('actorUserId')
 
     expect(typeof result.exportedAt).toBe('string')
+  })
+})
+
+// ── Billing-liveness, as a matrix ───────────────────────────────────────────
+// Two surfaces used to answer "will this subscription charge somebody again"
+// and they disagreed: the deletion guard said one thing, the "cancellable"
+// count on /account said another. A past_due customer was shown nothing to
+// cancel, handed a portal link with no subscription in it, and then refused
+// deletion with "cancel it in the portal first" — pointing at the portal the
+// page had just decided they had nothing to cancel in. These cases pin them
+// together.
+
+describe('billing liveness agrees across the deletion guard and the cancel count', () => {
+  const CASES: { status: string; scheduled: string | null; live: boolean; why: string }[] = [
+    { status: 'active', scheduled: null, live: true, why: 'the ordinary paying case' },
+    { status: 'trialing', scheduled: null, live: true, why: 'a trial converts and charges' },
+    { status: 'past_due', scheduled: null, live: true, why: 'a dunning retry can succeed' },
+    { status: 'paused', scheduled: null, live: true, why: 'the customer can unpause' },
+    {
+      status: 'unknown',
+      scheduled: null,
+      live: true,
+      why: 'an unrecognised status is not proof it is dead',
+    },
+    { status: 'canceled', scheduled: null, live: false, why: 'terminal' },
+    { status: 'refunded', scheduled: null, live: false, why: 'terminal' },
+    { status: 'chargeback', scheduled: null, live: false, why: 'terminal' },
+    // The one Paddle does not express in `status` at all: it keeps a cancelled
+    // subscription `active` for the whole notice period.
+    { status: 'active', scheduled: 'cancel', live: false, why: 'cancel at period end' },
+    { status: 'active', scheduled: 'pause', live: true, why: 'a pause still resumes and bills' },
+    { status: 'active', scheduled: 'resume', live: true, why: 'obviously still billing' },
+  ]
+
+  it.each(CASES)('$status + scheduled=$scheduled → live=$live ($why)', async (testCase) => {
+    await db.insert(schema.entitlements).values({
+      id: 'ent-matrix',
+      userId: USER,
+      paddleSubscriptionId: 'sub_matrix',
+      productKey: 'default',
+      status: testCase.status,
+      scheduledChangeAction: testCase.scheduled,
+      currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24),
+    })
+
+    // Read the cancel count BEFORE deleting — deletion tombstones the row.
+    const overview = await getBillingOverview(db, USER)
+    expect(overview.cancellableSubscriptionIds.length > 0, 'cancellable count').toBe(testCase.live)
+
+    const blocksDeletion = (await deleteAccount(db, USER)).outcome === 'live_subscription'
+    expect(blocksDeletion, 'deletion guard').toBe(testCase.live)
   })
 })

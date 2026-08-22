@@ -17,10 +17,9 @@ const route = useRoute()
 const toast = useToast()
 const userId = computed(() => String(route.params.id))
 
-const { data, error, status, refresh } = await useFetch(
-  () => `/api/admin/users/${userId.value}`,
-  { key: `admin-user-${route.params.id}` },
-)
+const { data, error, status, refresh } = await useFetch(() => `/api/admin/users/${userId.value}`, {
+  key: `admin-user-${route.params.id}`,
+})
 
 const forbidden = computed(() => isForbidden(error.value))
 const missing = computed(() => error.value?.statusCode === 404)
@@ -303,10 +302,7 @@ useSeo({
         size="lg"
       />
       <div class="min-w-0">
-        <h1
-          class="truncate text-2xl text-highlighted"
-          :class="{ 'font-mono': data }"
-        >
+        <h1 class="truncate text-2xl text-highlighted" :class="{ 'font-mono': data }">
           {{ data?.user.email ?? 'Customer record' }}
         </h1>
         <p v-if="data" class="mt-1 text-muted">{{ data.user.name }}</p>
@@ -421,11 +417,16 @@ useSeo({
               </div>
               <div>
                 <dt class="text-sm text-muted">Ends</dt>
-                <dd class="font-mono text-default">{{ formatDay(data.billing.currentPeriodEnd) }}</dd>
+                <dd class="font-mono text-default">
+                  {{ formatDay(data.billing.currentPeriodEnd) }}
+                </dd>
               </div>
             </dl>
 
-            <div v-if="hasLiveSubscription" class="flex flex-col gap-3 border-t border-default pt-6">
+            <div
+              v-if="hasLiveSubscription"
+              class="flex flex-col gap-3 border-t border-default pt-6"
+            >
               <h3 class="text-lg text-highlighted">Grant comp access</h3>
               <UAlert
                 color="info"
@@ -502,7 +503,11 @@ useSeo({
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in data.billing.history" :key="row.ref" class="border-b border-default">
+                <tr
+                  v-for="row in data.billing.history"
+                  :key="row.ref"
+                  class="border-b border-default"
+                >
                   <td class="py-2 pr-4 font-mono text-default">{{ formatDay(row.purchasedAt) }}</td>
                   <td class="py-2 pr-4 text-default">
                     {{ row.kind === 'pass' ? 'Pass' : 'Subscription' }}
@@ -614,7 +619,9 @@ useSeo({
                     <UBadge
                       :color="viewAs.dashboardReachable ? 'success' : 'error'"
                       variant="subtle"
-                      :icon="viewAs.dashboardReachable ? 'i-lucide-circle-check' : 'i-lucide-circle-x'"
+                      :icon="
+                        viewAs.dashboardReachable ? 'i-lucide-circle-check' : 'i-lucide-circle-x'
+                      "
                     >
                       {{ viewAs.dashboardReachable ? 'yes' : 'no — sent to /pricing' }}
                     </UBadge>
@@ -660,7 +667,11 @@ useSeo({
           </p>
 
           <ul v-else class="flex flex-col divide-y divide-default">
-            <li v-for="item in data.feedback" :key="item.id" class="flex flex-col gap-2 py-4 first:pt-0">
+            <li
+              v-for="item in data.feedback"
+              :key="item.id"
+              class="flex flex-col gap-2 py-4 first:pt-0"
+            >
               <div class="flex flex-wrap items-center gap-2">
                 <UBadge
                   :color="feedbackKindMeta(item.kind).color"
@@ -743,11 +754,14 @@ useSeo({
           @submit="submitRevoke"
         >
           <p class="text-muted">
-            Access from this grant ends immediately. Anything else the customer has — a paid pass,
-            a subscription, another comp — is untouched.
+            Access from this grant ends immediately. Anything else the customer has — a paid pass, a
+            subscription, another comp — is untouched.
           </p>
 
-          <dl v-if="revokeTarget" class="grid gap-3 border border-default p-4 text-sm sm:grid-cols-2">
+          <dl
+            v-if="revokeTarget"
+            class="grid gap-3 border border-default p-4 text-sm sm:grid-cols-2"
+          >
             <div>
               <dt class="text-muted">Granted</dt>
               <dd class="font-mono text-default">{{ formatDay(revokeTarget.purchasedAt) }}</dd>

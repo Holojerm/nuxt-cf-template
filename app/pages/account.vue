@@ -148,6 +148,15 @@ const exportPending = ref(false)
  * anything — that header only does its job on a real navigation. Building the
  * Blob and clicking a throwaway anchor is what actually triggers "Save As"
  * from JS.
+ *
+ * Two details that look like ceremony and are not. The anchor is appended to
+ * the document before it is clicked, because Safari and older WebKit ignore a
+ * click on a node that is not in the tree — the download silently produced no
+ * file. And the object URL is revoked on a later task, because revoking it in
+ * the same tick can invalidate the blob before the browser has finished
+ * starting the download, which fails the same silent way. Both failure modes
+ * produce no error and no file, so nobody reports them as bugs; they report
+ * "the export button doesn't work".
  */
 async function downloadData(): Promise<void> {
   exportPending.value = true
@@ -158,8 +167,11 @@ async function downloadData(): Promise<void> {
     const link = document.createElement('a')
     link.href = url
     link.download = exportFilename(config.public.appName)
+    link.style.display = 'none'
+    document.body.append(link)
     link.click()
-    URL.revokeObjectURL(url)
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
   } catch {
     toast.add({ title: 'Could not download your data', color: 'error' })
   } finally {
@@ -305,11 +317,17 @@ useSeo({
       </BillingPastDueAlert>
 
       <div v-else-if="billing?.active" class="flex flex-col gap-4">
+        <!-- `cancelsAt` first, because Paddle keeps a cancelled subscription at
+             status `active` until the notice period ends — so without this the
+             page tells someone who cancelled weeks ago that they renew
+             automatically, next to no cancel button. -->
         <p class="text-default">
           {{
-            billing.kind === 'pass'
-              ? 'You have a one-time pass. It will not renew.'
-              : 'Your subscription renews automatically.'
+            billing.cancelsAt
+              ? 'Your subscription is cancelled. You keep access until it ends.'
+              : billing.kind === 'pass'
+                ? 'You have a one-time pass. It will not renew.'
+                : 'Your subscription renews automatically.'
           }}
         </p>
         <dl class="grid gap-4 sm:grid-cols-2">
@@ -321,9 +339,11 @@ useSeo({
           </div>
           <div>
             <dt class="text-sm text-muted">
-              {{ billing.kind === 'pass' ? 'Expires' : 'Renews' }}
+              {{ billing.cancelsAt ? 'Ends' : billing.kind === 'pass' ? 'Expires' : 'Renews' }}
             </dt>
-            <dd class="font-mono text-default">{{ formatDate(billing.currentPeriodEnd) }}</dd>
+            <dd class="font-mono text-default">
+              {{ formatDate(billing.cancelsAt ?? billing.currentPeriodEnd) }}
+            </dd>
           </div>
         </dl>
 
@@ -514,8 +534,8 @@ useSeo({
           <div>
             <p class="text-default">Delete your account</p>
             <p class="text-sm text-muted">
-              Removes your account and its contents. Billing records are kept as tax law requires
-              — see the
+              Removes your account and its contents. Billing records are kept as tax law requires —
+              see the
               <!-- Underlined: a prose link distinguished by colour alone is the
                    one thing DESIGN.md › Accessibility rules out, and axe agrees
                    (link-in-text-block). -->
@@ -524,12 +544,7 @@ useSeo({
               >.
             </p>
           </div>
-          <UButton
-            color="error"
-            variant="outline"
-            icon="i-lucide-trash-2"
-            @click="openDeleteModal"
-          >
+          <UButton color="error" variant="outline" icon="i-lucide-trash-2" @click="openDeleteModal">
             Delete account
           </UButton>
         </div>
@@ -602,8 +617,8 @@ useSeo({
           <template v-else>
             <p class="text-muted">
               This deletes your account and its contents: uploaded files, your notification
-              settings, and the AI client connection. Feedback you've sent stays, with anything
-              that identifies you removed from it.
+              settings, and the AI client connection. Feedback you've sent stays, with anything that
+              identifies you removed from it.
             </p>
             <p class="text-muted">
               Billing records are kept as tax law requires — see the
@@ -636,7 +651,9 @@ useSeo({
               Delete my account
             </UButton>
           </template>
-          <UButton color="neutral" variant="ghost" @click="deleteOpen = false"> Never mind </UButton>
+          <UButton color="neutral" variant="ghost" @click="deleteOpen = false">
+            Never mind
+          </UButton>
         </div>
       </template>
     </UModal>

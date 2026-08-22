@@ -53,7 +53,7 @@ export default defineEventHandler(async (event) => {
   // this state too — reaching here means a hand-made call or a race with a
   // subscription that started mid-session. grantCompPasses re-checks anyway.
   const overview = await getBillingOverview(db, user.id, body.productKey)
-  const liveSubscription = overview.subscriptionIds[0]
+  const liveSubscription = overview.accessSubscriptionIds[0]
   if (liveSubscription) {
     throw createError({
       statusCode: 409,

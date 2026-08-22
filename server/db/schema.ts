@@ -110,6 +110,25 @@ export const entitlements = sqliteTable('entitlements', {
   // Paddle subscription statuses: active | trialing | past_due | paused | canceled
   status: text('status').notNull(),
   currentPeriodEnd: integer('current_period_end', { mode: 'timestamp' }),
+  // ── Paddle's scheduled_change ──────────────────────────────────────────────
+  // "Cancel at period end" does NOT change a subscription's status. Paddle
+  // keeps it `active` and attaches `scheduled_change: { action, effective_at }`
+  // until the date arrives, so a row that will never be billed again is
+  // indistinguishable from one that renews next month — unless these are
+  // stored. Without them the deletion guard refused, for months, to delete an
+  // account whose subscription was already cancelled, and told the customer to
+  // go cancel it.
+  //
+  // `action` is Paddle's own vocabulary (`cancel` | `pause` | `resume`), kept
+  // verbatim rather than mapped to a local enum: the set is theirs to extend,
+  // and a value we do not recognise should read as "something is scheduled"
+  // rather than be silently dropped.
+  //
+  // BOTH are cleared when Paddle sends `scheduled_change: null` — that is how a
+  // customer un-cancels, and a stale value here would keep an active
+  // subscription looking dead forever.
+  scheduledChangeAction: text('scheduled_change_action'),
+  scheduledChangeAt: integer('scheduled_change_at', { mode: 'timestamp' }),
   ...timestamps,
 })
 

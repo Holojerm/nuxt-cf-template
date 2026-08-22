@@ -34,6 +34,25 @@ const turnstileSiteKey = useRuntimeConfig().public.turnstile.siteKey
 const challengeRequired = computed(() => Boolean(turnstileSiteKey) && !loggedIn.value)
 const turnstileToken = ref('')
 
+/**
+ * The widget instance, because clearing the v-model is NOT how you get a new
+ * challenge.
+ *
+ * `<NuxtTurnstile>` writes into the model when Cloudflare hands it a token; it
+ * never watches the model to decide whether to re-issue. Writing `''` back
+ * therefore leaves the component holding a spent token and the submit button
+ * disabled on `!turnstileToken` — with nothing to re-enable it until the
+ * component's own ~4-minute refresh timer fires. One rejected challenge and the
+ * form was dead for four minutes. `reset()` is the documented way to ask for
+ * another, and it is what login.vue already does.
+ */
+const turnstile = ref<{ reset: () => void } | null>(null)
+
+function resetChallenge() {
+  turnstileToken.value = ''
+  turnstile.value?.reset()
+}
+
 // Mirrors server/utils/feedback.ts — the server re-validates either way.
 const schema = z.object({
   kind: z.enum(['bug', 'confusion', 'idea', 'praise']),
@@ -61,7 +80,7 @@ function reset() {
   state.kind = 'idea'
   state.message = ''
   state.email = ''
-  turnstileToken.value = ''
+  resetChallenge()
 }
 
 async function onSubmit(event: FormSubmitEvent<Schema>) {
@@ -74,9 +93,9 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
 
   if (!sent) {
     // A rejected challenge lands here too. Tokens are single-use and expire
-    // after five minutes, so a retry has to start from a fresh one — clearing
-    // it is what makes <NuxtTurnstile> issue another.
-    turnstileToken.value = ''
+    // after five minutes, so a retry has to start from a fresh one — and only
+    // reset() asks for one. See resetChallenge().
+    resetChallenge()
     toast.add({
       title: 'That didn’t send',
       description: 'Something went wrong on our end. Please try again.',
@@ -147,7 +166,7 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
           name="turnstile"
           description="A quick automated check. Usually nothing to click."
         >
-          <NuxtTurnstile v-model="turnstileToken" />
+          <NuxtTurnstile ref="turnstile" v-model="turnstileToken" />
         </UFormField>
 
         <div class="flex justify-end gap-2">

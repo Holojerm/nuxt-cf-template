@@ -22,7 +22,17 @@ import {
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type NotificationDb = ReturnType<typeof drizzle<typeof tables>>
 
-/** Only channel this app sends today — matches the column's default. */
+/**
+ * The only channel this app sends on, and the only value ever written to the
+ * column.
+ *
+ * A `channel` parameter used to be threaded through both functions below and
+ * every one of their call sites, always defaulted, never once passed. That is
+ * not extensibility — it is five call sites of noise plus a knob that has never
+ * been turned and so has never been proven to work. The COLUMN stays (it is
+ * part of the unique index, and adding push or SMS is a real possibility); the
+ * parameter goes, and comes back the day a second channel does, with a caller.
+ */
 const DEFAULT_CHANNEL = 'email'
 
 /**
@@ -39,14 +49,13 @@ export async function isNotificationEnabled(
   db: NotificationDb,
   userId: string,
   eventType: string,
-  channel: string = DEFAULT_CHANNEL,
 ): Promise<boolean> {
   if (isMandatoryNotification(eventType)) return true
 
   const row = await db.query.notificationPreferences.findFirst({
     where: and(
       eq(tables.notificationPreferences.userId, userId),
-      eq(tables.notificationPreferences.channel, channel),
+      eq(tables.notificationPreferences.channel, DEFAULT_CHANNEL),
       eq(tables.notificationPreferences.eventType, eventType),
     ),
     columns: { enabled: true },
@@ -72,7 +81,6 @@ export async function setNotificationPreference(
   userId: string,
   eventType: OptionalNotificationEventType,
   enabled: boolean,
-  channel: string = DEFAULT_CHANNEL,
 ): Promise<void> {
   if (isMandatoryNotification(eventType)) {
     console.warn(
@@ -87,7 +95,7 @@ export async function setNotificationPreference(
 
   await db
     .insert(tables.notificationPreferences)
-    .values({ userId, channel, eventType, enabled })
+    .values({ userId, channel: DEFAULT_CHANNEL, eventType, enabled })
     .onConflictDoUpdate({
       target: [
         tables.notificationPreferences.userId,

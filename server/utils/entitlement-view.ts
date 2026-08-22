@@ -42,6 +42,16 @@ export interface EntitlementView {
   /** 'pass' = one-time, nothing to cancel; 'subscription' = renewing. */
   kind: 'pass' | 'subscription' | null
   comped: boolean
+  /**
+   * When an already-requested cancellation takes effect, ISO, or null.
+   *
+   * Surfaced because without it the page is actively misleading: Paddle keeps a
+   * cancelled subscription at `status: 'active'` for the whole notice period,
+   * so /account said "Active — renews on <date>" to someone who had cancelled
+   * weeks earlier, and `cancellable` now reads 0 for the same row, leaving them
+   * with an active plan, no cancel button, and no explanation.
+   */
+  cancelsAt: string | null
   /** Live subscriptions the user could cancel (usually 0 or 1). */
   cancellable: number
   /** Whether a Paddle customer portal link can be minted at all. */
@@ -84,6 +94,12 @@ export async function buildEntitlementView(
   // access alongside it is additive, not descriptive. `past_due` subs are
   // excluded by ACTIVE_STATUSES — during dunning a comp really is the only
   // thing granting access, and it should say so.
+  //
+  // ACTIVE_STATUSES here and `isBillingLive` for `cancellable` below is not the
+  // inconsistency it looks like: this line picks the row that DESCRIBES the
+  // plan ("what am I on?"), which is an access question, while `cancellable`
+  // answers "what can still charge me?". They genuinely differ during dunning,
+  // and collapsing them would revert the bug the paragraph above documents.
   const liveSubscription =
     overview.history.find(
       (row) => isSubscriptionRef(row.paddleSubscriptionId) && ACTIVE_STATUSES.includes(row.status),
@@ -99,7 +115,11 @@ export async function buildEntitlementView(
     currentPeriodEnd: describing?.currentPeriodEnd?.toISOString() ?? null,
     kind: describing ? (isPass(describing.paddleSubscriptionId) ? 'pass' : 'subscription') : null,
     comped: describing ? isCompRef(describing.paddleSubscriptionId) : false,
-    cancellable: overview.subscriptionIds.length,
+    cancelsAt:
+      describing?.scheduledChangeAction === 'cancel'
+        ? (describing.scheduledChangeAt?.toISOString() ?? null)
+        : null,
+    cancellable: overview.cancellableSubscriptionIds.length,
     portalAvailable: Boolean(overview.paddleCustomerId) && options.portalConfigured,
     history: overview.history.map((entitlement) => ({
       ref: entitlement.paddleSubscriptionId,

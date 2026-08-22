@@ -220,7 +220,9 @@ describe('resolveAuditSubjectEmails', () => {
     for (let index = 0; index < ids.length; index += 15) {
       await db
         .insert(schema.users)
-        .values(ids.slice(index, index + 15).map((id) => ({ id, email: `${id}@example.com`, name: id })))
+        .values(
+          ids.slice(index, index + 15).map((id) => ({ id, email: `${id}@example.com`, name: id })),
+        )
         .onConflictDoNothing()
     }
 

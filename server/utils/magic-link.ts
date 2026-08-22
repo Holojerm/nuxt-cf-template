@@ -36,6 +36,7 @@ import type { drizzle } from 'drizzle-orm/d1'
 import type { Attribution } from '#shared/utils/attribution'
 import * as tables from '../db/schema'
 import type { MagicLinkToken } from '../db/schema'
+import { base64url, sha256Hex } from './hash'
 import { isUndeliverableAddress, normalizeEmail } from './users'
 
 export type MagicLinkDb = ReturnType<typeof drizzle<typeof tables>>
@@ -82,13 +83,6 @@ const TOKEN_BYTES = 32
  */
 export const MAGIC_LINK_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,128}$/
 
-/** base64url, unpadded — URL-safe without percent-encoding. */
-function base64url(bytes: Uint8Array): string {
-  let binary = ''
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
 /** A fresh, unguessable token. The plaintext exists only in the email. */
 export function generateMagicLinkToken(): string {
   return base64url(crypto.getRandomValues(new Uint8Array(TOKEN_BYTES)))
@@ -96,10 +90,7 @@ export function generateMagicLinkToken(): string {
 
 /** SHA-256, hex. The only form of a token that is ever written down. */
 export async function hashMagicLinkToken(token: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('')
+  return sha256Hex(token)
 }
 
 export type MagicLinkFailure = 'invalid' | 'expired' | 'used'

@@ -60,26 +60,28 @@ export default defineEventHandler(async (event) => {
     if (!verdict.valid) {
       console.warn(JSON.stringify({ kind: 'session_revoked', reason: verdict.reason }))
       // Clear it so the browser stops presenting a dead credential on every
-      // subsequent request instead of only on the ones that happen to 401. The
-      // Set-Cookie rides out on whichever response follows.
+      // subsequent request instead of only on the ones that happen to 401.
+      //
+      // Worth knowing where that Set-Cookie does and does not land: on a real
+      // request it rides out on the response below, but during SSR the /login
+      // page's `useFetch` is an INTERNAL h3 event, and Nuxt does not forward
+      // headers off an internal response to the outer one. (nuxt-auth-utils'
+      // own `clear()` has to hand-copy `getSetCookie()` for exactly this
+      // reason.) So on that path the browser keeps the dead cookie until its
+      // next real request — which is fine, because that request gets cleared
+      // too, and nothing here depends on the clear having arrived.
       await clearUserSession(event)
 
-      // Signing out is the one thing a revoked session is still allowed to do.
-      // It authorizes nothing — it destroys a credential — and 401ing it would
-      // make useUserSession().clear() throw, which it does not catch, turning
-      // "your session ended" into an unhandled rejection in the UI.
-      const isSignOut =
-        (path === '/api/_auth/session' && event.method === 'DELETE') || path === '/api/auth/logout'
-      if (!isSignOut) {
-        // 401 on GET /api/_auth/session too, and that is what makes the UI heal
-        // rather than hang: useUserSession().fetch() DOES catch a failed
-        // response and sets the session to null, so the other browser flips to
-        // signed-out on its next refresh. Falling through instead would achieve
-        // nothing — h3's clearSession drops the cached session from the request
-        // context, so the endpoint would re-unseal the same cookie and report
-        // the revoked user as present.
+      // Which paths must NOT be aborted, and why, is a rule with a nasty
+      // failure mode — see isSessionClearOnlyPath(), where it lives so
+      // test/session-guard.test.ts can enumerate it.
+      if (!isSessionClearOnlyPath(path, event.method)) {
         throw createError({ statusCode: 401, message: 'Unauthorized' })
       }
+    } else {
+      // Hand the row on rather than making requireAdmin() read it again. Both
+      // run on every admin request and both look up the same primary key.
+      event.context[SESSION_ROLE_CONTEXT_KEY] = verdict.role
     }
   }
 

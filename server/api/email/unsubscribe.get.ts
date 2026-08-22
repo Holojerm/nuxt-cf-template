@@ -29,8 +29,10 @@ export default defineEventHandler(async (event) => {
   // through their own infrastructure (see unsubscribe.post.ts), so many
   // different users unsubscribing through the same provider can share an IP.
   // The limit is generous for exactly that reason — this is abuse control
-  // against a script hammering the endpoint, not a per-user quota.
-  await rateLimit(event, { name: 'email-unsubscribe', limit: 30, windowSeconds: 60 })
+  // against a script hammering the endpoint, not a per-user quota. Its numbers
+  // live in UNSUBSCRIBE_LIMITER, deliberately unmatchable by the native
+  // binding so this surface stays on globally-counted KV — see the note there.
+  await rateLimit(event, UNSUBSCRIBE_LIMITER)
 
   // Verified here rather than left to the POST so the page can say "this link
   // isn't valid" straight away instead of after a click. No write happens.

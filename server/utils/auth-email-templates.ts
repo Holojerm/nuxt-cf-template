@@ -3,20 +3,25 @@
 // they are the one class of mail that is *load-bearing*: a welcome email that
 // bounces is a missed hello, a sign-in link that bounces is a locked door.
 //
-// ── Why the markup is smaller than the rest of the app's mail ────────────────
-// Deliberate, not lazy. A sign-in link is the message most likely to be filtered
-// (transactional, urgent wording, a single prominent link — the exact shape of a
-// phishing mail), and the two things that most reliably help are a short body
-// with a high text-to-markup ratio and a real plain-text alternative. So this
-// keeps the app's mail styling — one centered table, inline styles, hex colors,
-// no web fonts, no external images, because email clients are not browsers — and
-// nothing else. See email-templates.ts for the full explanation of that style;
-// this file duplicates its private `layout()` in miniature rather than exporting
-// it, and folding the two together is a fine cleanup for whoever next touches
-// both files.
+// It renders through the shared `emailLayout()` rather than a copy of it. The
+// copy was justified while another wave held that file open; it is not
+// justified by anything now, and three literal copies of the palette is three
+// places a rebrand goes wrong. See email-templates.ts for why the markup looks
+// like 2004, and note that DESIGN.md's token layer does not reach here — there
+// is no CSS cascade in an email to hang tokens on, and design:check only scans
+// app/.
 //
-// DESIGN.md's token layer does not reach here — there is no CSS cascade in an
-// email to hang tokens on, and design:check only scans app/.
+// ── What stays deliberate about this one ─────────────────────────────────────
+// A sign-in link is the message most likely to be filtered (transactional,
+// urgent wording, one prominent link — the exact shape of a phishing mail), and
+// the two things that most reliably help are a short body and a real
+// plain-text alternative. So it carries one paragraph, one button, and the URL
+// spelled out for the gateways that rewrite anchors. It also carries no name:
+// this email is sent before we know whether the address has an account at all,
+// and greeting a stranger by a guessed name would be both wrong and a hint
+// about who is registered.
+
+import { emailLayout, type Branding, type EmailContent } from './email-templates'
 
 /**
  * What this email is, in the taxonomy of shared/utils/notifications.ts.
@@ -41,20 +46,6 @@
  */
 export const MAGIC_LINK_EVENT_TYPE = 'security.sign_in_link'
 
-/** Escape for interpolation into HTML. The app name comes from runtime config. */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-interface Branding {
-  appName: string
-  appUrl: string
-}
-
 export interface MagicLinkEmailOptions {
   /** Absolute URL of the confirmation page, token included. */
   url: string
@@ -76,42 +67,19 @@ export interface MagicLinkEmailOptions {
  *      is: no account is created and nothing changes until the link is opened.
  *      That sentence is what turns a stray link into a non-event rather than a
  *      support ticket.
- *
- * There is no name in here on purpose. This email is sent before we know whether
- * the address has an account at all — greeting a stranger by a name we guessed
- * would be both wrong and a hint about who is registered.
  */
-export function magicLinkEmail(
-  brand: Branding,
-  opts: MagicLinkEmailOptions,
-): { subject: string; html: string; text: string } {
+export function magicLinkEmail(brand: Branding, opts: MagicLinkEmailOptions): EmailContent {
   const heading = `Sign in to ${brand.appName}`
-  const expiry = `This link works once and expires in ${opts.expiresMinutes} minutes.`
-  const ignore = `If you didn't ask to sign in, you can ignore this email — nothing happens until the link is opened, and no account is created by this message.`
-
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>${escapeHtml(heading)}</title></head>
-<body style="margin:0;padding:0;background:#fafaf9;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf9;padding:32px 16px;">
-<tr><td align="center">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e7e5e4;border-radius:4px;padding:32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
-    <tr><td style="padding:0 0 8px 0;font-size:13px;letter-spacing:0.04em;text-transform:uppercase;color:#78716c;">${escapeHtml(brand.appName)}</td></tr>
-    <tr><td style="padding:0 0 20px 0;font-size:24px;line-height:1.3;color:#1c1917;">${escapeHtml(heading)}</td></tr>
-    <tr><td style="padding:0 0 16px 0;font-size:16px;line-height:1.65;color:#292524;">${escapeHtml(expiry)}</td></tr>
-    <tr><td style="padding:8px 0 24px 0;">
-      <a href="${opts.url}" style="display:inline-block;background:#c74f2f;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:4px;font-weight:500;">Sign in</a>
-    </td></tr>
-    <tr><td style="padding:0 0 16px 0;font-size:14px;line-height:1.6;color:#78716c;word-break:break-all;">Or paste this into your browser:<br>${escapeHtml(opts.url)}</td></tr>
-    <tr><td style="padding:24px 0 0 0;border-top:1px solid #e7e5e4;font-size:13px;line-height:1.5;color:#78716c;">${escapeHtml(ignore)}</td></tr>
-  </table>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;padding:16px 8px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
-    <tr><td style="font-size:12px;color:#a8a29e;"><a href="${brand.appUrl}" style="color:#a8a29e;">${escapeHtml(brand.appName)}</a></td></tr>
-  </table>
-</td></tr></table>
-</body></html>`
-
-  const text = [heading, '', expiry, '', opts.url, '', '—', ignore, '', brand.appUrl].join('\n')
-
-  return { subject: heading, html, text }
+  const body = emailLayout(brand.appName, brand.appUrl, {
+    heading,
+    paragraphs: [
+      `This link works once and expires in ${opts.expiresMinutes} minutes.`,
+      // The URL in full, because a gateway that rewrites the button's href
+      // still leaves this readable, and a plain-text client shows only this.
+      `Or paste this into your browser: ${opts.url}`,
+    ],
+    action: { label: 'Sign in', url: opts.url },
+    footnote: `If you didn't ask to sign in, you can ignore this email — nothing happens until the link is opened, and no account is created by this message.`,
+  })
+  return { subject: heading, ...body }
 }

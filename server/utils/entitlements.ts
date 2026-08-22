@@ -87,9 +87,33 @@ export const BILLING_TERMINAL_STATUSES = [
   REVOKED_STATUS.chargeback,
 ] as const
 
-/** Will Paddle ever bill this subscription row again? */
-export function isBillingLive(status: string): boolean {
-  return !(BILLING_TERMINAL_STATUSES as readonly string[]).includes(status)
+/** The two columns billing-liveness reads. Widened from `Entitlement` so callers
+ *  can pass a projection instead of a whole row. */
+export interface BillingLivenessRow {
+  status: string
+  scheduledChangeAction?: string | null
+}
+
+/**
+ * Will Paddle ever bill this subscription row again?
+ *
+ * Two conditions, and the second is the one that reads as a bug when it is
+ * missing. A status of `active` with `scheduled_change: { action: 'cancel' }`
+ * is what Paddle stores for the entire notice period after somebody cancels —
+ * they keep access until the date, and the status does not move until then. So
+ * "status is not terminal" alone reported a cancelled subscription as live for
+ * up to a year, and the deletion guard told those customers to go and cancel a
+ * subscription they had already cancelled.
+ *
+ * A scheduled `pause` still bills afterwards and a `resume` obviously does, so
+ * only `cancel` counts. An unrecognised action is treated as still-live, which
+ * is the safe direction: the failure it protects against is deleting an account
+ * out from under a card that then gets charged.
+ */
+export function isBillingLive(row: BillingLivenessRow): boolean {
+  if ((BILLING_TERMINAL_STATUSES as readonly string[]).includes(row.status)) return false
+  if (row.scheduledChangeAction === 'cancel') return false
+  return true
 }
 
 /** The user's granting entitlement for a product, or null. */
@@ -194,6 +218,13 @@ export interface UpsertSubscriptionParams {
   productKey?: string
   status: string
   currentPeriodEnd?: Date | null
+  /**
+   * Paddle's pending cancel/pause/resume, or null when there isn't one.
+   *
+   * Explicitly nullable rather than optional-and-omitted: `null` is a fact the
+   * upsert has to write (see the note there), not an absence it may skip.
+   */
+  scheduledChange?: { action: string; effectiveAt: Date | null } | null
 }
 
 export interface UpsertSubscriptionResult {
@@ -227,6 +258,13 @@ export async function upsertSubscription(
     productKey: params.productKey ?? 'default',
     status: params.status,
     currentPeriodEnd: params.currentPeriodEnd ?? null,
+    // `?? null`, never a conditional spread. Every subscription.* event carries
+    // the full entity, so an absent scheduled_change means there is no longer
+    // one — writing null is how "the customer un-cancelled" gets recorded.
+    // Omitting the key on update would leave the old value in place and keep a
+    // live subscription looking cancelled for good.
+    scheduledChangeAction: params.scheduledChange?.action ?? null,
+    scheduledChangeAt: params.scheduledChange?.effectiveAt ?? null,
   }
   await db
     .insert(tables.entitlements)
@@ -237,6 +275,8 @@ export async function upsertSubscription(
         status: values.status,
         currentPeriodEnd: values.currentPeriodEnd,
         paddleCustomerId: values.paddleCustomerId,
+        scheduledChangeAction: values.scheduledChangeAction,
+        scheduledChangeAt: values.scheduledChangeAt,
         updatedAt: new Date(),
       },
     })
@@ -346,6 +386,14 @@ export const paddleEventSchema = z.object({
       .object({ userId: z.string().optional(), productKey: z.string().optional() })
       .nullish(),
     current_billing_period: z.object({ ends_at: z.string() }).nullish(),
+    // subscription.* only. Present and populated while a cancel/pause/resume is
+    // pending, and explicitly `null` once it is applied or withdrawn — which is
+    // why `.nullish()` matters here more than anywhere else in this schema: the
+    // null IS the signal that a scheduled cancel was called off, and dropping
+    // it would leave a live subscription looking cancelled forever.
+    scheduled_change: z
+      .object({ action: z.string(), effective_at: z.string().nullish() })
+      .nullish(),
     // adjustment.* only — refunds, credits, chargebacks. Note there is no
     // custom_data on an adjustment, so these events are matched to a user
     // through the transaction/subscription id we already stored.
@@ -386,6 +434,14 @@ export async function applyPaddleEvent(
       currentPeriodEnd: data.current_billing_period
         ? new Date(data.current_billing_period.ends_at)
         : null,
+      scheduledChange: data.scheduled_change
+        ? {
+            action: data.scheduled_change.action,
+            effectiveAt: data.scheduled_change.effective_at
+              ? new Date(data.scheduled_change.effective_at)
+              : null,
+          }
+        : null,
     })
     return { kind: 'subscription', userId, status, previousStatus }
   }
@@ -425,8 +481,29 @@ export async function applyPaddleEvent(
 export interface BillingOverview {
   /** The entitlement currently granting access, if any. */
   active: Entitlement | null
-  /** Live auto-renewing subscriptions (`sub_…`) — what a cancel link targets. */
-  subscriptionIds: string[]
+  /**
+   * Auto-renewing subscriptions (`sub_…`) that can still charge the customer.
+   *
+   * "Can still charge" — NOT "grants access". They are different sets during
+   * dunning and while paused, and conflating them produced a product that
+   * contradicted itself: on the access rule a `past_due` customer was shown
+   * `cancellable: 0`, handed a portal link with no subscription ids in it, and
+   * then refused account deletion with "cancel it in the portal first".
+   *
+   * This is the set for anything about MONEY: what a cancel link targets, what
+   * blocks deletion. For anything about ACCESS, use `accessSubscriptionIds`.
+   */
+  cancellableSubscriptionIds: string[]
+  /**
+   * Subscriptions currently granting access (ACTIVE_STATUSES).
+   *
+   * The set for anything about entitlement rather than billing — chiefly
+   * whether a comp would be redundant. During dunning access is already paused,
+   * so "here's a week while you sort the card out" is a real support action and
+   * a comp granted then is genuinely worth its days; blocking it because the
+   * subscription can still bill would be answering the wrong question.
+   */
+  accessSubscriptionIds: string[]
   /** Most recent Paddle customer id seen for this user, for portal links. */
   paddleCustomerId: string | null
   /** Every entitlement row, newest first — the "billing history" list. */
@@ -454,11 +531,14 @@ export async function getBillingOverview(
   const active = await findActiveEntitlement(db, userId, productKey)
   return {
     active,
-    subscriptionIds: history
-      // Through the predicate, not a fourth hand-rolled `startsWith('sub_')`.
-      .filter(
-        (e) => isSubscriptionRef(e.paddleSubscriptionId) && ACTIVE_STATUSES.includes(e.status),
-      )
+    // Both sets, built from the same scan, through the shared predicates rather
+    // than a fourth hand-rolled `startsWith('sub_')`. Two fields rather than
+    // one because callers genuinely need different answers — see the interface.
+    cancellableSubscriptionIds: history
+      .filter((e) => isSubscriptionRef(e.paddleSubscriptionId) && isBillingLive(e))
+      .map((e) => e.paddleSubscriptionId),
+    accessSubscriptionIds: history
+      .filter((e) => isSubscriptionRef(e.paddleSubscriptionId) && ACTIVE_STATUSES.includes(e.status))
       .map((e) => e.paddleSubscriptionId),
     // Prefer the customer behind the LIVE entitlement — that's whose portal a
     // cancel link has to open. Fall back to any customer id we've ever seen so

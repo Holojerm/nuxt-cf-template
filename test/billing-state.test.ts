@@ -28,7 +28,11 @@ const sub = (status: string, id = 'sub_1', currentPeriodEnd = endingIn(20)): Bil
   status,
   currentPeriodEnd,
 })
-const pass = (status = 'active', id = 'txn_1', currentPeriodEnd = endingIn(20)): BillingStateRow => ({
+const pass = (
+  status = 'active',
+  id = 'txn_1',
+  currentPeriodEnd = endingIn(20),
+): BillingStateRow => ({
   paddleSubscriptionId: id,
   status,
   currentPeriodEnd,
