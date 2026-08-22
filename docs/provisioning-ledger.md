@@ -90,12 +90,12 @@ production this route 503s when the send fails, plus Resend's own delivery log.
 | Dead-letter queues | `live` | Cloudflare, on deploy | `dead_letter_queue` in `wrangler.toml` | **checked, not assumed**: `my-app-email-preview-dlq` appeared at 21:28:57, after the deploy — the README's claim holds | — |
 | Rate limiter 1001 / 1002 | `live` | agent | `[[ratelimits]]` / `[[env.preview.ratelimits]]` | `env.RATE_LIMITER (30 requests/60s)` in both deploy outputs; preview flattens to `1002`, **not** inherited 1001 | — |
 | Production Worker | `live` | agent | version `7f37b643-4c55-438c-8d5b-2a35908f68aa` | `curl /api/health` → 200 `{"status":"ok","database":"connected"}` | — |
-| Preview Worker `my-app-preview` | `live` | agent | version `4eca5d75-e5a7-4c48-a45f-8b650c3f76f1` | deploy output; separate name, D1, KV, R2, queue, counters | provider secrets |
+| Preview Worker `my-app-preview` | `live` | agent | version `4eca5d75-e5a7-4c48-a45f-8b650c3f76f1` | deploy output; separate name, D1, KV, R2, queue, counters | provider secrets. **Nothing deploys to it automatically** — non-production builds are off (caveat 2), so refresh it with `bun run deploy:preview` |
 | `NUXT_SESSION_PASSWORD` | `live` | agent (generated, never seen) | prod + preview Worker secrets | `wrangler secret list`; `/api/health` 500 → 200 | — |
 | Google / GitHub client **ids** | `live` | agent | prod + preview Worker secrets | `wrangler secret list` | their secrets |
 | `NUXT_RESEND_FROM` | `live` | agent | prod Worker secret | `wrangler secret list` | `NUXT_RESEND_API_KEY` |
 | Cron trigger `0 4 * * *` | `live` | agent (via deploy) | `[triggers]` | dashboard: "Runs At 04:00 AM / Next Sun, 23 Aug 2026 04:00:00" | — |
-| Workers Builds | `live` | agent | Worker → Settings → Build | repo `Holojerm/nuxt-cf-template`, branch `main`, build `bun run ci`, deploy `bunx wrangler --cwd .output deploy`, version `bunx wrangler --cwd .output versions upload`, root `/`, non-production builds on. **Proven end to end**: the push fired a build within seconds, it ran the real gates, and it *failed* for real reasons rather than passing vacuously (caveats 9 and 11) | the session-password build variable; `CLOUDFLARE_ENV=preview` on the previews trigger (caveat 2) |
+| Workers Builds | `live` | agent | Worker → Settings → Build | repo `Holojerm/nuxt-cf-template`; **production trigger only**, branch `main`, build `bun run ci`, deploy `bunx wrangler --cwd .output deploy`, root `/`. **Green**: build `71eb6fce` succeeded end to end and deployed. Non-production builds deliberately **off** (caveat 2) | the session-password build variable |
 | Resend API key `my-app` | `live` | agent created; owner saved to 1Password; agent piped it in | prod Worker secret `NUXT_RESEND_API_KEY` | created with **Sending access**, not Full access. Set via `op read … \| tr -d '\n' \| wrangler secret put`, so the value went vault → wrangler without being printed or entering the agent's context | — |
 | Magic-link sign-in | `live` | agent | — | **end to end**: `POST /api/auth/magic-link` → 200, and Resend's log shows "Sign in to My App" to jeremy.ettlinger@gmail.com, status **Opened**. In production this endpoint 503s when `sendEmail` fails (it is one of the two `inline: true` callers, so it bypasses the queue and knows the real result) — a 200 therefore means Resend genuinely accepted it | — |
 | GitHub App repo access | `live` | agent | github.com/settings/installations | `nuxt-cf-template` added alongside `whonder` + `drawthesystem-cloud`, which were left intact; scope kept at "Only select repositories" | — |
@@ -192,26 +192,37 @@ exist, and failed with *"Couldn't find a D1 DB with the name or binding
 'my-app-db-preview' in your wrangler.toml file."* The README documents this
 command as the way to migrate preview. Now `--env preview`.
 
-**2. `CLOUDFLARE_ENV=preview` IS scopeable — an earlier note here said otherwise
-and was wrong.** The Settings → Build page shows one flat "Variables and secrets"
-list, which looks like a single set applying to every build. It is not: it is the
-**production trigger's** set. The API shows two, and Workers Builds keeps two
-triggers with independent config:
+**2. Non-production builds are switched OFF, which is how the preview gap got
+closed.** Two corrections are folded in here, because the first version of this
+note was wrong.
+
+It said `CLOUDFLARE_ENV=preview` could not be scoped to non-production builds and
+called the README wrong. The README is right. Workers Builds keeps two triggers
+with independent config, each with its own map:
 
 ```
 production_settings.environment_variables:  {}
 previews_base_config.environment_variables: {}
 ```
 
-with the non-production trigger already carrying its own commands
-(`branch_excludes: ["main"]`, deploy `bunx wrangler --cwd .output versions upload`).
-So the README's instruction — set `CLOUDFLARE_ENV=preview` on the non-production
-trigger only — is correct and achievable; it is just not obvious in the UI.
+What *is* true is narrower and still worth knowing: **the dashboard has no UI for
+the previews trigger's variables.** The word "preview" appears nowhere on the
+Build settings page; the "Variables and secrets" box there is the production
+trigger's. So a fork following the README literally cannot do it through the UI —
+only through the API.
 
-**It is still unset**, so this remains the one preview gap: a non-production build
-currently uploads a version of the *production* Worker with *production* bindings.
-Set it on the previews config (not the production one) and the preview environment
-is complete.
+That mattered because a branch build had already produced
+`https://chore-provision-my-app-my-app.jeremy-ettlinger.workers.dev`: a public URL
+running unreviewed branch code against the **production** D1. Rather than craft an
+API write against a trigger config that had only just gone green, the owner chose
+the blunter fix — **"Builds for non-production branches" is now unchecked**,
+verified by API (`previews_enabled: false`, no previews trigger). Branch pushes no
+longer build in Cloudflare at all, so nothing unreviewed can touch live data.
+
+The cost, stated plainly: **no PR preview URLs.** Branch verification is the
+GitHub Action (caveat 11) plus running things locally. To get preview URLs back
+safely, set `CLOUDFLARE_ENV=preview` on `previews_base_config.environment_variables`
+via the API *first*, then re-enable the checkbox — in that order, never the reverse.
 
 **3. Turnstile Spin does not work from an automated browser.** You asked for
 Spin. Both "Set up with Spin" buttons are inert, `/turnstile/spin` renders blank,
