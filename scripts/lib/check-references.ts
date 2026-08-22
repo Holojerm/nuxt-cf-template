@@ -26,6 +26,24 @@
 //
 // Comments are stripped from the corpus before the search. Otherwise a symbol
 // mentioned in three comments and defined in none would vouch for itself.
+//
+// ── Why the `›` notation is scanned too ─────────────────────────────────────
+// Backticks are not the only way this repo points at things. The other is bare
+// prose — `server/utils/auth.ts › establishSession` — and for a long time the
+// gate could not see a single one of them: nothing was backticked, so nothing
+// was extracted, so the reference was never checked rather than checked and
+// passed. That is how a dead `revokeReferralRewardForReferee` pointer survived
+// in `shared/utils/referral.ts`, in billing code, on a green build.
+//
+// The left-hand side is what makes this safe to parse. `DESIGN.md › Accessibility`
+// is a heading in a document and must be left alone; `server/utils/auth.ts ›
+// establishSession` is a claim about code. Requiring a `.ts`/`.vue` file on the
+// left separates the two exactly, with no list to maintain.
+//
+// The right-hand side must be a BARE identifier. `nuxt.config.ts ›
+// runtimeConfig.buildDate` names a config path, not a symbol, and no such
+// string exists in the source; accepting dotted names would fail the build on
+// a correct comment, which is the one thing this gate must never do.
 
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
@@ -112,7 +130,36 @@ function commentsOf(source: string): Array<[number, string]> {
   return out
 }
 
-/** Backticked spans and markdown link targets — the two ways this repo names a thing. */
+/**
+ * `path/to/file.ts › symbolName` — the notation backticks alone never caught. refs-check-ignore
+ *
+ * Deliberately conservative at both ends: a `.ts`/`.vue` path on the left (so a
+ * `DESIGN.md › Heading` is not read as code), and a bare identifier on the right,
+ * with `(?![\w$.])` rejecting dotted config paths. A pointer that wraps across
+ * two lines simply does not match — comments are scanned a line at a time, and
+ * missing a reference is the safe direction to err in.
+ *
+ * The marker on the first line is there because the rule is good enough to flag
+ * its own documentation: `path/to/file.ts` is a shape, not a pointer.
+ */
+const POINTER = /([^\s`(]+\.(?:ts|vue))`?\s*›\s*`?([A-Za-z_$][\w$]*(?:\(\))?)(?![\w$.])/g
+
+function pointersIn(text: string): Array<Pick<Reference, 'kind' | 'token'>> {
+  const out: Array<Pick<Reference, 'kind' | 'token'>> = []
+  for (const match of text.matchAll(POINTER)) {
+    const file = (match[1] ?? '').trim()
+    const symbol = (match[2] ?? '').trim()
+    // Routed through classify() rather than trusted: it applies the same
+    // placeholder and extension guards every other path reference gets, and it
+    // drops bare `nuxt.config.ts` for the same reason a backticked one is
+    // dropped — no slash, so it is not treated as a path here either.
+    if (classify(file) === 'path') out.push({ kind: 'path', token: file })
+    if (symbol) out.push({ kind: 'symbol', token: symbol })
+  }
+  return out
+}
+
+/** Backticked spans and markdown link targets — the two other ways this repo names a thing. */
 function tokensIn(text: string): string[] {
   const out: string[] = []
   for (const match of text.matchAll(/`([^`]+)`/g)) out.push((match[1] ?? '').trim())
@@ -150,6 +197,18 @@ function classify(token: string): Reference['kind'] | null {
 
 export function collectReferences(root: string): Reference[] {
   const refs: Reference[] = []
+  const seen = new Set<string>()
+
+  // A backticked `file.ts` › `symbol()` is picked up by BOTH extractors. They
+  // agree, so the only consequence is the same dead reference printed twice in
+  // the report; collapse it here rather than teaching either extractor about
+  // the other.
+  const add = (file: string, line: number, kind: Reference['kind'], token: string) => {
+    const key = `${file}:${line}:${kind}:${token}`
+    if (seen.has(key)) return
+    seen.add(key)
+    refs.push({ file, line, kind, token })
+  }
 
   // The escape hatch is honoured anywhere in the same BLOCK — the run of
   // consecutive comment lines, or in a doc the paragraph. Prose wraps, so the
@@ -160,8 +219,9 @@ export function collectReferences(root: string): Reference[] {
     if (blockHasMarker(lines, line - 1)) return
     for (const token of tokensIn(text)) {
       const kind = classify(token)
-      if (kind) refs.push({ file, line, kind, token })
+      if (kind) add(file, line, kind, token)
     }
+    for (const pointer of pointersIn(text)) add(file, line, pointer.kind, pointer.token)
   }
 
   for (const dir of SOURCE_DIRS) {
@@ -235,7 +295,7 @@ export function findDeadReferences(root: string): DeadReference[] {
       continue
     }
 
-    const bare = ref.kind === 'symbol' ? ref.token.slice(0, -2) : ref.token
+    const bare = ref.token.endsWith('()') ? ref.token.slice(0, -2) : ref.token
     if (bare.length < 4) continue
     if (corpus.includes(bare)) continue
     if (declaredByADependency(root, bare)) continue

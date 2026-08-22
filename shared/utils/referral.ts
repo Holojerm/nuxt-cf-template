@@ -90,7 +90,8 @@ export const REFERRAL_WELCOME_DAYS = 7
  * make N throwaway accounts an unlimited supply of days for one attacker.
  * Rewarding on payment alone was not enough either — the purchase could simply
  * be refunded, which is why the reward is revoked when the referee's money goes
- * back (server/utils/referral.ts › revokeReferralRewardForReferee).
+ * back (`server/utils/entitlements.ts` › `revokeDerivedEntitlements()`, called
+ * from `revokeForAdjustment()`).
  *
  * Asserted equal to PASS_DAYS by test/referral.test.ts, so the two cannot drift.
  */
