@@ -95,7 +95,7 @@ production this route 503s when the send fails, plus Resend's own delivery log.
 | Google / GitHub client **ids** | `live` | agent | prod + preview Worker secrets | `wrangler secret list` | their secrets |
 | `NUXT_RESEND_FROM` | `live` | agent | prod Worker secret | `wrangler secret list` | `NUXT_RESEND_API_KEY` |
 | Cron trigger `0 4 * * *` | `live` | agent (via deploy) | `[triggers]` | dashboard: "Runs At 04:00 AM / Next Sun, 23 Aug 2026 04:00:00" | — |
-| Workers Builds | `live` | agent | Worker → Settings → Build | repo `Holojerm/nuxt-cf-template`, branch `main`, build `bun run ci`, deploy `bunx wrangler --cwd .output deploy`, version `bunx wrangler --cwd .output versions upload`, root `/`, non-production builds on. **Proven end to end**: the push fired a build within seconds, it ran the real gates, and it *failed* at `brand:check` for a real reason (caveat 9) rather than passing vacuously | the session-password build variable |
+| Workers Builds | `live` | agent | Worker → Settings → Build | repo `Holojerm/nuxt-cf-template`, branch `main`, build `bun run ci`, deploy `bunx wrangler --cwd .output deploy`, version `bunx wrangler --cwd .output versions upload`, root `/`, non-production builds on. **Proven end to end**: the push fired a build within seconds, it ran the real gates, and it *failed* for real reasons rather than passing vacuously (caveats 9 and 11) | the session-password build variable; `CLOUDFLARE_ENV=preview` on the previews trigger (caveat 2) |
 | Resend API key `my-app` | `live` | agent created; owner saved to 1Password; agent piped it in | prod Worker secret `NUXT_RESEND_API_KEY` | created with **Sending access**, not Full access. Set via `op read … \| tr -d '\n' \| wrangler secret put`, so the value went vault → wrangler without being printed or entering the agent's context | — |
 | Magic-link sign-in | `live` | agent | — | **end to end**: `POST /api/auth/magic-link` → 200, and Resend's log shows "Sign in to My App" to jeremy.ettlinger@gmail.com, status **Opened**. In production this endpoint 503s when `sendEmail` fails (it is one of the two `inline: true` callers, so it bypasses the queue and knows the real result) — a 200 therefore means Resend genuinely accepted it | — |
 | GitHub App repo access | `live` | agent | github.com/settings/installations | `nuxt-cf-template` added alongside `whonder` + `drawthesystem-cloud`, which were left intact; scope kept at "Only select repositories" | — |
@@ -192,21 +192,26 @@ exist, and failed with *"Couldn't find a D1 DB with the name or binding
 'my-app-db-preview' in your wrangler.toml file."* The README documents this
 command as the way to migrate preview. Now `--env preview`.
 
-**2. `CLOUDFLARE_ENV=preview` cannot be scoped the way the README says.** The
-README instructs adding it "on the non-production branch trigger only". In
-today's Workers Builds UI a Worker has **one flat list** of build variables that
-applies to every build — there is no per-trigger scoping (that exists for Pages
-projects, not Workers). Setting it there would make **production** builds emit
-preview bindings onto the production Worker, which is precisely the disaster the
-template's own comments warn about. So it is deliberately **not set**, and the
-consequence is the documented default: a non-production branch build uploads a
-version of the *production* Worker carrying *production* bindings.
+**2. `CLOUDFLARE_ENV=preview` IS scopeable — an earlier note here said otherwise
+and was wrong.** The Settings → Build page shows one flat "Variables and secrets"
+list, which looks like a single set applying to every build. It is not: it is the
+**production trigger's** set. The API shows two, and Workers Builds keeps two
+triggers with independent config:
 
-The clean fix, which is a design change and so was not made unilaterally:
-connect Workers Builds a **second time** on the `my-app-preview` Worker, pointed
-at the same repo, with `CLOUDFLARE_ENV=preview` as *its* build variable, and turn
-**off** non-production branch builds on `my-app`. Then each Worker's builds carry
-exactly one environment and nothing has to be scoped per trigger.
+```
+production_settings.environment_variables:  {}
+previews_base_config.environment_variables: {}
+```
+
+with the non-production trigger already carrying its own commands
+(`branch_excludes: ["main"]`, deploy `bunx wrangler --cwd .output versions upload`).
+So the README's instruction — set `CLOUDFLARE_ENV=preview` on the non-production
+trigger only — is correct and achievable; it is just not obvious in the UI.
+
+**It is still unset**, so this remains the one preview gap: a non-production build
+currently uploads a version of the *production* Worker with *production* bindings.
+Set it on the previews config (not the production one) and the preview environment
+is complete.
 
 **3. Turnstile Spin does not work from an automated browser.** You asked for
 Spin. Both "Set up with Spin" buttons are inert, `/turnstile/spin` renders blank,
@@ -284,6 +289,35 @@ your app's origin is a change to the brand pipeline, so budget for it whenever
 alone.** github.com/settings/installations shows "Permission updates requested"
 for Cloudflare Workers and Pages (and for Claude, and Fleek.co). Only repository
 *access* was changed — reviewing a permissions escalation is yours to do.
+
+---
+
+**11. Workers Builds cannot run a browser, so the browser suites moved to GitHub
+Actions.** Every build failed at `test:a11y`:
+
+```
+error while loading shared libraries: libatk-1.0.so.0: cannot open shared object file
+```
+
+The image has no Chromium system libraries. CLAUDE.md predicted this by name and
+offered `playwright install --with-deps chromium`; that was tried and the image is
+also non-root:
+
+```
+Switching to root user to install dependencies...
+Password: su: Authentication failure
+```
+
+So `.github/workflows/browser-suites.yml` now runs them on ubuntu-latest, and
+`bun run ci` keeps only what blocks a deploy. **This moved three Playwright
+projects, not one** — `a11y`, `csp` and `e2e` — so the Content-Security-Policy
+gate is in the Action too. Deleting that workflow deletes the CSP gate, and a
+broken CSP fails silently. The workflow file says so in a comment.
+
+Worth being clear that this was a **pre-existing** repo problem, not something
+this provisioning run introduced: it had been failing on every branch, including
+ones unrelated to this work, from the moment the repo was connected. Nothing had
+noticed because nothing had ever run `bun run ci` on this image before.
 
 ---
 
