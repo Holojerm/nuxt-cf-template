@@ -538,7 +538,9 @@ export async function getBillingOverview(
       .filter((e) => isSubscriptionRef(e.paddleSubscriptionId) && isBillingLive(e))
       .map((e) => e.paddleSubscriptionId),
     accessSubscriptionIds: history
-      .filter((e) => isSubscriptionRef(e.paddleSubscriptionId) && ACTIVE_STATUSES.includes(e.status))
+      .filter(
+        (e) => isSubscriptionRef(e.paddleSubscriptionId) && ACTIVE_STATUSES.includes(e.status),
+      )
       .map((e) => e.paddleSubscriptionId),
     // Prefer the customer behind the LIVE entitlement — that's whose portal a
     // cancel link has to open. Fall back to any customer id we've ever seen so

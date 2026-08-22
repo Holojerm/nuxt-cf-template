@@ -113,6 +113,18 @@ export const AUDIT_ACTIONS = [
    * account it describes, so nothing that identifies the person may live here.
    */
   'account.deleted',
+  /**
+   * The first-run checklist (server/utils/onboarding.ts) was observed
+   * complete for this account, for the first time. `actorType: 'user'`,
+   * same as `account.deleted` — this is a person's own activity, not an
+   * admin acting on them. This row is not really "evidence" the way the
+   * rest of the table is; it's the idempotency guard for the one-time
+   * `user_activated` PostHog event: GET /api/onboarding checks for an
+   * existing row with this action before firing the event, so refreshing
+   * the dashboard after finishing onboarding doesn't refire it. See
+   * server/utils/onboarding.ts › recordActivationOnce for the full reasoning.
+   */
+  'onboarding.activated',
 ] as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]

@@ -10,10 +10,75 @@
 // check with `await requireSubscription(event)`, which 402s. Delete the client
 // middleware and this page still can't show paid data; delete the server check
 // and it can.
+//
+// ── Onboarding ───────────────────────────────────────────────────────────
+// The checklist's fetch and dismissal state live here rather than inside
+// OnboardingChecklist.vue, on purpose: this page also decides whether the
+// empty state below shows, and that decision has to agree with the
+// checklist's own visibility in the exact same render — computing both from
+// one ref in one component rules out the two ever disagreeing for a frame,
+// which a child-emits-to-parent-ref design would not.
 
 definePageMeta({ middleware: ['auth', 'subscription'] })
 
 const { user } = useUserSession()
+const toast = useToast()
+
+// 'onboarding-layout' — see app/components/Onboarding/Checklist.vue for what
+// the two variants look like and why they share one wrapper.
+const variant = useFlagVariant('onboarding-layout', 'control')
+
+const { data: progress } = await useFetch('/api/onboarding', {
+  query: computed(() => ({ variant: variant.value })),
+})
+
+// ── Dismissal ────────────────────────────────────────────────────────────
+// Client-side only (localStorage), for the same hydration reason the flag
+// above is: reading it during setup would render different markup on the
+// server (no localStorage there) than on the client's first paint, and Vue
+// would discard the mismatched subtree. So every load starts "not
+// dismissed", and the real value is read in onMounted — see
+// app/composables/useFlag.ts's header for the identical trade-off.
+const dismissed = ref(false)
+
+function dismissalStorageKey(): string | null {
+  const id = user.value && 'id' in user.value ? String(user.value.id) : null
+  // Scoped per-account, not just per-browser: a shared or demo device
+  // shouldn't have one person's dismissal hide the checklist for the next
+  // person who signs in on it.
+  return id ? `onboarding-dismissed:${id}` : null
+}
+
+onMounted(() => {
+  const key = dismissalStorageKey()
+  if (key && localStorage.getItem(key) === '1') dismissed.value = true
+})
+
+function dismissChecklist(): void {
+  dismissed.value = true
+  const key = dismissalStorageKey()
+  if (key) localStorage.setItem(key, '1')
+}
+
+// The checklist hides itself the moment every step is done — nothing left to
+// act on, so nothing left to keep showing — or earlier, if dismissed
+// explicitly. Either way this toast is the only "nice, you're set" moment;
+// there's no separate completed-state screen to click through first.
+watch(
+  () => progress.value?.complete,
+  (complete, previousComplete) => {
+    if (complete && previousComplete === false) {
+      toast.add({
+        title: 'You’re all set',
+        description: 'Nice — every step is done.',
+        icon: 'i-lucide-party-popper',
+        color: 'success',
+      })
+    }
+  },
+)
+
+const checklistVisible = computed(() => !dismissed.value && progress.value?.complete !== true)
 
 useSeo({ title: 'Dashboard', description: 'The gated example page.', noindex: true })
 </script>
@@ -27,31 +92,22 @@ useSeo({ title: 'Dashboard', description: 'The gated example page.', noindex: tr
       </p>
     </div>
 
-    <UCard>
-      <template #header>
-        <h2 class="text-xl text-highlighted">Build your product here</h2>
-      </template>
+    <OnboardingChecklist
+      v-if="checklistVisible"
+      :progress="progress"
+      :variant="variant"
+      @dismiss="dismissChecklist"
+    />
 
-      <div class="flex flex-col gap-4 text-default">
-        <p>
-          The plumbing behind this page is done: a session, an entitlement, and two middlewares that
-          keep the wrong people out of the UI. What's missing is the thing you're actually selling.
-        </p>
-        <p class="text-muted">
-          Gate the API routes that back it with
-          <code class="rounded bg-elevated px-1 py-0.5 font-mono text-sm"
-            >await requireSubscription(event)</code
-          >
-          — never on the client-side middleware alone.
-        </p>
-      </div>
-
-      <template #footer>
-        <div class="flex flex-wrap gap-3">
-          <UButton to="/account" color="neutral" variant="outline">Manage your plan</UButton>
-          <UButton to="/design-system" color="neutral" variant="ghost">Design system</UButton>
-        </div>
-      </template>
-    </UCard>
+    <!-- The one real empty state in this template — see DESIGN.md › Component
+         behavior: one text-muted line, one action, no illustration. Shown
+         once onboarding is out of the way (dismissed or complete), because
+         until then the checklist above is the page's actual content. -->
+    <div v-else class="flex flex-col items-start gap-3 py-8">
+      <p class="text-muted">Nothing here yet — this is where your product's content goes.</p>
+      <UButton to="/design-system" color="neutral" variant="outline"
+        >Browse the design system</UButton
+      >
+    </div>
   </div>
 </template>
