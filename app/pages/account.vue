@@ -16,8 +16,43 @@ definePageMeta({ middleware: 'auth' })
 
 const { user, clear: clearSession } = useUserSession()
 const toast = useToast()
+const route = useRoute()
 
 const { data: billing, status } = await useFetch('/api/billing/entitlement')
+
+// ── Email preferences ───────────────────────────────────────────────────────
+// One row per optional event type (welcome/onboarding today; product-update
+// and referral mail later waves add). Billing and security email never shows
+// up here — there is nothing to toggle, and a switch that silently didn't
+// work would be worse than no switch (server/api/account/notifications.get.ts).
+const { data: notificationPrefs, refresh: refreshNotificationPrefs } = await useFetch(
+  '/api/account/notifications',
+)
+const notificationPending = ref<string | null>(null)
+
+async function toggleNotification(eventType: string, enabled: boolean): Promise<void> {
+  notificationPending.value = eventType
+  try {
+    await $fetch('/api/account/notifications', { method: 'PUT', body: { eventType, enabled } })
+    await refreshNotificationPrefs()
+  } catch {
+    toast.add({ title: 'Could not update that preference', color: 'error' })
+  } finally {
+    notificationPending.value = null
+  }
+}
+
+// Landed here from an email footer's unsubscribe link
+// (GET /api/email/unsubscribe already performed the opt-out and redirected
+// here) — confirm it took effect. The toggle above already reflects it since
+// notificationPrefs was fetched after the redirect.
+if (route.query.unsubscribed) {
+  toast.add({
+    title: 'Unsubscribed',
+    description: "You won't get that email anymore. You can turn it back on below any time.",
+    color: 'success',
+  })
+}
 
 const portalPending = ref(false)
 
@@ -187,9 +222,9 @@ useSeo({
         :portal-available="billing.portalAvailable"
       >
         <p>
-          This can clear on its own — but if the card has expired or been replaced, updating it
-          is the only thing that will. Nothing is deleted in the meantime, and access comes back
-          as soon as a payment goes through.
+          This can clear on its own — but if the card has expired or been replaced, updating it is
+          the only thing that will. Nothing is deleted in the meantime, and access comes back as
+          soon as a payment goes through.
         </p>
         <p v-if="billing?.portalAvailable">
           Want to stop instead? The same portal cancels the subscription.
@@ -350,6 +385,33 @@ useSeo({
       </div>
     </UCard>
 
+    <!-- Email preferences -->
+    <UCard>
+      <template #header>
+        <h2 class="text-xl text-highlighted">Email preferences</h2>
+      </template>
+
+      <div class="flex flex-col gap-4">
+        <!-- USwitch carries its own label/description (Nuxt UI renders both
+             next to the control with a real <label>), so this doesn't also
+             need a UFormField wrapper — that would just double up the label. -->
+        <USwitch
+          v-for="pref in notificationPrefs?.preferences ?? []"
+          :key="pref.eventType"
+          :model-value="pref.enabled"
+          :label="pref.label"
+          :description="pref.description"
+          :loading="notificationPending === pref.eventType"
+          @update:model-value="(value) => toggleNotification(pref.eventType, Boolean(value))"
+        />
+
+        <p class="text-sm text-muted">
+          Billing and security email can't be turned off — they cover things like payment issues and
+          account access.
+        </p>
+      </div>
+    </UCard>
+
     <div class="text-sm text-muted">
       <p>
         Need your data deleted? Reply to any email from us and we'll remove the account and
@@ -358,7 +420,8 @@ useSeo({
              thing DESIGN.md › Accessibility rules out, and axe agrees
              (link-in-text-block). It went unseen because /account redirects
              when signed out, so the a11y suite never scans it. -->
-        <ULink to="/privacy" class="text-primary underline underline-offset-2">Privacy Policy</ULink>.
+        <ULink to="/privacy" class="text-primary underline underline-offset-2">Privacy Policy</ULink
+        >.
       </p>
     </div>
 

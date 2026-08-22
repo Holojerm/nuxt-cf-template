@@ -133,10 +133,28 @@ export async function establishSession(
   })
 
   if (created) {
-    // Awaited, not floated: Workers can tear down the isolate the moment the
-    // response is sent, so a dangling promise here is a welcome email that
-    // sometimes doesn't exist. sendEmail never throws.
-    await sendEmail({ to: user.email, ...welcomeEmail(emailBranding(), { name: user.name }) })
+    // Welcome is the one optional email that exists today, so it's the one
+    // wired through the preferences reader + List-Unsubscribe header. A
+    // brand-new user can't have a preference row yet, so this check is
+    // always true in practice — kept anyway so the next optional email added
+    // here doesn't have to remember to add it.
+    if (await isNotificationEnabled(db, user.id, 'welcome')) {
+      const config = useRuntimeConfig(event)
+      const unsubscribeUrl = await buildUnsubscribeUrl(
+        config.sessionPassword,
+        config.public.appUrl,
+        user.id,
+        'welcome',
+      )
+      // Awaited, not floated: Workers can tear down the isolate the moment the
+      // response is sent, so a dangling promise here is a welcome email that
+      // sometimes doesn't exist. sendEmail never throws.
+      await sendEmail({
+        to: user.email,
+        ...welcomeEmail(emailBranding(), { name: user.name }),
+        unsubscribe: { eventType: 'welcome', url: unsubscribeUrl },
+      })
+    }
   }
 
   return { user, created }
