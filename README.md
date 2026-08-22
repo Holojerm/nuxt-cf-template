@@ -206,15 +206,17 @@ bun format            # Format with oxfmt
 bun typecheck         # TypeScript type checking
 bun run brand:generate # Rebuild favicon, app icon, and og.png from the brand mark
 bun run brand:check   # Fail if those files no longer match the mark (part of ci)
-bun run ci            # Lint + design/brand/seo gates + typecheck + test + browser suites (a11y + CSP) + build — Workers Builds runs this
+bun run ci            # Lint + design/brand/seo gates + typecheck + test + browser suites (a11y + CSP + E2E) + build — Workers Builds runs this
 bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1 (via wrangler)
 bun db:migrate:remote # Apply migrations to remote/prod D1
 bun db:migrate:preview # Apply migrations to the preview D1 (nothing does this for you)
 bun db:studio         # Open Drizzle Studio (visual DB browser)
+bun seed              # Seed the local dev DB — one user per entitlement status, see scripts/seed.ts
 bun run rename <name> # Rewrite the my-app placeholder everywhere it appears
 bun run test          # Run Vitest in workerd via @cloudflare/vitest-pool-workers
 bun test:watch        # Same, in watch mode
+bun run test:a11y     # Playwright: a11y + CSP + E2E, sharing one dev server (see below)
 bun run deploy        # Build + deploy to Cloudflare (`bun deploy` is reserved by Bun)
 bun run build:preview # Build with the [env.preview] bindings (CLOUDFLARE_ENV=preview)
 bun run deploy:preview # Same, then deploy — creates/updates the my-app-preview Worker
@@ -292,6 +294,32 @@ const db = drizzle(env.DB, { schema })
 ```
 
 See [`test/example.test.ts`](./test/example.test.ts) for the starter pattern. Co-located tests under `server/**/*.test.ts` are also picked up by the default config.
+
+### End-to-end (Playwright)
+
+`test/e2e/` covers the three flows the product exists for, in a real browser against a real (dev)
+server — the a11y and CSP suites only ever look at signed-out routes, so this is the only place
+`/dashboard` and `/account` get exercised at all:
+
+| Spec | Proves |
+| --- | --- |
+| [`sign-in-gated-page.spec.ts`](./test/e2e/sign-in-gated-page.spec.ts) | Signed-out → `/login?redirect=…`. Signed-in with no entitlement → `/pricing?from=…` with the gated alert on screen, and the session cookie the dev endpoint set is one `GET /api/_auth/session` actually accepts. |
+| [`purchase-access.spec.ts`](./test/e2e/purchase-access.spec.ts) | A one-time pass and a subscription each unlock `/dashboard` and flip `GET /api/billing/entitlement` to `active: true` with the right `kind`. |
+| [`cancel-lose-access.spec.ts`](./test/e2e/cancel-lose-access.spec.ts) | Cancelling a subscription revokes access (`/dashboard` → `/pricing`, `/account` shows the ended state). A `past_due` subscription routes to `/account` instead — the dunning alert, not a re-sell. |
+
+**State is driven through the server, not around it.** `bun seed`'s `bun:sqlite` writes are invisible
+to an already-running dev server (see CLAUDE.md › Gotchas › "The dev server caches its DB
+connection"), so these specs sign in via
+`POST /api/auth/dev` — the same dev-only shortcut described under [Auth](#auth) — and then create or
+end entitlements by POSTing **signed Paddle webhooks** to `/paddle/webhook`, exactly as a real
+purchase or cancellation would arrive. `test/e2e/fixtures.ts` signs each one with the same HMAC
+construction `server/utils/paddle.ts` verifies; [`webhook-signing.spec.ts`](./test/e2e/webhook-signing.spec.ts)
+checks that mirror against the real verifier rather than trusting it by inspection. Every user is
+fresh and unique per run (`e2e-<run>-<case>@example.com`) — nothing here reads the rows `bun seed`
+writes, on purpose, since the whole point is proving the flow works starting from nothing.
+
+Runs as its own Playwright project (`e2e`, alongside `a11y` and `csp` in `playwright.config.ts`),
+sharing the one dev server the other two boot — `bun run test:a11y` runs all three.
 
 ---
 
@@ -404,9 +432,26 @@ registering anything at all.
 | Sign-in tail | [`server/utils/auth.ts`](./server/utils/auth.ts) | Provisions the user, seals the session, sends the welcome email, redirects. Adding a provider is ~15 lines of profile mapping. |
 | Provisioning | [`server/utils/users.ts`](./server/utils/users.ts) | Find-or-create by verified email. Covered by [`test/users.test.ts`](./test/users.test.ts). |
 | Which buttons to show | `GET /api/auth/providers` | Reports which providers are configured (and whether email can be sent at all), so nothing renders a button that dead-ends. |
-| Dev sign-in | [`server/api/auth/dev.post.ts`](./server/api/auth/dev.post.ts) | Email, no password. `import.meta.dev` is a build-time constant, so the handler is dead code in production and the route 404s. |
+| Dev sign-in | [`server/api/auth/dev.post.ts`](./server/api/auth/dev.post.ts) | Email, no password. `import.meta.dev` is a build-time constant, so the handler is dead code in production and the route 404s. `bun seed` writes one account per billing state you can sign in as this way — see below. |
 | Server guard | [`server/middleware/auth.ts`](./server/middleware/auth.ts) | 401s every `/api/*` route except `/api/health`, `/api/auth/`, `/api/_auth/`. Also rate-limits the auth surface. |
 | Client guards | [`app/middleware/auth.ts`](./app/middleware/auth.ts), [`subscription.ts`](./app/middleware/subscription.ts) | `definePageMeta({ middleware: ['auth', 'subscription'] })`. UX only — see below. |
+
+**Seed accounts (`bun seed`, [`scripts/seed.ts`](./scripts/seed.ts)):** sign in as any of these via
+the dev endpoint above to land directly on that billing state, no checkout required. Idempotent —
+re-running never duplicates a row.
+
+| Email | State |
+| --- | --- |
+| `demo@example.com` | Signed in, no entitlement |
+| `admin@example.com` | Admin console access, no entitlement |
+| `seed-active-sub@example.com` | Active subscription |
+| `seed-trialing@example.com` | Subscription mid-trial |
+| `seed-past-due@example.com` | Failed payment, dunning (`/account`'s payment-failed alert) |
+| `seed-paused@example.com` | Subscription paused — no access |
+| `seed-canceled@example.com` | Subscription ended — no access |
+| `seed-pass-active@example.com` | One-time pass, still running |
+| `seed-pass-expired@example.com` | One-time pass, ran out — no access |
+| `seed-comp@example.com` | Admin-comped pass, still running |
 
 **The link does not sign you in by being fetched.** Mail security gateways — Defender Safe Links,
 Proofpoint, Mimecast — fetch every URL in an incoming message before the recipient sees it, and
@@ -789,8 +834,8 @@ correct assets and tells you it fell back.
 Two gates keep app code inside the system: `bun run design:check` fails on anything that
 bypasses the token layer (a numbered colour scale, a raw hex, a suppressed focus ring), and
 `bun run test:a11y` runs axe in a real browser over every public route in both colour modes.
-That script also runs the Content-Security-Policy spec (`test/csp/`) in the same browser — it
-is the browser gate, not only the accessibility one.
+That script also runs the Content-Security-Policy spec (`test/csp/`) and the E2E suite (`test/e2e/`,
+see Testing above) in the same browser — it is the browser gate, not only the accessibility one.
 The dev-only `/design-system` route renders every token, component state, and generated brand
 asset on one page — that is where you verify a change actually landed.
 

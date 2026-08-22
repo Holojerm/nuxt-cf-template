@@ -17,10 +17,18 @@
 // scope and shows up under its own name in the report — but they deliberately
 // share the single `webServer` below, because booting one dev server twice is
 // the slowest thing in `bun run ci`.
+//
+//   test/e2e/    the three flows the product exists for, end to end: sign in
+//               → gated page, buy → access, cancel → lose access. Unlike the
+//               two suites above, it writes real state — a signed-in session,
+//               real entitlement rows via signed Paddle webhooks — so it needs
+//               its own webhook secret on the shared server (see below) and a
+//               real user-per-scenario rather than a fixed route list.
 
 import { defineConfig, devices } from '@playwright/test'
 
 import { playwrightPort } from './scripts/worktree-port'
+import { PADDLE_TEST_WEBHOOK_SECRET } from './test/e2e/webhook-secret'
 
 // Derived from the checkout path rather than fixed at 3000, so parallel git
 // worktrees each get their own server. See scripts/worktree-port.ts for why a
@@ -74,6 +82,12 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       dependencies: ['warmup'],
     },
+    {
+      name: 'e2e',
+      testDir: './test/e2e',
+      use: { ...devices['Desktop Chrome'] },
+      dependencies: ['warmup'],
+    },
   ],
 
   webServer: {
@@ -100,6 +114,17 @@ export default defineConfig({
     // NUXT_TYPECHECK=false keeps vue-tsc off the critical path; `bun run ci`
     // has already typechecked before this suite runs. NUXT_PORT is what makes
     // `nuxt dev` listen on the derived port instead of its own default 3000.
-    env: { NUXT_DEVTOOLS: 'false', NUXT_TYPECHECK: 'false', NUXT_PORT: String(PORT) },
+    // NUXT_PADDLE_WEBHOOK_SECRET only matters to the `e2e` project — a11y and
+    // csp never call the webhook — but it has to be set here, on the ONE
+    // server all three projects share, rather than per-project: Playwright
+    // has one `webServer` per config, not one per project. test/e2e/fixtures.ts
+    // signs every event with the same constant (see test/e2e/webhook-secret.ts
+    // for why it's imported rather than retyped).
+    env: {
+      NUXT_DEVTOOLS: 'false',
+      NUXT_TYPECHECK: 'false',
+      NUXT_PORT: String(PORT),
+      NUXT_PADDLE_WEBHOOK_SECRET: PADDLE_TEST_WEBHOOK_SECRET,
+    },
   },
 })
