@@ -10,36 +10,20 @@
 // a static file would need `bun run rename` to also rewrite JSON, and would
 // say "My App" in every preview deploy until someone remembered to.
 //
-// theme_color/background_color are the one part that can NOT follow runtime
-// config: a manifest has no color mode, so `--ui-primary` (which flips
-// between light and dark) isn't a valid source for a key that has to pick
-// one value. They're resolved the same way the PNG icons are — from
-// DESIGN.md › Brand mark › Color roles, at `bun run brand:generate` time —
-// and imported from the generated shared/utils/brand-colors.generated.ts.
-// Never hand-write a hex here; regenerate it instead.
-import { BRAND_MANIFEST_COLORS } from '#shared/utils/brand-colors.generated'
+// The actual building — including joining every URL-shaped field onto
+// `app.baseURL`, for a fork deployed under a sub-path — lives in
+// server/utils/manifest.ts, unit-tested by test/manifest.test.ts. This route
+// is deliberately thin: it reads config and calls buildManifest().
+import { buildManifest } from '../utils/manifest'
 
 export default defineEventHandler((event) => {
   const config = useRuntimeConfig()
 
-  const manifest = {
-    name: config.public.appName,
-    short_name: config.public.appName,
-    description: config.public.appDescription,
-    start_url: '/',
-    scope: '/',
-    display: 'standalone',
-    background_color: BRAND_MANIFEST_COLORS.backgroundColor,
-    theme_color: BRAND_MANIFEST_COLORS.themeColor,
-    icons: [
-      // "any maskable" on one entry rather than two: both icons were
-      // generated with the maskable safe zone already respected (see
-      // scripts/generate-brand-assets.ts › MASKABLE_COVERAGE), so they are
-      // equally correct read either way.
-      { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
-      { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
-    ],
-  }
+  const manifest = buildManifest({
+    baseURL: config.app.baseURL,
+    appName: config.public.appName,
+    appDescription: config.public.appDescription,
+  })
 
   setResponseHeader(event, 'Content-Type', 'application/manifest+json')
   setResponseHeader(event, 'Cache-Control', 'public, max-age=3600')

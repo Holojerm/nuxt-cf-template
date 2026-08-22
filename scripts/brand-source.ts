@@ -183,19 +183,35 @@ export function parseNuxtPublicVar(config: string, key: string): string | undefi
   return match?.[1]?.replace(/\\(.)/g, '$1')
 }
 
+export interface MarkPlacement {
+  x: number
+  y: number
+  scale: number
+}
+
 /**
  * Where the mark sits inside a square canvas of `size`, covering `coverage` of
- * it. Derived from the authored viewBox rather than assumed, so a fork that
- * draws on a 24 or 48 grid gets correctly centred icons without touching this.
+ * it, as numbers. Derived from the authored viewBox rather than assumed, so a
+ * fork that draws on a 24 or 48 grid gets correctly centred icons without
+ * touching this. `markTransform()` below is a thin formatter over this —
+ * split out so a caller that needs the numbers (scripts/generate-brand-assets.ts's
+ * maskable safe-zone check, which places the mark's own ink bounding box
+ * rather than drawing anything) doesn't have to re-parse a transform string.
  */
-export function markTransform(viewBox: string, size: number, coverage: number): string {
+export function markPlacement(viewBox: string, size: number, coverage: number): MarkPlacement {
   const [minX = 0, minY = 0, width = 0, height = 0] = viewBox.trim().split(/\s+/).map(Number)
   if (!width || !height) throw new Error(`Unusable viewBox on the mark: "${viewBox}"`)
 
   const scale = (size * coverage) / Math.max(width, height)
   const x = round((size - width * scale) / 2 - minX * scale)
   const y = round((size - height * scale) / 2 - minY * scale)
-  return `translate(${x} ${y}) scale(${round(scale)})`
+  return { x, y, scale: round(scale) }
+}
+
+/** String form of markPlacement(), for embedding directly in an SVG `transform` attribute. */
+export function markTransform(viewBox: string, size: number, coverage: number): string {
+  const { x, y, scale } = markPlacement(viewBox, size, coverage)
+  return `translate(${x} ${y}) scale(${scale})`
 }
 
 const round = (value: number) => Math.round(value * 10_000) / 10_000
