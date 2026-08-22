@@ -16,10 +16,11 @@ export interface BrandMark {
 }
 
 /**
- * Colour roles the raster assets need, in the order they appear in
- * DESIGN.md › Brand mark. Every one resolves to a concrete ramp token: a PNG
- * has no color mode, so `--ui-primary` (which flips between light and dark)
- * cannot be the answer for a file that has to pick one.
+ * Colour roles the raster assets — and the web manifest, which has the same
+ * problem a PNG does — need, in the order they appear in DESIGN.md › Brand
+ * mark. Every one resolves to a concrete ramp token: a PNG (or a JSON file
+ * with a `theme_color` key) has no color mode, so `--ui-primary` (which flips
+ * between light and dark) cannot be the answer for a file that has to pick one.
  */
 export const BRAND_ROLES = [
   'icon-ink',
@@ -28,6 +29,8 @@ export const BRAND_ROLES = [
   'og-ground',
   'og-ink',
   'og-muted',
+  'manifest-theme',
+  'manifest-ground',
 ] as const
 
 export type BrandRole = (typeof BRAND_ROLES)[number]

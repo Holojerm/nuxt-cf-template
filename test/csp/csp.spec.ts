@@ -167,6 +167,30 @@ test.describe('the headers are actually on the wire', () => {
   })
 })
 
+test.describe('the web app manifest (Finding 14)', () => {
+  // No `manifest-src` directive is set in nuxt.config.ts, so it falls back to
+  // `default-src 'self'` — same-origin is already allowed. This is the check
+  // that keeps it true: if the manifest or an icon it references ever moved
+  // off-origin, "Add to Home Screen" would fail with nothing in this app's own
+  // logs to explain why.
+  test('/manifest.webmanifest is served with the right content type, and its icons resolve', async ({
+    request,
+  }) => {
+    const manifestResponse = await request.get('/manifest.webmanifest')
+    expect(manifestResponse.status()).toBe(200)
+    expect(manifestResponse.headers()['content-type']).toContain('application/manifest+json')
+
+    const manifest = await manifestResponse.json()
+    expect(manifest.icons.length).toBeGreaterThan(0)
+
+    for (const icon of manifest.icons as { src: string }[]) {
+      const iconResponse = await request.get(icon.src)
+      expect(iconResponse.status(), `${icon.src} should 200`).toBe(200)
+      expect(iconResponse.headers()['content-type']).toContain('image/png')
+    }
+  })
+})
+
 test.describe('the policy still permits what the vendors need', () => {
   /** The whole policy string, read off a live response. */
   async function policy(page: import('@playwright/test').Page): Promise<string> {

@@ -590,7 +590,7 @@ directly. Two things compile out of it, and neither should ever be hand-edited:
 | --- | --- | --- |
 | `/design-sync` | DESIGN.md (colour, type, space, components) | `app/assets/css/main.css`, `app/app.config.ts` |
 | `/logo-sync` | DESIGN.md › Brand mark | `app/components/Brand/Logo.vue` |
-| `bun run brand:generate` | that component + the colour roles in DESIGN.md | `public/favicon.svg`, `public/apple-touch-icon.png`, `public/og.png`, `brand.lock.json` |
+| `bun run brand:generate` | that component + the colour roles in DESIGN.md | `public/favicon.svg`, `public/apple-touch-icon.png`, `public/icon-192.png`, `public/icon-512.png`, `public/og.png`, `shared/utils/brand-colors.generated.ts`, `brand.lock.json` |
 
 The mark is drawn **once**, in a Vue component, and everything else is cut from it. That is the
 whole trick: a favicon, a home-screen icon, and a share image maintained as three separate
@@ -615,6 +615,15 @@ asset on one page — that is where you verify a change actually landed.
 Forking? Replace everything below the Identity heading in `DESIGN.md` (or drop in one from
 [designmd.app](https://designmd.app/)), run `/design-sync`, then `/logo-sync`. A fork that would
 rather hand-author its icons can drop `brand:check` from the `ci` script.
+
+The pipeline also produces `GET /manifest.webmanifest` — a Nitro route, not a static file,
+because `name`/`description` need to follow `NUXT_PUBLIC_APP_NAME`/`NUXT_PUBLIC_APP_DESCRIPTION`
+per fork and per environment. It links `public/icon-192.png` and `public/icon-512.png` (both
+generated maskable-safe, same square-ground treatment as the apple-touch icon) and sets
+`theme_color`/`background_color` from `shared/utils/brand-colors.generated.ts` — resolved from
+DESIGN.md › Brand mark › Color roles at `bun run brand:generate` time, since a manifest has no
+color mode either. `<link rel="manifest">` is in `nuxt.config.ts` › `app.head.link`. This is
+what makes "Add to Home Screen" install the real icon and name instead of a generic tile.
 
 ---
 

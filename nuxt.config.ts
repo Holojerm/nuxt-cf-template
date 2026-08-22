@@ -253,9 +253,18 @@ export default defineNuxtConfig({
       // Deliberately no `theme-color`: the correct value is the page
       // background, which lives in the token layer and differs per color mode.
       // Hardcoding a hex here would bypass DESIGN.md and be wrong in the dark.
+      //
+      // manifest.webmanifest's own `theme_color` is not the same decision
+      // reversed. A manifest has no color mode either — same as a PNG — so it
+      // isn't picking a light-vs-dark value out of the token layer; it's
+      // reading DESIGN.md › Brand mark › Color roles (`manifest-theme`,
+      // resolved at `bun run brand:generate` time, same pipeline as the
+      // icons) the one time a fixed brand color is actually correct: the
+      // launcher chrome Android paints once this is installed as an app.
       link: [
         { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' },
         { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' },
+        { rel: 'manifest', href: '/manifest.webmanifest' },
       ],
     },
   },
