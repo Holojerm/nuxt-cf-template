@@ -110,6 +110,28 @@ line or the one **directly** above. Canvas paint (Konva, Excalidraw) is a real e
 a `<canvas>` cannot read a CSS variable. Prefer hoisting scattered literals into one named
 palette module over sprinkling ignores.
 
+## The fleet contract
+
+The template ships three things the portfolio dashboard (`fleet`) depends on, and every sync
+PR must leave the fork with all of them working — see CLAUDE.md › Fleet contract:
+
+1. **`fleet.json`** at the repo root, matching `wrangler.toml`. Write it from the fork's real
+   values (Worker names including `mcp/` if present, D1 `database_name` + `database_id`, KV
+   ids, R2 buckets, `[triggers] crons`), and set `stage` honestly — `live` only if the app has
+   users it would be bad to lose. Set `features` to what the fork actually kept: a fork with no
+   `users` table is `auth: false` and gets `/api/status` but not `/api/fleet`.
+2. **`template.syncedSha`** — the template `main` SHA this PR syncs to. This is how "how far
+   behind the template is this fork" is computed, so it must be the SHA you actually based the
+   sync on, not `HEAD` of whatever you had checked out.
+3. **The two gates in CI**: `scripts/check-fleet.ts` and `scripts/check-crons.ts`, with
+   `fleet:check` and `crons:check` in the fork's `ci` script (or its GitHub Actions workflow, if
+   that is what deploys it). Run both before opening the PR; `crons:check` in particular has
+   found a fork whose nightly backup had never once run.
+
+`/api/status`, `/api/fleet`, the ops spool (`ops_events` + `server/tasks/ops/alert.ts`) and the
+`[observability]` block come across with the rest of the sync. `NUXT_FLEET_TOKEN` is a secret
+the owner sets per fork — say in the PR that it is needed, never generate one.
+
 ## Verify, don't assume
 
 Every PR must be able to state a real result. `bun run ci` green is the floor, not the ceiling.

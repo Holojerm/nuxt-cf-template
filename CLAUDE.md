@@ -53,12 +53,13 @@ When working with AI assistants (Claude, etc.), always reference this file first
 │   └── utils/              # Server utilities (helpers, etc.)
 ├── shared/                 # Auto-imported in BOTH app/ and server/ (Nuxt 4 `shared/`)
 │   ├── types/              # Cross-cutting type augmentation (runtime config)
-│   └── utils/              # site.ts (URL identity), schema.ts (JSON-LD builders)
+│   └── utils/              # site.ts (URL identity), schema.ts (JSON-LD builders), fleet-manifest.ts (fleet.json shape)
 ├── content/                # @nuxt/content sources — NOT scanned by Nuxt as app code
 │   └── blog/               # One markdown file per post; the filename is the URL
 ├── scripts/                # One-off scripts (bun seed, etc.)
 ├── public/                 # Static assets — og.png, favicon.svg, apple-touch-icon.png
 ├── .github/                # Dependabot config (CI/CD lives in Cloudflare Workers Builds)
+├── fleet.json              # How this app describes itself to the portfolio dashboard — see bun run fleet:check
 ├── content.config.ts       # Blog collection + frontmatter schema
 ├── drizzle.config.ts       # Drizzle Kit config
 ├── nuxt.config.ts
@@ -591,6 +592,33 @@ not on events: Paddle fires `subscription.updated` for trivial changes, and
 emailing per event trains people to filter you — taking the payment-failed email
 with it. Add a case to that function, not an ad-hoc send in a handler.
 
+### Fleet contract (status, manifest, ops alerts)
+
+Every fork of this template can be watched by one portfolio dashboard (`fleet`,
+itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
+
+- **`fleet.json`** says what this app is — slug, stage, Workers, binding ids,
+  crons, which optional modules it kept, which secret *names* production needs.
+  Shape: `shared/utils/fleet-manifest.ts`. `bun run fleet:check` fails the build
+  when it stops matching `wrangler.toml`, so it can be trusted; edit both in the
+  same commit. `bun run rename` rewrites it with everything else.
+- **`GET /api/status`** is public and carries no secrets: build sha, the
+  migrations the repo has vs the ones production applied (`migrations.pending`
+  non-empty = the deploy-before-migrate outage, live), the cron map Nitro runs.
+  `GET /api/fleet` is counters only (users, entitlements by status, ops spool,
+  feedback queue) behind `NUXT_FLEET_TOKEN`; 404 when unset. Both are allowlisted
+  in `server/middleware/auth.ts` because the session guard must not 401 them
+  first. Add a fork-specific counter to `collectFleetCounters()`'s `extra`, not
+  a second endpoint.
+- **Ops alerting.** Anything worth waking the owner up for calls
+  `recordOpsEvent(db, { kind, detail, path })` — the error plugin already does
+  for every 5xx — and `server/tasks/ops/alert.ts` drains the spool into one
+  digest email every 30 minutes via the `[[send_email]] ALERT_EMAIL` binding.
+  Unconfigured = one `ops_alert_unconfigured` log line per tick and nothing
+  sent. Rows are marked notified only after the send resolves, so a mail
+  hiccup retries instead of losing the alert. Always `await` the record call:
+  a 5xx is exactly the path that ends the request before a floated promise runs.
+
 ---
 
 ## Git Workflow
@@ -618,6 +646,8 @@ bun run design:check  # Fail on UI code that bypasses the DESIGN.md token layer
 bun run brand:generate # Rebuild favicon.svg, apple-touch-icon.png and og.png from the brand mark
 bun run brand:check   # Fail when those generated files no longer match the mark
 bun run seo:check     # Fail on pages that bypass useSeo() or aren't declared public/noindex
+bun run fleet:check   # Fail when fleet.json stops matching wrangler.toml (names, binding ids, crons)
+bun run crons:check   # Fail when [triggers] crons and nitro.scheduledTasks disagree, or a task has no file
 bun run test:a11y     # Playwright/Chromium browser suites: axe over every public route
                       # (light + dark) AND the Content-Security-Policy spec (test/csp/)
 bun typecheck         # TypeScript type checking
@@ -629,8 +659,8 @@ bun db:migrate:preview # Apply migrations to the preview D1 — nothing does thi
 bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db)
 bun run rename <name> # Rewrite the `my-app` placeholder across wrangler.toml, package.json,
-                      # .mcp.json and mcp/ — all six occurrences, in one go
-bun run ci            # Lint + design/brand/seo gates + typecheck + test + browser suites (a11y + CSP) + build — Workers Builds runs this
+                      # .mcp.json, fleet.json and mcp/ — every occurrence, in one go
+bun run ci            # Lint + design/brand/seo/fleet/crons gates + typecheck + test + browser suites (a11y + CSP) + build — Workers Builds runs this
 bun run deploy        # Manual deploy to Cloudflare via wrangler (normally unnecessary —
                       # Workers Builds deploys automatically on push to main).
                       # Requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars
@@ -747,6 +777,10 @@ one and stay on it, because alternating makes each think nothing has been applie
 
 The **preview** D1 is a second database with the same problem: `bun run db:migrate:preview`.
 
+`GET /api/status` reports the gap: `migrations.pending` lists every migration in the repo
+that the deployed database has not applied. It is what the portfolio dashboard polls, and
+the quickest way to check by hand after a deploy — `curl https://<app>/api/status | jq .migrations`.
+
 ### NuxtHub deletes `env` from the generated wrangler config
 
 `wrangler.toml` is an input, not the deployed config. `nuxt build` writes
@@ -782,6 +816,12 @@ crons` (wrangler.toml) tells Cloudflare when to fire. The join is an **exact str
 on the expression, so `"0 4 * * *"` and `"0 04 * * *"` are different keys — Cloudflare wakes
 the Worker on schedule, `runCronTasks` finds nothing, and the handler returns success. No
 error, no log line. If a task never runs, compare those two strings before anything else.
+
+`bun run crons:check` (in `bun run ci`) compares them for you, both directions, and also
+fails when a scheduled task name has no file under `server/tasks/`. The map is declared
+once as `SCHEDULED_TASKS` at the top of `nuxt.config.ts` and handed to both
+`nitro.scheduledTasks` and `runtimeConfig.scheduledTasks` (what `/api/status` reports) —
+keep it there; the gate can read an inline literal too, but one map is harder to get wrong.
 
 No custom Worker entry is needed for either background surface: the `cloudflare_module`
 preset already exports `scheduled()` (which calls `runCronTasks` when
