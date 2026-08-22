@@ -20,7 +20,9 @@
 import {
   ATTRIBUTION_COOKIE,
   ATTRIBUTION_MAX_AGE_SECONDS,
+  nextAttributionCookie,
   parseAttribution,
+  readAttributionCookie,
 } from '#shared/utils/attribution'
 
 export default defineNuxtPlugin(() => {
@@ -34,16 +36,20 @@ export default defineNuxtPlugin(() => {
     secure: window.location.protocol === 'https:',
   })
 
-  // First touch wins. A returning visitor already has the channel that
-  // introduced them, and overwriting it here is how attribution quietly
-  // becomes "everyone came from Google".
-  if (cookie.value) return
+  // First touch wins for the CHANNEL — a returning visitor already has the one
+  // that introduced them, and overwriting it here is how attribution quietly
+  // becomes "everyone came from Google". The one exception is a referral code
+  // arriving on a cookie that has none, which is a hole rather than a competing
+  // claim; nextAttributionCookie() owns that decision and explains it, and
+  // returns null when there is nothing to write.
+  const next = nextAttributionCookie(
+    readAttributionCookie(cookie.value ?? undefined),
+    parseAttribution({
+      url: window.location.href,
+      referrer: document.referrer,
+      origin: window.location.origin,
+    }),
+  )
 
-  const attribution = parseAttribution({
-    url: window.location.href,
-    referrer: document.referrer,
-    origin: window.location.origin,
-  })
-
-  cookie.value = JSON.stringify(attribution)
+  if (next) cookie.value = JSON.stringify(next)
 })

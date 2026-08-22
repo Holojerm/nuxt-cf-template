@@ -60,9 +60,19 @@ export default defineEventHandler(async (event) => {
       // `emailVerified` makes. Every other caller is trusting a third party's
       // flag; this one is the primary evidence.
       emailVerified: true,
-      // Captured when the link was minted, because that may have been a
-      // different device — see server/utils/magic-link.ts.
-      attribution: attributionFromRecord(record),
+      // ── Decided at MINT, and never topped up from this machine ─────────────
+      // `?? null` is the whole point, and it is a security boundary rather than
+      // a tidy-up. `undefined` tells establishSession "look at the `attr`
+      // cookie on this request"; the browser making this request is frequently
+      // not the browser that asked for the link, and on a shared or public
+      // machine it belongs to somebody else entirely. Adopting its cookie
+      // credits a stranger's `?ref=` with this signup — real money, to the
+      // wrong person — and quietly files the account under whatever channel the
+      // last visitor arrived through.
+      //
+      // A magic link's attribution is whatever was true when it was minted,
+      // including nothing. `null` says exactly that and suppresses the fallback.
+      attribution: attributionFromRecord(record) ?? null,
     }))
   } catch (error) {
     const code = (error as { data?: { code?: string } }).data?.code ?? 'sign_in_failed'

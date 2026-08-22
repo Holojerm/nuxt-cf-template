@@ -236,35 +236,45 @@ export function readAttributionCookie(raw: string | undefined): Attribution | nu
 }
 
 /**
- * Fill in a missing referral code from a second, lower-priority source.
+ * What the attribution cookie should hold after this landing, or null to leave
+ * it alone.
  *
- * ── Why this exists, and why it is only this one field ───────────────────────
- * Magic-link sign-in captures attribution when the link is MINTED, because the
- * link is routinely opened on a different device where no `attr` cookie has
- * ever existed. The referral code rides on the token row alongside the four
- * marketing columns for exactly that reason (server/db/schema.ts ›
- * magic_link_tokens), so the cross-device case is handled there, not here.
+ * ── The hole this closes ─────────────────────────────────────────────────────
+ * The plugin used to bail out the moment ANY cookie existed. That is right for
+ * the marketing fields and wrong for the referral code, and the gap is most of
+ * the audience: the cookie lasts 90 days, so anybody who read a blog post via
+ * search last week already has one — and when a friend later sends them a
+ * `?ref=` link, the code was dropped on the floor. They sign up, nobody is
+ * credited, and the share card had promised "the credit is recorded on their
+ * first visit". The people most likely to accept an invite are exactly the
+ * people who have heard of you before.
  *
- * This is the backstop under it, and it covers the rows that column cannot:
- * links minted before it existed, which carry `NULL` because the column is
- * nullable and nothing backfills a credential. On those, the redeeming browser
- * is very often the SAME browser, and the cookie is still sitting there with
- * the code in it.
+ * ── Why only that one field ──────────────────────────────────────────────────
+ * First touch is the point of the other four (see the file header): the channel
+ * that INTRODUCED somebody is the one worth spending on, and refreshing them on
+ * a later visit is how attribution decays into "everyone came from Google". A
+ * referral code is not a channel measurement, it is a claim about a person, and
+ * an existing cookie holding no code is not a competing claim — it is silence.
+ * So this fills a hole and never overwrites: a visitor who already arrived on
+ * someone's link cannot be re-credited to whoever sends them the next one.
  *
- * The rule that makes it safe to keep is that it can only ever fill a hole:
- * `provided` stays authoritative for everything it knows, so a token row that
- * carries a code can never be overwritten by whatever cookie happens to be on
- * the redeeming machine — which is what would let a shared or borrowed browser
- * re-credit somebody else's invite. First-touch is preserved either way,
- * because both values originate in the same first-touch cookie.
+ * Returns null when nothing needs writing, so the plugin does not touch the
+ * cookie — and therefore does not extend its 90-day life — on ordinary visits.
  *
- * `null` means the caller asserted there is no attribution at all, and that
- * assertion is respected rather than quietly topped up.
+ * Pure, and exported for test/attribution.test.ts.
  */
-export function withReferralCode(
-  provided: Attribution | null,
-  fallback: string | undefined,
+export function nextAttributionCookie(
+  existing: Attribution | null,
+  landing: Attribution,
 ): Attribution | null {
-  if (!provided || provided.referralCode || !fallback) return provided
-  return { ...provided, referralCode: normalizeReferralCode(fallback) }
+  // No usable cookie: this IS the first touch. Also covers a corrupt or
+  // unparseable one, which readAttributionCookie reports as absent — replacing
+  // junk is better than being stuck behind it forever.
+  if (!existing) return landing
+
+  if (!existing.referralCode && landing.referralCode) {
+    return { ...existing, referralCode: landing.referralCode }
+  }
+
+  return null
 }

@@ -111,6 +111,12 @@ Only three things are actually required to run:
 
 ```
 NUXT_SESSION_PASSWORD=   # 32+ char random string: openssl rand -base64 32
+                         # Safe to rotate: sign-out-everywhere is the
+                         # users.sessions_invalid_before watermark, not this.
+                         # Rotating it must NOT re-arm spent referral welcome
+                         # trials — that is why their salt is a generated row
+                         # in D1 (instance_secrets) rather than derived from
+                         # this value. Never delete that row.
 CLOUDFLARE_API_TOKEN=    # Cloudflare API token with Workers + D1 + KV + R2 edit perms
 CLOUDFLARE_ACCOUNT_ID=   # Your Cloudflare account ID
 ```

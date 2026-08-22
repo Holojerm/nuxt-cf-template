@@ -9,7 +9,7 @@
 //
 // One function, two callers, no drift by construction.
 
-import { isCompRef, isPass, isReferralRef, isSubscriptionRef } from './paddle-refs'
+import { isCompRef, isPass, isReferralRef, isSubscriptionRef, referralRefKind } from './paddle-refs'
 import { deriveBillingState } from './billing-state'
 import type { BillingState } from './billing-state'
 import { ACTIVE_STATUSES, getBillingOverview } from './entitlements'
@@ -56,6 +56,17 @@ export interface EntitlementView {
   /** 'pass' = one-time, nothing to cancel; 'subscription' = renewing. */
   kind: 'pass' | 'subscription' | null
   comped: boolean
+  /**
+   * Which side of the referral loop the DESCRIBING row came from, or null.
+   *
+   * Without it /account told somebody whose only access was a welcome grant
+   * "You have a one-time pass. It will not renew." — technically the shape of
+   * the row and completely wrong about where it came from, to a person who had
+   * just signed up through a friend's link and bought nothing. Two values
+   * rather than a boolean because the two sides need different sentences; see
+   * referralRefKind().
+   */
+  referralKind: 'welcome' | 'reward' | null
   /**
    * When an already-requested cancellation takes effect, ISO, or null.
    *
@@ -129,6 +140,7 @@ export async function buildEntitlementView(
     currentPeriodEnd: describing?.currentPeriodEnd?.toISOString() ?? null,
     kind: describing ? (isPass(describing.paddleSubscriptionId) ? 'pass' : 'subscription') : null,
     comped: describing ? isCompRef(describing.paddleSubscriptionId) : false,
+    referralKind: describing ? referralRefKind(describing.paddleSubscriptionId) : null,
     cancelsAt:
       describing?.scheduledChangeAction === 'cancel'
         ? (describing.scheduledChangeAt?.toISOString() ?? null)

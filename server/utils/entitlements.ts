@@ -13,7 +13,7 @@
 //   - `txn_…` — one-time 30-day pass; no lifecycle events ever fire for it, so
 //     it grants access only while current_period_end is in the future.
 
-import { and, desc, eq, gt, inArray, or } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, isNotNull, or } from 'drizzle-orm'
 import { z } from 'zod'
 import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
@@ -69,8 +69,43 @@ export function passEndDates(base: Date, passes: number): Date[] {
   )
 }
 
+/**
+ * The expiry a new grant should stack on top of, or null to start today.
+ *
+ * One line, extracted because it existed twice — here for referral grants and
+ * in admin-grants.ts for comps — and "nobody loses days they already paid for"
+ * is a rule that must not be able to differ between two ways of granting.
+ * `passEndDates` above is the other half of the same arithmetic.
+ *
+ * The `> now` test is what makes an EXPIRED row stack from today rather than
+ * from a date in the past, which would grant days that had already elapsed.
+ */
+export function stackingBase(
+  granting: { currentPeriodEnd: Date | null } | null | undefined,
+  now: Date,
+): Date | null {
+  const running = granting?.currentPeriodEnd
+  return running && running > now ? running : null
+}
+
 /** Statuses we write when access is taken away for a money reason. */
 export const REVOKED_STATUS = { refund: 'refunded', chargeback: 'chargeback' } as const
+
+/**
+ * Status written when a DERIVED entitlement is taken back — one whose existence
+ * depended on another row's purchase (see `entitlements.earned_from_ref`).
+ *
+ * Deliberately the same word as admin-grants.ts's COMP_REVOKED_STATUS and NOT
+ * one of REVOKED_STATUS's: `refunded` and `chargeback` describe money moving
+ * back to a customer, and nobody ever paid for a derived row. /account renders
+ * one `revoked` badge for both, and a second spelling would surface a status
+ * word the UI has never seen. test/referral.test.ts pins the two together.
+ *
+ * Nothing has to learn this string to respect it: access is decided by the
+ * ACTIVE_STATUSES allowlist, so any status outside it stops granting by
+ * construction.
+ */
+export const DERIVED_REVOKED_STATUS = 'revoked'
 
 /**
  * Statuses in which a `sub_` row will never charge a card again.
@@ -306,11 +341,31 @@ export type RevokeOutcome =
   | 'no_matching_entitlement'
   | 'action_not_revoking'
   | 'status_not_final'
+  /** A chargeback the merchant won. Derived rows are put back; see below. */
+  | 'reversed'
+
+/** One derived row the cascade touched, with what it needs to be audited. */
+export interface DerivedChange {
+  ref: string
+  userId: string
+  /** The window as it stood before this change — the revoked or restored date. */
+  periodEnd: Date | null
+}
 
 export interface RevokeResult {
   outcome: RevokeOutcome
   userId?: string
   paddleRef?: string
+  /**
+   * Rows that existed BECAUSE of this purchase and were revoked or restored
+   * alongside it. Empty on every ordinary adjustment.
+   *
+   * Reported rather than silently written so a caller can audit it — the data
+   * change is guaranteed for every caller (it happens inside this function),
+   * the audit row is the caller's to write, because audit.ts's writer is not
+   * something the money path should be able to fail on.
+   */
+  derived?: DerivedChange[]
 }
 
 /**
@@ -327,6 +382,173 @@ function isRevoking({ action, status }: AdjustmentInput): boolean {
   if (action === 'refund') return status === 'approved'
   if (action === 'chargeback') return status !== 'rejected' && status !== 'reversed'
   return false
+}
+
+/**
+ * Did the money actually, fully go back?
+ *
+ * A separate question from isRevoking(), and the difference is the whole reason
+ * derived rows need their own test. The customer's OWN access ends on any
+ * approved refund, full or partial — a deliberate policy stated on /legal/refunds
+ * and in revokeForAdjustment below, because we sell one indivisible thing and
+ * pro-rating it would be a worse rule than a predictable one.
+ *
+ * A referral reward cannot inherit that. A $2 goodwill credit on a $120 annual
+ * subscription is a support gesture, not a reversal of the sale, and it would
+ * have permanently destroyed a reward somebody genuinely earned — for a
+ * subscriber-referrer, a window that could be a year long. So a derived row is
+ * only clawed back when the purchase behind it was undone in full, or when a
+ * bank pulled the funds.
+ */
+function isFullReversal({ action, type }: AdjustmentInput): boolean {
+  if (action === 'chargeback') return true
+  if (action === 'refund') return type === 'full'
+  return false
+}
+
+/**
+ * Is this the bank giving the money BACK — a chargeback the merchant won?
+ *
+ * Paddle spells it two ways and both have to count: a distinct
+ * `chargeback_reverse` action, and a `chargeback` carrying `status: 'reversed'`.
+ * Neither reaches isRevoking(), which is correct for the customer's own row,
+ * and which is exactly why a reversal used to leave the REFERRER revoked
+ * forever on a dispute the merchant went on to win.
+ */
+function isReversing({ action, status }: AdjustmentInput): boolean {
+  if (action === 'chargeback_reverse') return true
+  return action === 'chargeback' && status === 'reversed'
+}
+
+/**
+ * Revoke every row that exists because of `earningRef`'s purchase.
+ *
+ * Today that is exactly the referral rewards paid for it. The cascade lives
+ * here, inside the entitlements layer, rather than in the webhook route or in
+ * referral.ts, for two reasons:
+ *
+ *   * It is pure entitlements-table work. `earned_from_ref` is a column on this
+ *     table, so nothing about it needs to know what a referral is — which also
+ *     keeps referral.ts → entitlements.ts a one-way import instead of a cycle.
+ *   * It has to be unmissable. Wired into the webhook route it protected one
+ *     caller; wired into revokeForAdjustment it protects every caller there
+ *     will ever be, including the admin tooling somebody adds later.
+ *
+ * A `sub_` row is skipped even if something ever tags one: Paddle owns those,
+ * and a local status written onto one is either overwritten by the next webhook
+ * or takes away access the customer paid for.
+ */
+export async function revokeDerivedEntitlements(
+  db: EntitlementDb,
+  earningRef: string,
+  now: Date = new Date(),
+): Promise<DerivedChange[]> {
+  const rows = await db.query.entitlements.findMany({
+    where: and(
+      eq(tables.entitlements.earnedFromRef, earningRef),
+      inArray(tables.entitlements.status, ACTIVE_STATUSES),
+    ),
+  })
+
+  const changed: DerivedChange[] = []
+  for (const row of rows) {
+    if (isSubscriptionRef(row.paddleSubscriptionId)) continue
+    // Its window already closed, so there is nothing to take away — and
+    // writing `current_period_end = now` here would drag a PAST date forward,
+    // rewriting history to say the holder had access longer than they did.
+    // It also gives the policy a sensible edge for free: a chargeback on month
+    // seven finds a reward whose days were spent long ago and leaves it alone.
+    if (row.currentPeriodEnd && row.currentPeriodEnd <= now) continue
+
+    const updated = await db
+      .update(tables.entitlements)
+      .set({
+        status: DERIVED_REVOKED_STATUS,
+        // Both halves, so the status allowlist and anything reading only the
+        // window (the MCP worker's raw SQL) can never disagree.
+        currentPeriodEnd: now,
+        // What the restore puts back. Also the flag the restore matches on.
+        restorePeriodEnd: row.currentPeriodEnd,
+        updatedAt: new Date(),
+      })
+      // Re-asserted rather than trusted from the read: two adjustment
+      // deliveries in flight both pass the scan, only one matches here, and the
+      // loser writes nothing instead of stamping a second expiry over the first
+      // — which would also overwrite restore_period_end with the revoked date
+      // and make the row unrestorable.
+      .where(
+        and(
+          eq(tables.entitlements.id, row.id),
+          inArray(tables.entitlements.status, ACTIVE_STATUSES),
+        ),
+      )
+      .returning({ id: tables.entitlements.id })
+
+    if (updated.length) {
+      changed.push({
+        ref: row.paddleSubscriptionId,
+        userId: row.userId,
+        periodEnd: row.currentPeriodEnd,
+      })
+    }
+  }
+  return changed
+}
+
+/**
+ * Put back every derived row this purchase's reversal should restore.
+ *
+ * Matched on `restore_period_end IS NOT NULL`, which is set by nothing but the
+ * revoke above — so this can only ever undo a cascade, never resurrect a row
+ * that expired on its own or one an operator ended deliberately.
+ *
+ * The restored window is the ORIGINAL end, not `now + what was left`. The
+ * reward was for a purchase that, it turns out, stood; the honest thing is the
+ * window they would have had. If that date has since passed, the row restores
+ * as expired, which is the truth rather than a consolation.
+ *
+ * Note the deliberate asymmetry: this restores the REFERRER's derived row and
+ * not the referee's own entitlement. Paddle owns that one, and it comes back
+ * through Paddle's own events; reaching around the billing system to re-grant
+ * access on a dispute is exactly what revokeCompPass refuses to do.
+ */
+export async function restoreDerivedEntitlements(
+  db: EntitlementDb,
+  earningRef: string,
+): Promise<DerivedChange[]> {
+  const rows = await db.query.entitlements.findMany({
+    where: and(
+      eq(tables.entitlements.earnedFromRef, earningRef),
+      isNotNull(tables.entitlements.restorePeriodEnd),
+    ),
+  })
+
+  const changed: DerivedChange[] = []
+  for (const row of rows) {
+    const restored = await db
+      .update(tables.entitlements)
+      .set({
+        status: 'active',
+        currentPeriodEnd: row.restorePeriodEnd,
+        // Cleared, so the row is no longer "revoked and restorable" — a second
+        // reversal delivery finds nothing to do rather than re-restoring.
+        restorePeriodEnd: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(eq(tables.entitlements.id, row.id), isNotNull(tables.entitlements.restorePeriodEnd)),
+      )
+      .returning({ id: tables.entitlements.id })
+
+    if (restored.length) {
+      changed.push({
+        ref: row.paddleSubscriptionId,
+        userId: row.userId,
+        periodEnd: row.restorePeriodEnd,
+      })
+    }
+  }
+  return changed
 }
 
 /**
@@ -347,14 +569,32 @@ export async function revokeForAdjustment(
   db: EntitlementDb,
   adjustment: AdjustmentInput,
 ): Promise<RevokeResult> {
+  const refs = [adjustment.transactionId, adjustment.subscriptionId].filter((r): r is string =>
+    Boolean(r),
+  )
+
+  // ── A chargeback the merchant WON ──────────────────────────────────────────
+  // Handled before the revoking tests, because it reaches neither of them: a
+  // reversal is not an action that revokes and not a status that is final, so
+  // it used to fall straight out of this function. That left every derived row
+  // revoked forever on a dispute that went our way — money taken back from a
+  // referrer over a chargeback that never stood.
+  if (isReversing(adjustment)) {
+    const derived: DerivedChange[] = []
+    for (const ref of refs) derived.push(...(await restoreDerivedEntitlements(db, ref)))
+    return { outcome: 'reversed', derived }
+  }
+
   if (adjustment.action !== 'refund' && adjustment.action !== 'chargeback') {
     return { outcome: 'action_not_revoking' }
   }
   if (!isRevoking(adjustment)) return { outcome: 'status_not_final' }
 
-  const refs = [adjustment.transactionId, adjustment.subscriptionId].filter((r): r is string =>
-    Boolean(r),
-  )
+  // Computed once, before the loop: whether derived rows come down with this
+  // adjustment is a property of the ADJUSTMENT, not of which ref matched.
+  const full = isFullReversal(adjustment)
+  const now = new Date()
+
   for (const ref of refs) {
     const revoked = await db
       .update(tables.entitlements)
@@ -362,13 +602,21 @@ export async function revokeForAdjustment(
         status: REVOKED_STATUS[adjustment.action],
         // Expire the window too: anything that only checks the date (the MCP
         // worker's raw SQL gate, a future report) must agree with the status.
-        currentPeriodEnd: new Date(),
+        currentPeriodEnd: now,
         updatedAt: new Date(),
       })
       .where(eq(tables.entitlements.paddleSubscriptionId, ref))
       .returning({ userId: tables.entitlements.userId })
     const row = revoked[0]
-    if (row) return { outcome: 'revoked', userId: row.userId, paddleRef: ref }
+    if (row) {
+      // Anything that existed because of THIS purchase comes down with it —
+      // but only on a full reversal, and only for this ref. Keying the cascade
+      // on the purchase rather than on the buyer is what stops a refund of
+      // somebody's second pass from clawing back the reward their first one
+      // earned. See isFullReversal and revokeDerivedEntitlements.
+      const derived = full ? await revokeDerivedEntitlements(db, ref, now) : []
+      return { outcome: 'revoked', userId: row.userId, paddleRef: ref, derived }
+    }
   }
   return { outcome: 'no_matching_entitlement' }
 }

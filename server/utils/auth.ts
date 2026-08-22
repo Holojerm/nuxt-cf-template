@@ -13,11 +13,7 @@
 import type { H3Event } from 'h3'
 import type { UserSession } from '#auth-utils'
 import type { Attribution } from '#shared/utils/attribution'
-import {
-  ATTRIBUTION_COOKIE,
-  readAttributionCookie,
-  withReferralCode,
-} from '#shared/utils/attribution'
+import { ATTRIBUTION_COOKIE, readAttributionCookie } from '#shared/utils/attribution'
 import type { OAuthProfile } from './users'
 
 /** Cookie the login page sets before bouncing to a provider. */
@@ -191,18 +187,15 @@ export async function establishSession(
   // The caller may have captured it earlier on a different device — see
   // `attribution` on EstablishSessionOptions.
   //
-  // The cookie is read either way, because of one field. A magic-link row
-  // carries the referral code itself now, so the cross-device case is already
-  // handled — but rows minted before that column existed carry NULL, and on
-  // those the redeeming browser's cookie is the last place the code survives.
-  // withReferralCode() fills that hole and can never overwrite a code the row
-  // already has, which is what stops a borrowed browser re-crediting somebody
-  // else's invite. See the note there.
-  const cookieAttribution = readAttributionCookie(getCookie(event, ATTRIBUTION_COOKIE))
+  // Read ONLY when the caller did not decide. There is no merging: a caller
+  // that supplies attribution (the magic-link path) has already decided, and
+  // topping it up from this request's cookie is how a shared browser credits a
+  // stranger's referral link — see the note in
+  // server/api/auth/magic-link/verify.post.ts.
   const attribution =
     providedAttribution !== undefined
-      ? withReferralCode(providedAttribution, cookieAttribution?.referralCode)
-      : cookieAttribution
+      ? providedAttribution
+      : readAttributionCookie(getCookie(event, ATTRIBUTION_COOKIE))
 
   const { user, created } = await upsertOAuthUser(db, profile, attribution)
 
@@ -295,11 +288,15 @@ export async function establishSession(
   // deliberate, because free trial days are never worth an account creation.
   if (created && user.referredBy) {
     await afterSignIn('referral_welcome', async () => {
-      // The salt is passed in rather than read inside, because the welcome
-      // ref is a salted hash of the MAILBOX — that is what makes the trial
-      // once-per-inbox instead of once-per-account, and therefore not renewable
-      // by deleting and re-registering (server/utils/referral.ts).
-      await grantRefereeWelcome(db, user, { salt: useRuntimeConfig(event).sessionPassword })
+      // The welcome ref is a salted hash of the MAILBOX — that is what makes
+      // the trial once-per-inbox instead of once-per-account, and therefore not
+      // renewable by deleting and re-registering. Its salt is provisioned in D1
+      // rather than configured (server/utils/identity.ts); `sessionPassword` is
+      // passed for one job only, recognising refs minted under the previous
+      // construction, and can be deleted with that check.
+      await grantRefereeWelcome(db, user, {
+        sessionPassword: useRuntimeConfig(event).sessionPassword,
+      })
     })
   }
 

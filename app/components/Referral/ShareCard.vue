@@ -60,14 +60,10 @@ onScopeDispose(() => clearTimeout(resetTimer))
       </p>
 
       <!-- The sentence a subscriber needs, and the one the card used to leave
-           out while quietly not paying them at all. Reward days stack from the
-           end of whatever is already running, so for somebody on a subscription
-           they are real days that simply start later. Saying so is the whole
-           difference between a delayed reward and a broken promise. -->
-      <p class="text-sm text-muted">
-        Already subscribed? Your reward days stack too — they start when your subscription ends, so
-        nothing is lost either way.
-      </p>
+           out while quietly not paying them at all. Shared with the billing
+           history on /account so the promise made here is the exact string
+           shown later beside the date (#shared/utils/referral). -->
+      <p class="text-sm text-muted">{{ REFERRAL_STACKING_NOTE }}</p>
 
       <div v-if="status === 'pending'" class="flex flex-col gap-3">
         <USkeleton class="h-9 w-full" />

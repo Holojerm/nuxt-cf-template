@@ -110,6 +110,20 @@ export function isReferralRef(paddleRef: string): boolean {
   )
 }
 
+/**
+ * Which side of the loop a referral row came from, or null if it isn't one.
+ *
+ * The two need different words on screen: a welcome grant is days somebody was
+ * GIVEN for arriving, an earned reward is days they were PAID for bringing
+ * somebody. Telling a brand-new user they "earned" days for an invite they
+ * received reads as a mistake, which is what /account said before this existed.
+ */
+export function referralRefKind(paddleRef: string): 'welcome' | 'reward' | null {
+  if (paddleRef.startsWith(REFERRAL_WELCOME_REF_PREFIX)) return 'welcome'
+  if (paddleRef.startsWith(REFERRAL_REF_PREFIX)) return 'reward'
+  return null
+}
+
 /** Is this row an auto-renewing subscription Paddle manages? */
 export function isSubscriptionRef(paddleRef: string): boolean {
   return paddleRef.startsWith(SUBSCRIPTION_REF_PREFIX)

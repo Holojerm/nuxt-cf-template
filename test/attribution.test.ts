@@ -9,9 +9,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  nextAttributionCookie,
   parseAttribution,
   readAttributionCookie,
-  withReferralCode,
 } from '../shared/utils/attribution'
 
 const ORIGIN = 'https://example.com'
@@ -151,27 +151,40 @@ describe('parseAttribution with a referral code', () => {
   })
 })
 
-describe('withReferralCode', () => {
-  // Exists for magic-link redemption: the token row carries the four marketing
-  // columns and not the code, so the redeeming browser's cookie is the only
-  // place it survives. It may only ever fill a hole.
-  it('fills a missing code from the fallback', () => {
-    expect(withReferralCode({ source: 'direct' }, CODE)).toMatchObject({ referralCode: CODE })
+describe('nextAttributionCookie', () => {
+  // The decision the client plugin makes on every landing. First touch owns the
+  // channel; the referral code is the one field an existing cookie may be
+  // missing rather than disagreeing about.
+  const LANDING = { source: 'referral', medium: 'invite', referralCode: CODE }
+
+  it('writes the whole first touch when there is no cookie', () => {
+    expect(nextAttributionCookie(null, LANDING)).toEqual(LANDING)
   })
 
-  it('never overwrites a code the caller already has', () => {
-    const other = 'ZZ9YY8XX'
-    expect(withReferralCode({ source: 'direct', referralCode: CODE }, other)?.referralCode).toBe(
-      CODE,
-    )
+  it('leaves an ordinary return visit completely alone', () => {
+    // Returning null rather than the existing value is what keeps the plugin
+    // from rewriting the cookie — and therefore from extending its 90 days —
+    // on every page view.
+    const existing = { source: 'google.com', medium: 'organic' }
+    expect(nextAttributionCookie(existing, { source: 'direct', medium: 'none' })).toBeNull()
   })
 
-  it('respects an explicit assertion that there is no attribution', () => {
-    expect(withReferralCode(null, CODE)).toBeNull()
+  it('fills a referral code into a cookie that has none', () => {
+    // The case that was silently losing most invites: anybody who had read a
+    // blog post in the last 90 days already had a cookie, so their friend's
+    // link earned nothing.
+    const existing = { source: 'google.com', medium: 'organic' }
+    expect(nextAttributionCookie(existing, LANDING)).toEqual({
+      // The channel that introduced them is untouched.
+      source: 'google.com',
+      medium: 'organic',
+      referralCode: CODE,
+    })
   })
 
-  it('validates the fallback too — it comes from a cookie', () => {
-    expect(withReferralCode({ source: 'direct' }, 'not-a-code')?.referralCode).toBeUndefined()
+  it('never re-credits a visitor who already arrived on another link', () => {
+    const existing = { source: 'referral', medium: 'invite', referralCode: CODE }
+    expect(nextAttributionCookie(existing, { ...LANDING, referralCode: 'ZZ9YY8XX' })).toBeNull()
   })
 })
 

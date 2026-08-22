@@ -17,14 +17,16 @@
 // on the consumer hypothesis that a first-time visitor buys a thing more
 // readily than a commitment. Three properties keep it from being a mess:
 //
-//   1. It reorders with CSS `order` on the same grid, at `md:` and up only. The
-//      DOM is identical in both variants, so the one frame of control that
-//      useFlagVariant always renders (see app/composables/useFlag.ts) swaps
-//      class strings and nothing else — no elements are created, destroyed, or
-//      moved by Vue, and the grid cells keep their size. Below `md` the grid is
-//      one column, where the same swap would visibly reshuffle the stack a
-//      frame after paint, so ordering is deliberately desktop-only; see
-//      ORDER_CLASSES for what that means when reading the results.
+//   1. It changes EMPHASIS ONLY — which card is featured — and never order.
+//      An earlier version reordered the grid with CSS `order`, and that had to
+//      go: `order` moves things visually and leaves the DOM alone, so tab order
+//      and screen-reader order kept saying monthly-yearly-pass while the screen
+//      said pass-first. That is WCAG 2.4.3 (Focus Order) failing by
+//      construction, on the page where somebody is about to spend money, and
+//      axe cannot see it because the a11y suite only ever renders the control
+//      arm. Emphasis is a narrower experiment and an honest one; if a future
+//      arm really needs a different order, reorder `PLANS` on the server so the
+//      DOM and the pixels agree.
 //   2. Exactly one plan is featured in either variant (DESIGN.md › Component
 //      behavior: one primary button per view). The badge follows the promotion
 //      rather than sitting on `plan.featured`, which is the control's answer.
@@ -64,43 +66,32 @@ watch(loggedIn, (value) => {
 
 const pending = ref<string | null>(null)
 
-// 'control' | 'pass-first'. Resolves in onMounted, so it is 'control' during
-// SSR and for the first client frame — which is why the variant may only
-// change `order` classes and copy, never structure.
-const { variant: pricingLayout } = useFlagVariant('pricing-layout', 'control')
+/**
+ * Every arm this page knows how to render.
+ *
+ * Passed to useFlagVariant so an arm added in the PostHog dashboard but not
+ * here clamps to `control` rather than arriving as an unknown string — which
+ * would render the control layout anyway (nothing matches 'pass-first') while
+ * REPORTING the unknown name on `checkout_started`, so the analyst would read a
+ * variant that was never shown to anybody. Clamping makes what renders and what
+ * is recorded the same fact.
+ */
+const PRICING_LAYOUT_VARIANTS = ['control', 'pass-first'] as const
+
+// Resolves in onMounted, so it is 'control' during SSR and for the first client
+// frame — which is why the arm may only change emphasis and copy, never
+// structure or order.
+const { variant: pricingLayout } = useFlagVariant(
+  'pricing-layout',
+  'control',
+  PRICING_LAYOUT_VARIANTS,
+)
 const passFirst = computed(() => pricingLayout.value === 'pass-first')
 
 /** The control's promoted plan comes from the data, not from a second literal. */
 const CONTROL_FEATURED_ID = PLANS.find((plan) => plan.featured)?.id ?? null
 
 const featuredId = computed(() => (passFirst.value ? 'pass' : CONTROL_FEATURED_ID))
-
-/**
- * Static class strings, because Tailwind scans source text — a computed
- * `order-${n}` produces no CSS at all and the grid silently stops reordering.
- *
- * `md:` and up ONLY, which is the honest limitation of doing this client-side.
- * Below `md` the grid is a single column, so an `order` swap is a vertical
- * rearrangement of the whole stack — and because the flag resolves in
- * `onMounted`, a mobile visitor would watch three cards physically reshuffle
- * one frame after the page painted, possibly under their thumb. On a
- * three-column grid the same swap is a horizontal reorder of equally-sized
- * cells: no reflow, no scroll-position change, nothing moves under the pointer.
- *
- * So the reorder is a desktop-layout experiment. Mobile still gets the other
- * half of the variant — which plan is featured — because the badge and ring are
- * paint, not layout, and swap invisibly. Read the results with that in mind:
- * the arms differ in ordering only above `md`.
- */
-const ORDER_CLASSES = ['md:order-1', 'md:order-2', 'md:order-3'] as const
-
-/** Where each plan sits in `pass-first`. Control keeps the array's own order. */
-const PASS_FIRST_ORDER: Record<string, number> = { pass: 0, monthly: 1, yearly: 2 }
-
-function orderClass(planId: string, index: number): string {
-  const position = passFirst.value ? (PASS_FIRST_ORDER[planId] ?? index) : index
-  return ORDER_CLASSES[position] ?? ORDER_CLASSES[index] ?? ''
-}
 
 async function choose(plan: (typeof plans.value)[number]) {
   if (!loggedIn.value) {
@@ -115,6 +106,13 @@ async function choose(plan: (typeof plans.value)[number]) {
   const opened = await openCheckout(plan.priceId, 'default', {
     pricing_variant: pricingLayout.value,
     plan_id: plan.id,
+    // The arm applies identically at every width now that it is emphasis
+    // rather than order, so this is not an applicability flag — it is for
+    // slicing BEHAVIOUR. A featured card is a very different amount of screen
+    // on a phone (where the three plans are a vertical stack somebody scrolls)
+    // than on a desktop grid, and an arm that wins overall while losing on
+    // mobile is a result worth being able to see.
+    viewport: window.innerWidth < 768 ? 'narrow' : 'wide',
   })
   pending.value = null
 
@@ -187,9 +185,9 @@ useSeo({
 
     <div class="grid gap-6 md:grid-cols-3">
       <UCard
-        v-for="(plan, index) in plans"
+        v-for="plan in plans"
         :key="plan.id"
-        :class="[orderClass(plan.id, index), plan.id === featuredId ? 'ring-2 ring-primary' : '']"
+        :class="plan.id === featuredId ? 'ring-2 ring-primary' : ''"
       >
         <div class="flex h-full flex-col gap-6">
           <div>
