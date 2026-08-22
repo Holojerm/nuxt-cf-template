@@ -381,12 +381,46 @@ than database access, which is exactly why nothing secret may travel there.
 
 ### Rate Limiting
 
-`rateLimit(event, { name, limit, windowSeconds })` — KV-backed fixed window, applied
-to the whole `/api/auth/` surface in `server/middleware/auth.ts`, per-address on
-magic-link requests (keyed by a salted hash, never the raw address), and per-user on
-connect-code minting. It **fails open** (a KV outage must not take sign-in down)
-and KV is eventually consistent, so it's abuse control, not metering. Anything
-you bill on needs a Durable Object.
+`rateLimit(event, { name, limit, windowSeconds })` — one call, two backends. It
+prefers Cloudflare's **native Rate Limiting binding** (`[[ratelimits]]` in
+`wrangler.toml`, resolved off `event.context.cloudflare.env`) and otherwise uses
+the original **KV fixed window**. Applied to the whole `/api/auth/` surface in
+`server/middleware/auth.ts`, per-address on magic-link requests (keyed by a salted
+hash, never the raw address), and per-user on connect-code minting.
+
+The binding's `(limit, period)` is fixed at deploy — `limit({ key })` takes only a
+key — so `chooseBackend` delegates to it **only when both numbers match**
+`NATIVE_LIMITER`, and everything else stays on KV. Don't relax that: routing a
+20/60s handler through a 30/60s binding enforces 30 while `X-RateLimit-Limit: 20`
+goes out on the response, and nothing fails. `period` may only be **10 or 60**.
+
+- Changing the auth limit means changing `NATIVE_LIMITER` **and** `wrangler.toml`.
+  `test/rate-limit.test.ts` drives the real binding and fails when they drift.
+- Both backends **fail open** (an outage in the abuse-control layer must not take
+  sign-in down). A throwing binding does not cascade to KV — one policy, logged.
+- The binding counts **per colo**; KV is eventually consistent. Either way this is
+  abuse control, not metering. Anything you bill on needs a Durable Object.
+- Each call site logs its backend once per isolate (`rate_limit_backend`), with a
+  `reason` when it fell back. Read that before assuming the binding is in play.
+
+### Bot Protection (Turnstile)
+
+`requireTurnstile(event, token)` (`server/utils/turnstile.ts`) — throws 400 with a
+`data.code` when a challenge fails. Wired on the two endpoints a stranger can
+reach: `POST /api/auth/magic-link` and anonymous `POST /api/feedback`. Signed-in
+feedback skips it, because `useFeedback().submit()` is also called
+programmatically with no widget on screen.
+
+- **Unset `NUXT_TURNSTILE_SECRET_KEY` = skipped**, like Resend. Site key without
+  secret key is the one bad state and logs `turnstile_half_configured`.
+- Render `<NuxtTurnstile>` behind a `useRuntimeConfig().public.turnstile.siteKey`
+  check, never unconditionally — an unconfigured fork must load nothing.
+- Unlike the rate limiters it **fails closed**: a bot check that failed open is a
+  bypass an attacker can trigger by making `siteverify` slow.
+- **On the mint path it runs first**, before the per-address bucket is charged.
+  A challenge behind the limiter lets an unsolved bot burn a victim's budget and
+  lock them out of their own sign-in — the limiter becomes the attack.
+- `https://challenges.cloudflare.com` is already in `script-src` and `frame-src`.
 
 ### Transactional Email
 

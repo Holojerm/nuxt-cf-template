@@ -73,13 +73,27 @@ const linkError = ref<string | null>(null)
 /** Echoed back in the confirmation, so a typo is visible instead of silent. */
 const sentTo = ref('')
 
+// ── Turnstile ───────────────────────────────────────────────────────────────
+// Gated on the site key, so a fork without a Turnstile account renders no
+// widget, loads nothing from challenges.cloudflare.com, and signs in exactly as
+// it did before. Not a computed: the key is baked into the bundle and cannot
+// change while the page is open.
+const challengeRequired = Boolean(config.public.turnstile.siteKey)
+const turnstileToken = ref('')
+// The component exposes reset(); we need it because a token is single-use and
+// this form can be submitted more than once (the "Send it again" button).
+const turnstile = ref<{ reset: () => void } | null>(null)
+
 async function sendMagicLink(resend = false) {
   linkPending.value = true
   linkError.value = null
   try {
     // Same cookie the OAuth buttons set, for the same reason.
     redirectCookie.value = redirectTarget.value
-    await $fetch('/api/auth/magic-link', { method: 'POST', body: { email: linkState.email } })
+    await $fetch('/api/auth/magic-link', {
+      method: 'POST',
+      body: { email: linkState.email, turnstileToken: turnstileToken.value || null },
+    })
     sentTo.value = linkState.email
     linkSent.value = true
     if (resend) toast.add({ title: 'Sent again', color: 'success', icon: 'i-lucide-mail-check' })
@@ -87,6 +101,14 @@ async function sendMagicLink(resend = false) {
     linkError.value = authErrorMessage(authErrorCode(error))
   } finally {
     linkPending.value = false
+    // After every attempt, not just the failures. Cloudflare invalidates a token
+    // once it has been redeemed at siteverify, so the one held here is spent
+    // whether the request succeeded or not — and "Send it again" is one click
+    // away in the state this lands in. Clearing the ref first is what disables
+    // that button until the replacement challenge resolves, rather than letting
+    // it fire a request that is guaranteed to 400.
+    turnstileToken.value = ''
+    turnstile.value?.reset()
   }
 }
 
@@ -158,12 +180,19 @@ useSeo({
           :description="linkError"
         />
 
+        <!-- A second challenge, because "Send it again" is a second request and
+             the first token was spent reaching this state. Only one of these two
+             widgets is ever mounted — they sit either side of a v-if/v-else — so
+             the shared `turnstile` ref always points at the live one. -->
+        <NuxtTurnstile v-if="challengeRequired" ref="turnstile" v-model="turnstileToken" />
+
         <div class="flex flex-col gap-2 sm:flex-row">
           <UButton
             color="neutral"
             variant="outline"
             block
             :loading="linkPending"
+            :disabled="challengeRequired && !turnstileToken"
             @click="sendMagicLink(true)"
           >
             Send it again
@@ -192,6 +221,11 @@ useSeo({
           />
         </UFormField>
 
+        <!-- Rendered only once a site key is configured, so the default template
+             shows exactly the form it always did. Sits above the submit button
+             because that is the order it is completed in. -->
+        <NuxtTurnstile v-if="challengeRequired" ref="turnstile" v-model="turnstileToken" />
+
         <UAlert
           v-if="linkError"
           color="error"
@@ -200,7 +234,14 @@ useSeo({
           :description="linkError"
         />
 
-        <UButton type="submit" size="lg" icon="i-lucide-mail" block :loading="linkPending">
+        <UButton
+          type="submit"
+          size="lg"
+          icon="i-lucide-mail"
+          block
+          :loading="linkPending"
+          :disabled="challengeRequired && !turnstileToken"
+        >
           Email me a sign-in link
         </UButton>
       </UForm>

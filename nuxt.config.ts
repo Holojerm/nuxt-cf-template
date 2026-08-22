@@ -31,6 +31,21 @@ const PADDLE = {
   api: ['https://api.paddle.com', 'https://sandbox-api.paddle.com'],
 } as const
 
+/**
+ * Cloudflare Turnstile. One host, doing two jobs: `script-src` for the
+ * `api.js` loader @nuxtjs/turnstile injects, and `frame-src` for the challenge
+ * iframe that loader then mounts. Both are named in Cloudflare's own CSP page
+ * (turnstile/reference/content-security-policy) — `connect-src` is listed there
+ * too but only for pre-clearance mode, which this app does not use, and 'self'
+ * already covers our own verify round-trip.
+ *
+ * Present even while `turnstile.siteKey` is empty and the widget never renders.
+ * A policy that only permits what today's config happens to load is a policy
+ * that breaks on the day someone pastes in a key — at which point the widget
+ * shows as an empty box with a console error, on the signup form, in production.
+ */
+const TURNSTILE = ['https://challenges.cloudflare.com'] as const
+
 // `nuxt dev` sets NODE_ENV=development, `nuxt build` sets production.
 //
 // The dev delta is exactly one source — `frame-src 'self'`, for the Nuxt
@@ -69,9 +84,10 @@ const CSP: Record<string, string[]> = {
   // after a routine `bun update`.
   //
   // What survives: script-src still refuses every *external* origin except
-  // Paddle's CDN, so an injected `<script src="//evil.tld/x.js">` does not load.
-  // Paired with object-src/base-uri below, the classic bypasses stay shut.
-  'script-src': ["'self'", "'unsafe-inline'", ...PADDLE.cdn],
+  // Paddle's CDN and Turnstile's, so an injected `<script src="//evil.tld/x.js">`
+  // does not load. Paired with object-src/base-uri below, the classic bypasses
+  // stay shut. test/csp/ pins that list to exactly those two vendors.
+  'script-src': ["'self'", "'unsafe-inline'", ...PADDLE.cdn, ...TURNSTILE],
 
   // Vue SSR emits inline style attributes and Vite dev injects <style> blocks;
   // there is no build flag that stops either. Paddle's overlay pulls
@@ -121,8 +137,8 @@ const CSP: Record<string, string[]> = {
   // Worse, a refused iframe still fires `load`, so the panel renders *blank*: it
   // reads as a broken DevTools, not as a CSP decision, and the natural next move
   // is to rip the header out. DevTools does not exist in a production build, so
-  // the shipped policy keeps frame-src to Paddle alone.
-  'frame-src': [...PADDLE.cdn, ...PADDLE.checkout, ...(isDev ? ["'self'"] : [])],
+  // the shipped policy keeps frame-src to Paddle and Turnstile alone.
+  'frame-src': [...PADDLE.cdn, ...PADDLE.checkout, ...TURNSTILE, ...(isDev ? ["'self'"] : [])],
 
   // PostHog session replay runs rrweb's packer in a worker built from a Blob
   // (`new Worker(URL.createObjectURL(...))` in posthog-js/dist/recorder.js), so
@@ -198,6 +214,18 @@ export default defineNuxtConfig({
     // array form because nuxt-mcp registers `configKey: 'mcp'` without
     // augmenting `@nuxt/schema`, so a top-level `mcp:` key would not typecheck.
     ['nuxt-mcp', { updateConfig: process.env.NUXT_DEVTOOLS === 'false' ? false : 'auto' }],
+    // Cloudflare Turnstile. Registered with no options on purpose: the module's
+    // own defaults hand `nuxt dev` Cloudflare's always-passing TEST keys, and
+    // the explicit empty `turnstile` entries in runtimeConfig below override
+    // them (defu keeps a value already present on the config). So the template
+    // renders no widget and verifies nothing until a real key is set — the same
+    // "runs without an account" posture as Resend and Paddle, and identical in
+    // dev and production rather than only in one of them.
+    //
+    // Expect one build-time warning, "No site key was provided." That is the
+    // module telling you which env var to set; a template that ships without a
+    // Turnstile account cannot make it go away without pretending to have one.
+    '@nuxtjs/turnstile',
   ],
 
   // NuxtUI v4 requires this CSS entry — without it, Tailwind utilities and
@@ -375,6 +403,18 @@ export default defineNuxtConfig({
       google: { clientId: '', clientSecret: '' },
       github: { clientId: '', clientSecret: '' },
     },
+    // Cloudflare Turnstile (server/utils/turnstile.ts). Set via
+    // NUXT_TURNSTILE_SECRET_KEY — the name @nuxtjs/turnstile reads, not one we
+    // chose. Empty = requireTurnstile() skips verification, so the template runs
+    // without a Turnstile account.
+    //
+    // Declared here rather than left to the module because the module's dev
+    // default is Cloudflare's always-passing test secret, and a challenge that
+    // always passes is worse than no challenge: it looks like protection in dev
+    // and is not protection anywhere.
+    turnstile: {
+      secretKey: '',
+    },
     // Transactional email (server/utils/email.ts). Empty key = no-op, so the
     // template runs without a Resend account.
     resend: {
@@ -427,6 +467,16 @@ export default defineNuxtConfig({
       // product rather than an advert for it. Either way it is a decision you
       // made, which is the point of the flag.
       allowAiCrawlers: true,
+      // Cloudflare Turnstile site key (public by design — it identifies the
+      // widget, it does not authorise anything). Set via
+      // NUXT_PUBLIC_TURNSTILE_SITE_KEY, the name @nuxtjs/turnstile reads.
+      //
+      // Empty = <NuxtTurnstile> is never rendered and no challenge script is
+      // fetched. Components gate on this value, not on the module being
+      // installed, so an unconfigured fork ships zero Turnstile bytes.
+      turnstile: {
+        siteKey: '',
+      },
       // Shown on /terms and /privacy and used as the Reply-To on transactional
       // email. A legal page with no way to reach a human is not a legal page.
       supportEmail: 'support@example.com',

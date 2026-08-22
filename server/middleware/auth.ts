@@ -22,8 +22,20 @@ export default defineEventHandler(async (event) => {
   // defineOAuthGitHubEventHandler owns its entire request, so there's no hook
   // inside it to add a limit to. Generous enough for a human bouncing between
   // providers, tight enough to stop a callback-replay script.
+  //
+  // The numbers come from NATIVE_LIMITER rather than being written here, and
+  // that is load-bearing: rateLimit() only delegates to Cloudflare's native
+  // binding for a call site whose limit and window match what wrangler.toml
+  // declared, since the binding's budget is fixed at deploy. Typing `25` here
+  // would move this endpoint — the one the binding was sized for — back onto
+  // KV, and nothing would fail. To change the limit, change it in
+  // server/utils/rate-limit.ts and in wrangler.toml's `[[ratelimits]]` block.
   if (path.startsWith('/api/auth/')) {
-    await rateLimit(event, { name: 'auth', limit: 30, windowSeconds: 60 })
+    await rateLimit(event, {
+      name: 'auth',
+      limit: NATIVE_LIMITER.limit,
+      windowSeconds: NATIVE_LIMITER.windowSeconds,
+    })
   }
 
   // ── Revocation ─────────────────────────────────────────────────────────────

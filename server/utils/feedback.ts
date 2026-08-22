@@ -13,6 +13,7 @@ import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
 import type { Feedback } from '../db/schema'
 import { saltedHash } from './hash'
+import { turnstileTokenSchema } from './turnstile'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type FeedbackDb = ReturnType<typeof drizzle<typeof tables>>
@@ -52,6 +53,15 @@ export const feedbackSubmissionSchema = z.object({
   /** PostHog session replay deep link, from useFeedback() on the client. */
   replayUrl: z.string().max(1000).nullish(),
   posthogDistinctId: z.string().max(200).nullish(),
+  /**
+   * Solved Turnstile challenge, sent only by anonymous submitters and only when
+   * a site key is configured. Nullish here rather than required because the
+   * decision about whether it is *needed* belongs to the route (which knows
+   * whether the submitter is signed in), not to the body shape — see
+   * server/api/feedback.post.ts. Never stored: it is single-use and worthless
+   * once verified.
+   */
+  turnstileToken: turnstileTokenSchema.nullish(),
 })
 
 export type FeedbackSubmission = z.infer<typeof feedbackSubmissionSchema>

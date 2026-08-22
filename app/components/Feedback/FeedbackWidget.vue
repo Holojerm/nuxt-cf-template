@@ -25,6 +25,15 @@ const toast = useToast()
 const { loggedIn } = useUserSession()
 const { submit, pending } = useFeedback()
 
+// Turnstile, for signed-out submitters only — matching what the server
+// enforces (server/api/feedback.post.ts). Gated on the site key rather than on
+// the module being installed, so a fork without a Turnstile account renders no
+// widget and fetches no challenge script. `challengeRequired` is what the
+// template branches on; both halves of that condition matter.
+const turnstileSiteKey = useRuntimeConfig().public.turnstile.siteKey
+const challengeRequired = computed(() => Boolean(turnstileSiteKey) && !loggedIn.value)
+const turnstileToken = ref('')
+
 // Mirrors server/utils/feedback.ts — the server re-validates either way.
 const schema = z.object({
   kind: z.enum(['bug', 'confusion', 'idea', 'praise']),
@@ -52,6 +61,7 @@ function reset() {
   state.kind = 'idea'
   state.message = ''
   state.email = ''
+  turnstileToken.value = ''
 }
 
 async function onSubmit(event: FormSubmitEvent<Schema>) {
@@ -59,9 +69,14 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
     kind: event.data.kind,
     message: event.data.message,
     email: event.data.email || null,
+    turnstileToken: turnstileToken.value || null,
   })
 
   if (!sent) {
+    // A rejected challenge lands here too. Tokens are single-use and expire
+    // after five minutes, so a retry has to start from a fresh one — clearing
+    // it is what makes <NuxtTurnstile> issue another.
+    turnstileToken.value = ''
     toast.add({
       title: 'That didn’t send',
       description: 'Something went wrong on our end. Please try again.',
@@ -123,9 +138,26 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
           <UInput v-model="state.email" type="email" class="w-full" placeholder="you@example.com" />
         </UFormField>
 
+        <!-- Only for signed-out submitters, and only once a site key exists.
+             Renders nothing — and loads nothing from challenges.cloudflare.com —
+             in a fork that hasn't configured Turnstile. -->
+        <UFormField
+          v-if="challengeRequired"
+          label="Confirm you’re human"
+          name="turnstile"
+          description="A quick automated check. Usually nothing to click."
+        >
+          <NuxtTurnstile v-model="turnstileToken" />
+        </UFormField>
+
         <div class="flex justify-end gap-2">
           <UButton color="neutral" variant="ghost" label="Cancel" @click="open = false" />
-          <UButton type="submit" label="Send feedback" :loading="pending" />
+          <UButton
+            type="submit"
+            label="Send feedback"
+            :loading="pending"
+            :disabled="challengeRequired && !turnstileToken"
+          />
         </div>
       </UForm>
     </template>

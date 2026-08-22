@@ -104,10 +104,11 @@ CLOUDFLARE_API_TOKEN=    # Cloudflare API token with Workers + D1 + KV + R2 edit
 CLOUDFLARE_ACCOUNT_ID=   # Your Cloudflare account ID
 ```
 
-Everything else — OAuth, Paddle, Resend, PostHog — is optional and **degrades instead of
+Everything else — OAuth, Paddle, Resend, PostHog, Turnstile — is optional and **degrades instead of
 breaking**: an unset provider means that sign-in button doesn't render, an unset Paddle price
-means that plan's button is disabled, an unset Resend key means emails are logged no-ops. You
-can go all the way through the app before creating a single third-party account.
+means that plan's button is disabled, an unset Resend key means emails are logged no-ops, an unset
+Turnstile key means no bot check renders or runs. You can go all the way through the app before
+creating a single third-party account.
 
 The one to revisit before you ship is **Resend**, because magic-link sign-in is the primary way in
 and it is the one email that cannot degrade to a no-op. In dev the link goes to the server console
@@ -382,17 +383,86 @@ Adding OAuth providers, in the order they render:
 
 ## Rate limiting
 
-`rateLimit(event, { name, limit, windowSeconds })` — a KV-backed fixed window, auto-imported in
-server routes. Applied to the whole `/api/auth/` surface (30/min per IP) and per-user on connect-code
+`rateLimit(event, { name, limit, windowSeconds })` — one call, two backends, auto-imported in server
+routes. Applied to the whole `/api/auth/` surface (30/min per IP) and per-user on connect-code
 minting (10 per 5 min). Responses carry `X-RateLimit-*`, and a block is a 429 with `Retry-After`.
 
-Two honest caveats, both deliberate:
+**Backend 1, preferred: Cloudflare's native Rate Limiting binding.** Declared as `[[ratelimits]]` in
+`wrangler.toml`, it runs inside the runtime instead of over the network. `namespace_id` is any
+positive integer unique to your account — there is nothing to create in the dashboard.
 
-- **It fails open.** If KV is unreachable the request goes through, logged as
+**Backend 2, fallback: a fixed-window counter in KV.** The original implementation, unchanged.
+
+Which one runs is decided per call site by `chooseBackend`, and the rule is exact-match on *both*
+numbers:
+
+| Call site | Backend | Why |
+| --- | --- | --- |
+| `/api/auth/**` — 30 per 60s | native | Matches the `[[ratelimits]]` block, which was sized for it |
+| `/api/health` — 60 per 60s | KV | Different limit |
+| `mcp-connect-code` — 10 per 300s | KV | The binding's `period` may only be 10 or 60 |
+
+The strictness is the point. A binding's `(limit, period)` is fixed at deploy — `limit({ key })`
+takes only a key — so routing a 20/60s handler through a 30/60s binding would enforce 30 while the
+response header still promised 20. Every call site is logged once per isolate as
+`{"kind":"rate_limit_backend","name":…,"backend":…,"reason":…}`, so you can see which limiter is
+actually guarding what, and `reason` says exactly what to change to move one onto the binding.
+
+Three honest caveats, all deliberate:
+
+- **Both fail open.** If the limiter is unreachable the request goes through, logged as
   `rate_limit_unavailable`. An outage in the abuse-control layer must not take sign-in down with it.
+  A throwing binding does *not* silently cascade to KV — one broken backend paying both backends'
+  latency is worse, and a binding nothing ever uses is a binding whose breakage nobody notices.
+- **The native binding counts per colo.** "30 per minute" means 30 per minute *in each Cloudflare
+  location*. Cloudflare describes it as permissive and eventually consistent, and explicitly not an
+  accounting system.
 - **KV is eventually consistent** and caps sustained writes at roughly one per second per key, so a
-  spray from many colos can overshoot for a beat. This is front-door abuse control, not metering.
-  Anything you bill on belongs in a Durable Object, which is strongly consistent.
+  spray from many colos can overshoot for a beat.
+
+Neither is metering. This is front-door abuse control; anything you bill on belongs in a Durable
+Object, which is strongly consistent.
+
+To change the auth limit, change `NATIVE_LIMITER` in
+[`server/utils/rate-limit.ts`](./server/utils/rate-limit.ts) **and** `simple` in `wrangler.toml`.
+`test/rate-limit.test.ts` drives the real binding and fails if the two ever drift.
+
+---
+
+## Bot protection (Cloudflare Turnstile)
+
+A rate limit answers "how fast", never "is this a person". Turnstile is the other half:
+[`server/utils/turnstile.ts`](./server/utils/turnstile.ts) exposes `requireTurnstile(event, token)`,
+which throws a 400 carrying `data.code` (`turnstile_missing` or `turnstile_failed`) when the
+challenge doesn't check out.
+
+Wired on the two endpoints a stranger can reach:
+
+| Endpoint | Notes |
+| --- | --- |
+| `POST /api/auth/magic-link` | Sign-in and sign-up. The challenge runs **first** — see below. |
+| `POST /api/feedback` (anonymous) | Signed-in submissions skip it, which is both correct (they already cleared OAuth) and necessary: `useFeedback().submit()` is also called programmatically, with no widget on screen. |
+
+**On the mint path the challenge runs before the per-address limiter is charged**, and that ordering
+is the security property, not a style preference. That limiter is keyed by *somebody else's*
+mailbox: a script that can spend it without solving a challenge locks a named victim out of their
+own sign-in for the window, five requests at a time, without sending a single email. Put the
+challenge second and the rate limit becomes the attack it was added to prevent. A test reads the
+route's own source and fails if the two calls ever swap.
+
+**Unset `NUXT_TURNSTILE_SECRET_KEY` and nothing happens** — no widget renders, no verification runs,
+the form works exactly as before. Same posture as Resend and Paddle. Setting *only*
+`NUXT_PUBLIC_TURNSTILE_SITE_KEY` is the one bad state: the widget appears and nothing checks the
+answer, so the server logs `turnstile_half_configured` rather than passing quietly. Both keys come
+from dash.cloudflare.com → Turnstile → Add site.
+
+Unlike the rate limiters, this one **fails closed**. They are advisory, so an outage lets traffic
+through; a bot check that did the same would hand an attacker a bypass they could trigger on demand
+by making `siteverify` slow.
+
+`https://challenges.cloudflare.com` is in `script-src` and `frame-src` already, before anyone
+configures a key — `test/csp/csp.spec.ts` asserts both. A CSP that only permits what today's config
+happens to load breaks on the day someone pastes a key in, and it breaks as an empty box on a form.
 
 **Limits keyed by something other than the caller need a different shape.** The magic-link
 endpoint's per-address budget (5 per 15 min) does not use the `rateLimit()` wrapper, and that is the
@@ -693,8 +763,12 @@ How it hangs together:
 
 - **OAuth 2.1** via [`@cloudflare/workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) (dynamic client registration included, so MCP clients self-register). Tokens/grants live in the worker's own `OAUTH_KV` namespace.
 - **Identity bridge** (`mcp/src/authorize.ts`): device-code style. A signed-in user mints a single-use, 10-minute connect code in the app (`POST /api/mcp/connect-code` — only its SHA-256 hash is stored), pastes it into the worker's `/authorize` consent page, and their `userId` is sealed into the OAuth grant. No shared cookies, no upstream IdP.
-- **Tools** (`mcp/src/server.ts`) run on `createMcpHandler` from the [`agents` SDK](https://developers.cloudflare.com/agents/) (stateless, MCP SDK v2). The authenticated user comes from `getMcpAuthContext()`; `subscription_status` shows the entitlement-gating pattern against the shared `entitlements` table.
+- **Tools** (`mcp/src/server.ts`) run on `createMcpHandler` from the [`agents` SDK](https://developers.cloudflare.com/agents/) (stateless, MCP SDK v2). Every tool starts with `loadAuthorizedUser(env)` rather than reading the grant's `userId` directly — see below; `subscription_status` shows the entitlement-gating pattern against the shared `entitlements` table.
 - **Shared D1**: the worker binds the *same* `database_id` as the Nuxt app (D1 bindings are shareable). The app owns schema + migrations; the worker reads with plain SQL.
+
+**Revoking a grant, given that the app cannot reach OAUTH_KV.** Grants live in this worker's own KV namespace, so deleting your account cannot delete them — the app does not know they exist. And deletion *anonymizes* the `users` row rather than removing it (the id is a live foreign key from `entitlements`), so a stale grant would otherwise keep answering tool calls against the tombstone, including reporting the retained billing rows as a live subscription.
+
+`loadAuthorizedUser()` closes that with the same two refusals as the app's [`checkSession()`](./server/utils/session-guard.ts): a `users` row whose email is a `.invalid` tombstone is refused, and a grant is refused when the account has a `sessions_invalid_before` watermark and the grant either predates it or has no `grantedAt` at all. Accounts that never revoked anything have a NULL watermark and are untouched, so adding it disconnects nobody. The tombstone rule is **written twice on purpose** — the worker is a separate build and cannot import the app's TypeScript — so a change to `isUndeliverableAddress()` in `server/utils/users.ts` needs the same change in `mcp/src/server.ts`.
 
 Commands (from the repo root): `bun run mcp:dev`, `bun run mcp:typecheck`, `bun run mcp:deploy` (run `bun install` inside `mcp/` first — it has its own lockfile-less package.json). The wrangler scripts pass `-c wrangler.jsonc` explicitly because the parent app's build writes a deploy-config redirect (`.wrangler/deploy/config.json`) that otherwise confuses wrangler.
 

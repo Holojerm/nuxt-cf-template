@@ -254,6 +254,32 @@ test.describe('the policy still permits what the vendors need', () => {
     expect(connectSrc).toContain('https://sandbox-api.paddle.com')
   })
 
+  test('Turnstile has both directives it needs, before anyone configures it', async ({ page }) => {
+    // Asserted against the policy text rather than by loading a widget, and the
+    // reason is the thing worth guarding: this template ships with an empty
+    // `turnstile.siteKey`, so <NuxtTurnstile> never renders here and no browser
+    // check could exercise these hosts. The day someone pastes a real key in,
+    // the CSP has to already be right — a missing host shows up as an empty box
+    // on a signup form in production, which is precisely the failure this whole
+    // suite exists to make impossible.
+    //
+    // Two directives, one host, both required: script-src for the api.js loader,
+    // frame-src for the challenge iframe it mounts. Getting only the first is
+    // the common mistake, and it fails *after* the script loads — so it looks
+    // like a Turnstile bug rather than a policy one.
+    const csp = await policy(page)
+
+    const scriptSrc = /script-src ([^;]+)/.exec(csp)?.[1] ?? ''
+    expect(scriptSrc, 'the Turnstile loader would be refused').toContain(
+      'https://challenges.cloudflare.com',
+    )
+
+    const frameSrc = /frame-src ([^;]+)/.exec(csp)?.[1] ?? ''
+    expect(frameSrc, 'the challenge iframe would be refused').toContain(
+      'https://challenges.cloudflare.com',
+    )
+  })
+
   test('PostHog stays on the first-party proxy', async ({ page }) => {
     const csp = await policy(page)
 
@@ -304,7 +330,7 @@ test.describe('the directives that make the policy worth having', () => {
     ).not.toContain('unsafe-eval')
   })
 
-  test('no external origin has crept into script-src beyond Paddle', async ({ page }) => {
+  test('no external origin has crept into script-src beyond the two we chose', async ({ page }) => {
     const response = await page.goto('/')
     const csp = response!.headers()['content-security-policy'] ?? ''
     const scriptSrc = /script-src ([^;]+)/.exec(csp)?.[1] ?? ''
@@ -312,12 +338,18 @@ test.describe('the directives that make the policy worth having', () => {
     // The guard that makes this suite worth running after everyone has left:
     // adding a tag manager, a chat widget or a font CDN means adding a host
     // here, and that should be a decision someone makes on purpose.
+    //
+    // challenges.cloudflare.com joined the list when Turnstile did, and that is
+    // this assertion working rather than being worked around: the list is short
+    // enough to read, and every entry on it had to be argued for in
+    // nuxt.config.ts. Do not append to it to make a build go green.
     const externalHosts = scriptSrc
       .split(/\s+/)
       .filter((source) => source.startsWith('http') || source.startsWith('//'))
 
     expect(externalHosts.sort()).toEqual([
       'https://cdn.paddle.com',
+      'https://challenges.cloudflare.com',
       'https://sandbox-cdn.paddle.com',
     ])
   })

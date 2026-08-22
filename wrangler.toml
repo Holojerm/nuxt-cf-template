@@ -29,6 +29,31 @@ id = "YOUR_KV_NAMESPACE_ID"
 binding = "BLOB"
 bucket_name = "my-app-blob"
 
+# Native rate limiting, the primary limiter for the auth surface.
+# server/utils/rate-limit.ts prefers this and falls back to the KV counter.
+#
+# Three constraints worth knowing before you touch the numbers:
+#
+#   * `period` must be exactly 10 or 60. There is no other value; wrangler
+#     rejects the config rather than rounding, which is the good failure.
+#   * `limit` and `period` are FIXED AT DEPLOY. `limit({ key })` takes only a
+#     key — a caller cannot ask for a different budget at request time. So this
+#     one binding enforces exactly one (limit, period) pair, and every call site
+#     that wants a different pair stays on KV. That rule lives in one place:
+#     NATIVE_LIMITER in server/utils/rate-limit.ts, which must MATCH the two
+#     numbers below. test/rate-limit.test.ts probes the real binding and fails
+#     if they ever drift.
+#   * `namespace_id` is any positive integer, unique per Cloudflare account —
+#     not an id Cloudflare issues you, and nothing to create in the dashboard.
+#     Adding a second limiter means picking a different number here.
+#
+# Sized for the auth surface: server/middleware/auth.ts throttles all of
+# /api/auth/ at 30 requests per 60s, and this is that limit made native.
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 }
+
 [vars]
 NUXT_PUBLIC_APP_NAME = "My App"
 # Canonical public origin, no trailing slash. Emails, sitemap.xml, robots.txt
@@ -43,6 +68,10 @@ NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
 # NUXT_PUBLIC_PADDLE_PRICE_MONTHLY = "pri_..."
 # NUXT_PUBLIC_PADDLE_PRICE_YEARLY = "pri_..."
 # NUXT_PUBLIC_PADDLE_PRICE_PASS = "pri_..."
+# Cloudflare Turnstile site key (public by design — it names the widget, it
+# authorises nothing). Empty = no widget renders and no challenge script loads.
+# Its partner, NUXT_TURNSTILE_SECRET_KEY, is a secret — see the list below.
+# NUXT_PUBLIC_TURNSTILE_SITE_KEY = "0x4AAA..."
 
 # Secrets — set via `wrangler secret put <NAME>`, never in this file:
 #   NUXT_SESSION_PASSWORD        32+ char random string for sealed sessions (required)
@@ -52,3 +81,9 @@ NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
 #   NUXT_PADDLE_API_KEY          only needed for the customer-portal link
 #   NUXT_RESEND_API_KEY          transactional email; unset = emails no-op
 #   NUXT_RESEND_FROM             e.g. "My App <hello@myapp.com>" (verified domain)
+#   NUXT_TURNSTILE_SECRET_KEY    bot check on the public forms; unset = skipped.
+#                                Pairs with NUXT_PUBLIC_TURNSTILE_SITE_KEY below —
+#                                set BOTH or neither. Site key alone renders a
+#                                widget nobody verifies (server/utils/turnstile.ts
+#                                logs `turnstile_half_configured` when it sees that).
+#                                Both from dash.cloudflare.com → Turnstile → Add site.

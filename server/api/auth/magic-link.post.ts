@@ -19,9 +19,12 @@
 //
 // ── Sending mail on an anonymous caller's say-so ─────────────────────────────
 // This endpoint puts mail from a domain the recipient trusts into an inbox that
-// the sender chose. Two limits keep that from being a weapon: the per-IP limit
-// in the middleware, and the per-address limit below — see MAGIC_LINK_RATE_LIMIT
-// for why the second one is the load-bearing half.
+// the sender chose. Three things keep that from being a weapon, and they answer
+// different questions: the per-IP limit in the middleware and the per-address
+// limit below both answer "how fast" (see MAGIC_LINK_RATE_LIMIT for why the
+// second is the load-bearing half), while Turnstile answers "is there a browser
+// here at all". The challenge runs before either limiter is charged — the note
+// in the handler explains why that ordering is not cosmetic.
 
 import { z } from 'zod'
 
@@ -43,6 +46,7 @@ import {
   MAGIC_LINK_TTL_SECONDS,
 } from '../../utils/magic-link'
 import { consumeRateLimit } from '../../utils/rate-limit'
+import { requireTurnstile, turnstileTokenSchema } from '../../utils/turnstile'
 import {
   canonicalizeEmailForLimiting,
   isUndeliverableAddress,
@@ -53,6 +57,11 @@ const bodySchema = z.object({
   // 254 is the RFC 5321 ceiling for a whole address. Capped before the address
   // reaches a KV key or a database column.
   email: z.string().trim().email().max(254),
+  // Optional here, required by requireTurnstile() only once a secret key is
+  // configured. Optionality belongs in the schema and the decision belongs in
+  // the util: a `.min(1)` here would make an unconfigured fork's sign-in form
+  // 400 on a field it never rendered.
+  turnstileToken: turnstileTokenSchema.nullish(),
 })
 
 /**
@@ -122,6 +131,26 @@ async function addressBudgetExhausted(email: string, salt: string): Promise<bool
 
 export default defineEventHandler(async (event) => {
   const body = await readValidatedBody(event, bodySchema.parse)
+
+  // ── The bot check runs FIRST, and the ordering is the security property ─────
+  // Not "before the mail" — before the per-address budget is *charged*. That
+  // budget is the load-bearing limit on this endpoint, and it is keyed by
+  // somebody else's mailbox: a script that can spend it without solving a
+  // challenge can lock a named victim out of their own sign-in for the window,
+  // five requests at a time, and never send a single email in the process. The
+  // limiter becomes the attack. Put the challenge behind it and that is exactly
+  // what ships.
+  //
+  // Also before normalizeEmail(), so no address-dependent work happens at all
+  // until the caller is established as a browser. The identical-response rule
+  // below is unaffected: this 400 is decided entirely by the token, is the same
+  // for every address including malformed ones, and tells an attacker only that
+  // they failed a challenge they can see themselves failing.
+  //
+  // No-ops entirely without NUXT_TURNSTILE_SECRET_KEY — see
+  // server/utils/turnstile.ts. An unconfigured fork's sign-in is unchanged.
+  await requireTurnstile(event, body.turnstileToken)
+
   const email = normalizeEmail(body.email)
   const config = useRuntimeConfig(event)
 

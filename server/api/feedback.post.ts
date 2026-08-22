@@ -11,12 +11,27 @@
 // Capture is server-side only — the client passes the replay URL and distinct
 // id but does not capture, so ad blockers can't drop the event and it can't be
 // double-counted.
+//
+// Two limits guard the anonymous path, and they answer different questions:
+// the D1 ip_hash counter below decides how fast one source may submit, and
+// Turnstile decides whether there is a browser on the other end at all.
 
 export default defineEventHandler(async (event) => {
   const body = await readValidatedBody(event, feedbackSubmissionSchema.parse)
 
   const session = await getUserSession(event)
   const userId = session.user?.id ?? null
+
+  // Anonymous submitters get a bot check; signed-in ones already cleared OAuth.
+  //
+  // Scoping it to `!userId` is not a convenience. useFeedback().submit() is also
+  // called programmatically — the cancellation prompt on /account asks why
+  // someone is leaving, with no widget anywhere on screen — and requiring a
+  // token unconditionally would turn every one of those into a 400 the moment a
+  // fork configured Turnstile. The abuse surface is the anonymous one anyway.
+  //
+  // No-ops entirely without NUXT_TURNSTILE_SECRET_KEY. See server/utils/turnstile.ts.
+  if (!userId) await requireTurnstile(event, body.turnstileToken)
 
   const ip = getHeader(event, 'cf-connecting-ip') ?? getRequestIP(event, { xForwardedFor: true })
   const ipHash = await hashIp(ip, useRuntimeConfig(event).sessionPassword)

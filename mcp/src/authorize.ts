@@ -7,7 +7,7 @@
 // a __Host- cookie, HTML-escaped client metadata, restrictive CSP.
 
 import type { AuthRequest } from '@cloudflare/workers-oauth-provider'
-import type { Env } from './env'
+import type { AuthProps, Env } from './env'
 
 const CSRF_COOKIE = '__Host-CSRF_TOKEN'
 
@@ -134,12 +134,20 @@ export const defaultHandler = {
       .first<{ user_id: string }>()
     if (!redeemed) return retry('Invalid or expired code.')
 
+    // `grantedAt` is what makes this grant revocable later. It lives in
+    // OAUTH_KV, which the app cannot reach — deleting your account cannot go and
+    // delete a grant it does not know exists — so the grant has to carry a date
+    // that server.ts can compare against `users.sessions_invalid_before`.
+    // Seconds, matching that column and the app's session `issuedAt`.
+    //
+    // `now` is already the second-resolution clock used for the code redemption
+    // above, so a grant and the code it came from agree on when this happened.
     const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
       request: oauthReq,
       userId: redeemed.user_id,
       scope: oauthReq.scope ?? [],
       metadata: { clientName },
-      props: { userId: redeemed.user_id },
+      props: { userId: redeemed.user_id, grantedAt: now } satisfies AuthProps,
     })
     return Response.redirect(redirectTo, 302)
   },

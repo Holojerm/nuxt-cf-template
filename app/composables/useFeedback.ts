@@ -19,6 +19,12 @@ export interface FeedbackPayload {
   rating?: number | null
   /** Reply-to address — only worth collecting from signed-out submitters. */
   email?: string | null
+  /**
+   * Solved Turnstile challenge. Only anonymous submissions need one, and only
+   * when a site key is configured — the server decides, so programmatic
+   * prompts (which run signed-in, with no widget) can leave this unset.
+   */
+  turnstileToken?: string | null
 }
 
 export function useFeedback() {
@@ -55,6 +61,7 @@ export function useFeedback() {
           path: scrubUrl(route.fullPath),
           replayUrl: sessionReplayUrl(),
           posthogDistinctId: posthog()?.get_distinct_id() ?? null,
+          turnstileToken: payload.turnstileToken || null,
         },
       })
       return true
