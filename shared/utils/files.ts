@@ -3,9 +3,19 @@
 // (server/api/files/index.post.ts) and the client that pre-checks a file
 // before spending a round trip on it (app/components/Upload/FileUpload.vue).
 //
-// The client-side check is a UX courtesy, not the boundary: the server
-// re-validates every one of these with `ensureBlob()` regardless of what a
-// modified client sends. See server/api/files/index.post.ts.
+// The client-side check is a UX courtesy, not the boundary. Two different
+// things happen server-side, and it matters which one is which:
+//
+//   - `ensureBlob()` re-checks the CLAIM: the size and Content-Type the
+//     multipart form declared, against these same constants. A modified
+//     client that skips the check below can't send a bigger file or an
+//     unlisted declared type.
+//   - `sniffMimeType()` (server/utils/files.ts) re-checks the BYTES: it reads
+//     the file's own magic-number header and requires it to match the
+//     declared type. `ensureBlob()` alone does not do this — `blob.type` is
+//     just the part header the client wrote, so a client can declare
+//     `image/png` on any bytes it likes unless something looks at the bytes
+//     themselves. See server/api/files/index.post.ts for both checks.
 //
 // Lives in shared/ rather than server/utils/files.ts for the same reason
 // shared/utils/site.ts does — both app/ and server/ need the identical
@@ -26,6 +36,18 @@ export const MAX_FILE_SIZE_BYTES = 8 * 1024 * 1024
 
 /** The limit above, in `ensureBlob()`'s own size-string format. */
 export const MAX_FILE_SIZE_LABEL = '8MB'
+
+/**
+ * Per-user cap on the number of `files` rows, checked by the POST route
+ * before it writes anything (server/utils/files.ts › `isFilesQuotaExceeded()`).
+ * `requireSubscription` alone bounds who can upload, not how much — without
+ * this, one subscriber can loop 8 MB uploads indefinitely, since neither
+ * `MAX_FILE_SIZE_BYTES` nor the rate limit caps the total. 200 is generous
+ * for the kind of files this feature accepts (documents and images, not a
+ * bulk store) and cheap to raise later — it costs nothing until someone
+ * actually hits it.
+ */
+export const MAX_FILES_PER_USER = 200
 
 /**
  * The only MIME types this feature accepts. Exact strings, not the `image`
