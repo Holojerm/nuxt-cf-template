@@ -11,6 +11,7 @@
 //   completeOAuthSignIn()  → wraps it in the 302s an OAuth callback must return.
 
 import type { H3Event } from 'h3'
+import type { Attribution } from '#shared/utils/attribution'
 import { ATTRIBUTION_COOKIE, readAttributionCookie } from '#shared/utils/attribution'
 import type { OAuthProfile } from './users'
 
@@ -67,6 +68,21 @@ interface EstablishSessionOptions {
    * subscription. Every caller must answer this explicitly.
    */
   emailVerified: boolean
+  /**
+   * First-touch attribution to record if this call creates the account.
+   *
+   * Omit it — the normal case — and it is read from the `attr` cookie on THIS
+   * request, which is correct for an OAuth callback: the browser that started
+   * the flow is the browser that finishes it.
+   *
+   * Magic-link sign-in is the exception, and it is why this option exists. That
+   * flow routinely finishes on a different device from the one that asked for
+   * the link, where no `attr` cookie has ever been set, so it captures
+   * attribution at mint time and hands it back here explicitly
+   * (server/utils/magic-link.ts). Passing `null` asserts "there is none" and
+   * suppresses the cookie fallback; leaving it `undefined` keeps the fallback.
+   */
+  attribution?: Attribution | null
 }
 
 /**
@@ -76,7 +92,7 @@ interface EstablishSessionOptions {
  */
 export async function establishSession(
   event: H3Event,
-  { profile, emailVerified }: EstablishSessionOptions,
+  { profile, emailVerified, attribution: providedAttribution }: EstablishSessionOptions,
 ) {
   if (!profile.email) {
     console.warn(JSON.stringify({ kind: 'auth_no_email', provider: profile.provider }))
@@ -97,7 +113,12 @@ export async function establishSession(
   // parses it through a strict, length-capped Zod schema and returns null for
   // anything else, so a hand-crafted cookie can dirty one row's marketing
   // columns and nothing more.
-  const attribution = readAttributionCookie(getCookie(event, ATTRIBUTION_COOKIE))
+  // The caller may have captured it earlier on a different device — see
+  // `attribution` on EstablishSessionOptions.
+  const attribution =
+    providedAttribution !== undefined
+      ? providedAttribution
+      : readAttributionCookie(getCookie(event, ATTRIBUTION_COOKIE))
 
   const { user, created } = await upsertOAuthUser(db, profile, attribution)
 

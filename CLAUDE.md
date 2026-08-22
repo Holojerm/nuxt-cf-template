@@ -285,10 +285,35 @@ NuxtUI handles dark mode automatically via `UColorModeButton`. Use semantic toke
 
 ### Auth Patterns
 
-Sign-in is **implemented**, not scaffolded: GitHub + Google OAuth at
-`server/api/auth/<provider>.get.ts`, users provisioned on first login by
-`upsertOAuthUser()`, and a dev-only email shortcut so a fresh clone can reach a
-gated page without registering an OAuth app.
+Sign-in is **implemented**, not scaffolded. The primary path is a **magic link**
+(`server/api/auth/magic-link.post.ts` → `/auth/verify` → `verify.post.ts`); Apple,
+Google, and GitHub OAuth sit under it at `server/api/auth/<provider>.get.ts`;
+users are provisioned on first login by `upsertOAuthUser()`; and a dev-only email
+shortcut lets a fresh clone reach a gated page without registering anything.
+
+Three rules the magic-link flow depends on, each of which is a real bug if broken:
+
+- **A GET never spends a token.** Mail security gateways prefetch every URL in an
+  incoming message, so a link that signs you in by being fetched signs the scanner
+  in. `GET /api/auth/magic-link/verify` only reports whether a token is usable;
+  the POST behind the button on `/auth/verify` is what consumes it.
+- **Redemption is one atomic statement** — `UPDATE … WHERE used_at IS NULL AND
+  expires_at > now RETURNING *` (`server/utils/magic-link.ts`). Read-then-write is a
+  login bypass with a race in it: two requests carrying one token would both win.
+- **The request endpoint answers identically for an unknown address**, or it is an
+  account-enumeration oracle. Its per-address rate limit is what stops it being a
+  mail cannon pointed at someone else's inbox.
+- **Reserved addresses are refused at mint time.** Deletion anonymizes the `users`
+  row and keys it `deleted-<id>@deleted.invalid`, so a link for that tombstone
+  would redeem into the deleted account. `isUndeliverableAddress()` refuses the
+  `.invalid` TLD — same success body, and after the rate limiter so its headers
+  don't leak the difference. The sign-in email is `security.sign_in_link`, which
+  the taxonomy classifies as mandatory, so it can never carry List-Unsubscribe.
+
+GitHub ships **unconfigured on purpose** — it is a developer credential, and a
+consumer sign-in page that leads with it tells most visitors the product isn't for
+them. Configure it for a devtool fork; it renders last either way
+(`server/api/auth/providers.get.ts`).
 
 ```typescript
 // Protect a page client-side (UX only — see the warning below)
@@ -311,26 +336,35 @@ and `app/middleware/subscription.ts` run in the browser and exist so people see
 a login page instead of an empty one. Every paid API route must call
 `requireSubscription(event)` itself, or the gate is decorative.
 
-**Identity is the verified email address.** Signing in with GitHub and later
-Google on the same address lands on the same account by design. That's only safe
-because every caller of `establishSession()` passes an explicit `emailVerified`
-— an unverified address would be an account-takeover primitive. Never default
-that flag to `true` when adding a provider.
+**Identity is the verified email address.** Signing in with a magic link today
+and Google tomorrow on the same address lands on the same account by design.
+That's only safe because every caller of `establishSession()` passes an explicit
+`emailVerified` — an unverified address would be an account-takeover primitive.
+Never default that flag to `true` when adding a provider. The magic-link path is
+the one place where that flag is our own evidence rather than a third party's: the
+token was mailed to that address and came back.
 
 Adding a provider is three steps: add the `oauth.<name>` keys to
 `nuxt.config.ts`, write `server/api/auth/<name>.get.ts` mapping the provider's
 user shape onto `OAuthProfile`, and add a row to `server/api/auth/providers.get.ts`
-so `/login` renders the button.
+so `/login` renders the button. (Apple is the exception to step two: its callback
+is a cross-site form POST, so that route is `apple.ts` with no method suffix.)
 
 ### Rate Limiting
 
 `rateLimit(event, { name, limit, windowSeconds })` — KV-backed fixed window, applied
-to the whole `/api/auth/` surface in `server/middleware/auth.ts` and per-user on
+to the whole `/api/auth/` surface in `server/middleware/auth.ts`, per-address on
+magic-link requests (keyed by a salted hash, never the raw address), and per-user on
 connect-code minting. It **fails open** (a KV outage must not take sign-in down)
 and KV is eventually consistent, so it's abuse control, not metering. Anything
 you bill on needs a Durable Object.
 
 ### Transactional Email
+
+Templates live in `server/utils/email-templates.ts`, except the sign-in link, which
+lives in `server/utils/auth-email-templates.ts` because it is the one email that is
+load-bearing rather than a courtesy — `POST /api/auth/magic-link` inspects
+`sendEmail()`'s result and 503s in production rather than claiming to have sent one.
 
 `sendEmail()` (Resend over fetch) **never throws** — it's always called from
 something more important than the email, and a mail outage must not 500 a login

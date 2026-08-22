@@ -28,7 +28,11 @@ import { expect, test } from '@playwright/test'
 // kind of second list `definePageMeta({ publicPage })` exists to abolish — so
 // the `sitemap coverage` test at the bottom of this file fails the build if the
 // two ever disagree. Add a public page, forget this list, and CI tells you.
-const ROUTES = ['/', '/pricing', '/changelog', '/login', '/terms', '/privacy']
+//
+// /auth/verify is scanned with no token, which is exactly the state a stale or
+// mangled link produces — the one a reader is most likely to meet on a bad day,
+// and therefore the one whose error copy has to survive both color modes.
+const ROUTES = ['/', '/pricing', '/changelog', '/login', '/auth/verify', '/terms', '/privacy']
 
 const COLOR_MODES = ['light', 'dark'] as const
 

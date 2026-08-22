@@ -10,7 +10,7 @@ A production-ready template for full-stack apps on **Nuxt 4 + Cloudflare Workers
 | Database | Cloudflare D1 (SQLite via Drizzle ORM) |
 | KV / Cache | Cloudflare KV |
 | File Storage | Cloudflare R2 |
-| Auth | nuxt-auth-utils — GitHub + Google OAuth, wired end to end |
+| Auth | nuxt-auth-utils — magic-link sign-in, plus Apple / Google / GitHub OAuth, wired end to end |
 | Billing | Paddle (merchant of record) — checkout, entitlements, self-serve cancellation |
 | Email | Resend over fetch — welcome, receipt, payment-failed, access-ended |
 | Linting | oxlint + oxfmt |
@@ -108,6 +108,10 @@ Everything else — OAuth, Paddle, Resend, PostHog — is optional and **degrade
 breaking**: an unset provider means that sign-in button doesn't render, an unset Paddle price
 means that plan's button is disabled, an unset Resend key means emails are logged no-ops. You
 can go all the way through the app before creating a single third-party account.
+
+The one to revisit before you ship is **Resend**, because magic-link sign-in is the primary way in
+and it is the one email that cannot degrade to a no-op. In dev the link goes to the server console
+instead; in production, no key means that endpoint honestly 503s. See Auth, below.
 
 See `.env.example` for the full list, including the exact OAuth callback URLs to register.
 
@@ -208,7 +212,7 @@ bun run deploy        # Build + deploy to Cloudflare (`bun deploy` is reserved b
 │   └── utils/          # Auto-imported client helpers (plans.ts)
 ├── server/
 │   ├── api/
-│   │   ├── auth/       # OAuth providers, logout, provider list, dev sign-in
+│   │   ├── auth/       # Magic link, OAuth providers, logout, provider list, dev sign-in
 │   │   └── billing/    # Entitlement status + customer-portal link
 │   ├── db/
 │   │   ├── schema.ts   # Single source of truth for DB schema
@@ -276,19 +280,54 @@ Workers Builds runs the same two steps in CI — `bun run ci` covers the build (
 
 ## Auth
 
-Sign-in works out of the box — GitHub and Google OAuth, users provisioned on first login, and a
-dev-only email shortcut so a fresh clone reaches a gated page without registering an OAuth app
-first.
+Sign-in works out of the box. The primary path is a **magic link** — type an address, get a link,
+no password ever exists. Apple and Google sit under it as conveniences, GitHub is available but off
+by default, and a dev-only email shortcut means a fresh clone reaches a gated page without
+registering anything at all.
 
 | Piece | Where | What it does |
 | --- | --- | --- |
-| Provider routes | [`server/api/auth/github.get.ts`](./server/api/auth/github.get.ts), [`google.get.ts`](./server/api/auth/google.get.ts) | Start *and* finish the OAuth dance — one route each. Callback URL to register is the route's own path. |
+| Magic link | [`server/api/auth/magic-link.post.ts`](./server/api/auth/magic-link.post.ts), [`verify.get.ts`](./server/api/auth/magic-link/verify.get.ts), [`verify.post.ts`](./server/api/auth/magic-link/verify.post.ts) | Mint → confirm → redeem. Only the token's SHA-256 hash is stored; 15-minute TTL; single-use, enforced by one atomic `UPDATE`. |
+| Token lifecycle | [`server/utils/magic-link.ts`](./server/utils/magic-link.ts) | Generate, hash, inspect, consume, sweep. Covered by [`test/magic-link.test.ts`](./test/magic-link.test.ts). |
+| Confirmation page | [`app/pages/auth/verify.vue`](./app/pages/auth/verify.vue) | Where the link lands. The button is what spends the token — see below. |
+| Provider routes | [`apple.ts`](./server/api/auth/apple.ts), [`google.get.ts`](./server/api/auth/google.get.ts), [`github.get.ts`](./server/api/auth/github.get.ts) | Start *and* finish the OAuth dance — one route each. Callback URL to register is the route's own path. |
 | Sign-in tail | [`server/utils/auth.ts`](./server/utils/auth.ts) | Provisions the user, seals the session, sends the welcome email, redirects. Adding a provider is ~15 lines of profile mapping. |
 | Provisioning | [`server/utils/users.ts`](./server/utils/users.ts) | Find-or-create by verified email. Covered by [`test/users.test.ts`](./test/users.test.ts). |
-| Which buttons to show | `GET /api/auth/providers` | Reports which providers are configured, so an unconfigured one never renders a button that dead-ends. |
+| Which buttons to show | `GET /api/auth/providers` | Reports which providers are configured (and whether email can be sent at all), so nothing renders a button that dead-ends. |
 | Dev sign-in | [`server/api/auth/dev.post.ts`](./server/api/auth/dev.post.ts) | Email, no password. `import.meta.dev` is a build-time constant, so the handler is dead code in production and the route 404s. |
 | Server guard | [`server/middleware/auth.ts`](./server/middleware/auth.ts) | 401s every `/api/*` route except `/api/health`, `/api/auth/`, `/api/_auth/`. Also rate-limits the auth surface. |
 | Client guards | [`app/middleware/auth.ts`](./app/middleware/auth.ts), [`subscription.ts`](./app/middleware/subscription.ts) | `definePageMeta({ middleware: ['auth', 'subscription'] })`. UX only — see below. |
+
+**The link does not sign you in by being fetched.** Mail security gateways — Defender Safe Links,
+Proofpoint, Mimecast — fetch every URL in an incoming message before the recipient sees it, and
+browsers prefetch. All of that is GET traffic. So `GET /api/auth/magic-link/verify` only *reports*
+whether a token is usable, and `POST` (behind the button on `/auth/verify`) is what spends it. A
+scanner following the link changes nothing; the human still gets a working link.
+
+**The request endpoint answers identically for an address it has never seen.** Otherwise it is an
+account-enumeration oracle: point a script at a leaked address list and learn who has an account
+here. That is also why the "check your inbox" copy says *if* that address can receive mail. The two
+rate limits behind it matter for a second reason — this endpoint sends mail from a domain the
+recipient trusts, to an address an anonymous caller chose, so there is a per-address limit
+(5 per 15 min) on top of the per-IP one.
+
+**Magic link needs Resend.** In dev with no key set, the sign-in URL is logged to the server console
+so `git clone && bun dev` still exercises the flow. In production an undeliverable link is a 503, not
+a silent "check your inbox" for a message that was never sent.
+
+**A deleted account cannot be resurrected through it.** Deletion anonymizes the `users` row in place
+and leaves it keyed by `deleted-<id>@deleted.invalid`; identity is the email address, so a link
+minted for that tombstone would redeem into the deleted account's id, entitlements and role
+included. `isUndeliverableAddress()` refuses the whole RFC 2606 `.invalid` TLD at mint time — with
+the same success body as any other address, and *after* the rate limiter, so the `X-RateLimit-*`
+headers don't leak what the body withholds. Relying on Resend rejecting `.invalid` would put an
+authentication boundary in a third party's input validation.
+
+**The sign-in link is security-class mail.** It carries no `List-Unsubscribe` header, and
+`MAGIC_LINK_EVENT_TYPE` (`security.sign_in_link`) makes that structural rather than incidental: the
+`security.` prefix means `isMandatoryNotification()` already refuses to make it unsubscribable at
+every enforcement point. It is also the one email sent before we know whether the address has an
+account, so there is no user id to look a preference up by in the first place.
 
 **Identity is the verified email address.** Sign in with GitHub today and Google tomorrow on the
 same address and you get the same account, which is what people expect and what avoids duplicate
@@ -301,14 +340,26 @@ page instead of an empty one. The boundary is `getUserSession` / `requireSubscri
 API routes. Delete the client middleware and a gated page renders empty; delete the server check
 and it leaks.
 
-Setting up real OAuth:
+Adding OAuth providers, in the order they render:
 
-1. **GitHub** — Settings → Developer settings → OAuth Apps → New. Authorization callback URL:
-   `https://<your-app>/api/auth/github`. Put the pair in `NUXT_OAUTH_GITHUB_CLIENT_ID` /
-   `_CLIENT_SECRET`.
+1. **Apple** — developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → your
+   *Services ID* → Sign in with Apple → Configure. Return URL: `https://<your-app>/api/auth/apple`.
+   Four env vars, because Apple has no static client secret: the server signs a short-lived ES256
+   JWT from a `.p8` key on every request. `NUXT_OAUTH_APPLE_CLIENT_ID` (the Services ID, not the App
+   ID), `_TEAM_ID`, `_KEY_ID`, `_PRIVATE_KEY` (the whole `.p8`, literal newlines written as `\n`).
+   Two things to know: its callback is a cross-site **POST**, which is why that route is
+   `apple.ts` and not `apple.get.ts`; and "Hide My Email" produces a relay address that becomes the
+   account key, so the same person signing in with Google lands on a different account.
 2. **Google** — Cloud Console → APIs & Services → Credentials → OAuth client ID. Authorized
-   redirect URI: `https://<your-app>/api/auth/google`. Same env var pattern.
-3. In production set both as Worker secrets (`wrangler secret put`), not `[vars]`.
+   redirect URI: `https://<your-app>/api/auth/google`. `NUXT_OAUTH_GOOGLE_CLIENT_ID` / `_SECRET`.
+3. **GitHub** — optional, and **off by default**. It is a developer credential: on a consumer
+   sign-in page it tells most visitors the product isn't for them, and it is the clearest tell that
+   a fork was never re-aimed. Configure it for a devtool fork and it renders last; leave it unset
+   otherwise. Settings → Developer settings → OAuth Apps → New. Authorization callback URL:
+   `https://<your-app>/api/auth/github`.
+4. In production set every one of these as a Worker secret (`wrangler secret put`), not `[vars]`.
+   The Apple private key and the Resend API key are yours to set — nothing in this repo generates
+   or stores them.
 
 ---
 
@@ -343,6 +394,7 @@ Which emails exist, and when they fire — decided by `decideNotification()` in
 
 | Email | Trigger |
 | --- | --- |
+| Sign-in link | Every `POST /api/auth/magic-link`. The one email that is not optional — see Auth. |
 | Welcome | First sign-in only |
 | Subscription/pass active | Transition **into** `active`/`trialing`, or a pass actually granted |
 | Payment failed | Transition into `past_due` |
@@ -397,7 +449,8 @@ Going live: swap the token/secret for live ones and set `NUXT_PUBLIC_PADDLE_ENV=
 | --- | --- | --- |
 | `/` | Public | Landing page — hero, features, CTA. Indexed. |
 | `/pricing` | Public | Three plans from `app/utils/plans.ts` + price IDs in runtime config. Indexed. |
-| `/login` | Public | OAuth buttons for configured providers + dev sign-in. `noindex`. |
+| `/login` | Public | Magic-link form, then buttons for configured OAuth providers, then dev sign-in. `noindex`. |
+| `/auth/verify` | Public | Where a magic link lands. Confirming is what spends the token. `noindex`. |
 | `/account` | Signed in | Plan status, billing history, self-serve cancel, MCP connect code, sign out. |
 | `/dashboard` | Signed in **and** paying | The gated example. Replace with your product. |
 | `/terms`, `/privacy` | Public | Templates written to match what this codebase actually does. **Have a lawyer read them.** |

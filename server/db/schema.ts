@@ -110,6 +110,59 @@ export const mcpConnectCodes = sqliteTable('mcp_connect_codes', {
   ...timestamps,
 })
 
+// Magic-link tokens — the primary consumer sign-in path. Minted by
+// POST /api/auth/magic-link, redeemed from /auth/verify. Same construction as
+// mcp_connect_codes above and for the same reasons: only the SHA-256 hash is
+// stored, the row is single-use, and it expires in minutes.
+//
+// Deliberately NOT joined to `users`, and that is the point rather than an
+// omission. A link is minted for an *address*, not an account, which is what
+// lets one endpoint serve sign-in and sign-up with an identical response — an
+// endpoint that behaved differently for a known address would be an account
+// enumeration oracle. The account is found-or-created at redemption.
+export const magicLinkTokens = sqliteTable(
+  'magic_link_tokens',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Normalized with normalizeEmail() before it is written, so this row and the
+    // `users.email` it eventually resolves to are keyed identically.
+    email: text('email').notNull(),
+    tokenHash: text('token_hash').notNull().unique(),
+    expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+    usedAt: integer('used_at', { mode: 'timestamp' }),
+    // ── Why these ride on the row instead of being read from cookies ──────────
+    // A magic link is the one sign-in flow that routinely *finishes in a
+    // different browser than it started in*: request it on the laptop, open the
+    // mail on the phone. Both values below normally come from cookies on the
+    // requesting browser (`auth-redirect`, `attr`), and on that path neither
+    // cookie exists when the session is established. Capturing them at mint time
+    // is what stops a deep link and a first-touch channel from being silently
+    // lost on every cross-device signup — and cross-device is not an edge case
+    // for email sign-in, it's the default on mobile.
+    //
+    // `redirect_to` is passed through safeRedirectPath() before it is written.
+    // It originates in a query string, so storing it unfiltered would turn this
+    // table into an open-redirect store with a 15-minute fuse.
+    redirectTo: text('redirect_to'),
+    // First-touch attribution, same four columns as `users` — written there by
+    // establishSession() if this link ends up creating the account.
+    signupSource: text('signup_source'),
+    signupMedium: text('signup_medium'),
+    signupCampaign: text('signup_campaign'),
+    signupReferrer: text('signup_referrer'),
+    ...timestamps,
+  },
+  (table) => [
+    // Rows are looked up by `token_hash` (unique index, free) and swept by
+    // address when that address requests its next link — see
+    // server/utils/magic-link.ts › createMagicLinkToken. This index serves the
+    // sweep, and the support question "how many links did this address ask for".
+    index('magic_link_tokens_email_created_idx').on(table.email, table.createdAt),
+  ],
+)
+
 // Feedback — first-party customer feedback capture (POST /api/feedback).
 // PostHog tells you what users *did*; this table is what they *said*, and it's
 // yours: joinable against users/entitlements, and it survives dropping PostHog.
@@ -325,6 +378,8 @@ export type NewUser = typeof users.$inferInsert
 export type Entitlement = typeof entitlements.$inferSelect
 export type NewEntitlement = typeof entitlements.$inferInsert
 export type McpConnectCode = typeof mcpConnectCodes.$inferSelect
+export type MagicLinkToken = typeof magicLinkTokens.$inferSelect
+export type NewMagicLinkToken = typeof magicLinkTokens.$inferInsert
 export type Feedback = typeof feedback.$inferSelect
 export type NewFeedback = typeof feedback.$inferInsert
 export type AuditLogEntry = typeof auditLog.$inferSelect

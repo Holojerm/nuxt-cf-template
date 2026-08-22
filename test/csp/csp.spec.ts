@@ -30,8 +30,12 @@
 
 import { expect, test } from '@playwright/test'
 
-/** Landing, the checkout entry point, and the auth surface. */
-const ROUTES = ['/', '/pricing', '/login']
+/**
+ * Landing, the checkout entry point, and the auth surface — both halves of the
+ * latter, since /auth/verify is the only page that fetches on mount and
+ * `connect-src` is the directive nobody notices breaking until sign-in stops.
+ */
+const ROUTES = ['/', '/pricing', '/login', '/auth/verify']
 
 interface CspViolation {
   directive: string

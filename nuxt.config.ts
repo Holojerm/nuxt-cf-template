@@ -351,9 +351,20 @@ export default defineNuxtConfig({
     // the login page which buttons to render — an unconfigured provider dead-ends
     // in a "missing configuration" error instead of a sign-in.
     // Set via NUXT_OAUTH_GITHUB_CLIENT_ID etc.
+    //
+    // All of these are optional. The primary sign-in path is the magic link
+    // (server/api/auth/magic-link.post.ts), which needs no provider at all —
+    // only Resend, below. GitHub in particular ships unconfigured on purpose:
+    // it is a developer credential, and a consumer sign-in page that leads with
+    // it is telling most of its visitors the product isn't for them.
     oauth: {
-      github: { clientId: '', clientSecret: '' },
+      // Apple's client secret is an ES256 JWT signed per request, so the config
+      // is four values rather than two: `clientId` is the Services ID, and
+      // `privateKey` is the .p8 contents with literal newlines written as \n.
+      // A real secret — `wrangler secret put`, never wrangler.toml [vars].
+      apple: { clientId: '', teamId: '', keyId: '', privateKey: '' },
       google: { clientId: '', clientSecret: '' },
+      github: { clientId: '', clientSecret: '' },
     },
     // Transactional email (server/utils/email.ts). Empty key = no-op, so the
     // template runs without a Resend account.
