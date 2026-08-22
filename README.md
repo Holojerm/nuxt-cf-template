@@ -146,7 +146,9 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
 1. Select (or create) the Worker — its name **must match** `name` in `wrangler.toml`.
 2. Go to **Settings → Build → Connect** and pick this repository.
 3. Configure the build:
-   - **Build command**: `bun run ci` (lint → design:check → brand:check → seo:check → typecheck → test → a11y → build)
+   - **Build command**: `bun run ci` (lint → design:check → brand:check → seo:check → typecheck → test → build)
+     The browser suites are deliberately absent — Workers Builds cannot launch Chromium, so
+     `.github/workflows/browser-suites.yml` runs them instead. See CLAUDE.md › Gotchas.
    - **Deploy command**: `bunx wrangler --cwd .output deploy`
    - **Preview deploy command**: `bunx wrangler --cwd .output versions upload`
 4. Under **Build Variables and Secrets**, add `NUXT_SESSION_PASSWORD` (mark it secret).
@@ -212,7 +214,9 @@ bun format            # Format with oxfmt
 bun typecheck         # TypeScript type checking
 bun run brand:generate # Rebuild favicon, app icon, and og.png from the brand mark
 bun run brand:check   # Fail if those files no longer match the mark (part of ci)
-bun run ci            # Lint + design/brand/seo gates + typecheck + test + browser suites (a11y + CSP + E2E) + build — Workers Builds runs this
+bun run ci            # Lint + design/brand/seo gates + typecheck + test + build — Workers Builds runs this
+bun run ci:browser    # playwright:install + test:a11y (a11y + CSP + E2E) — GitHub Actions runs this,
+                      # because Workers Builds has no Chromium libraries. See CLAUDE.md › Gotchas.
 bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1 (via wrangler)
 bun db:migrate:remote # Apply migrations to remote/prod D1
@@ -338,7 +342,7 @@ sharing the one dev server the other two boot — `bun run test:a11y` runs all t
 
 The Cloudflare preset has to be pinned in `nuxt.config.ts`; the `@nuxthub/core` module does **not** auto-detect it for `nuxt build` (it only auto-detected in the legacy `nuxthub deploy` command, which Cloudflare sunset Feb 2026).
 
-Workers Builds runs the same two steps in CI — `bun run ci` covers the build (plus lint, the design-token and SEO gates, typecheck, unit tests, and the axe accessibility suite), and the deploy command is the same `wrangler --cwd .output deploy`. Builds run inside your Cloudflare account, so CI needs no API token.
+Workers Builds runs the same two steps in CI — `bun run ci` covers the build (plus lint, the design-token and SEO gates, typecheck and the unit tests), and the deploy command is the same `wrangler --cwd .output deploy`. Builds run inside your Cloudflare account, so CI needs no API token. The axe, CSP and E2E suites are **not** in `bun run ci`: that image has no Chromium system libraries and is non-root, so they run in GitHub Actions instead (`.github/workflows/browser-suites.yml`).
 
 ### `wrangler.toml` is an input, not the deployed config
 
