@@ -1,5 +1,5 @@
 // Mint a short-lived, single-use connect code for the signed-in user. The MCP
-// worker's /authorize page exchanges it for an OAuth grant (see mcp/README.md).
+// worker's /authorize page exchanges it for an OAuth grant (see mcp/src/authorize.ts).
 // Auth comes from the global /api/* middleware; only the code's SHA-256 hash
 // is stored, so a DB leak doesn't leak live codes.
 

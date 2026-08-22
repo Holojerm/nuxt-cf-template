@@ -384,7 +384,7 @@ export type AuditMetadata = Record<string, string | number | boolean | null>
 //   2. Not every actor is a user row. System actions record a sentinel id with
 //      `actor_type = 'system'`; an FK would make the most important class of
 //      automated action unrecordable.
-//   3. The write must never fail. Same reasoning as `feedback.user_id` below:
+//   3. The write must never fail. Same reasoning as `feedback.user_id` above:
 //      an action that happened but went unrecorded is strictly worse than an
 //      orphaned row, and a constraint failure here would 500 the privileged
 //      operation itself.

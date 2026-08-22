@@ -1,7 +1,7 @@
 // Public-page membership, declared on the page it describes.
 //
-// The alternative — hardcoded path lists inside server/routes/sitemap.xml.ts
-// and server/routes/llms.txt.ts — is two more places to remember. They get
+// The alternative — hardcoded path lists inside server/routes/sitemap.xml.get.ts
+// and server/routes/llms.txt.get.ts — is two more places to remember. They get
 // forgotten: someone adds /changelog, ships it, and it is simply never in
 // either file, with nothing failing.
 //

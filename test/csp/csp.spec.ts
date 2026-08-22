@@ -64,7 +64,7 @@ const ROUTES = ['/', '/pricing', '/login', `/auth/verify#token=${DUMMY_TOKEN}`]
  * Tolerating it was the wrong end to fix. The noise landed in every PostHog
  * session replay, where a benign refusal is indistinguishable from a real one —
  * so the first genuine CSP failure this app ever had would be the one nobody
- * looked at. app/plugins/zod-jitless.client.ts now sets `z.config({ jitless:
+ * looked at. app/plugins/00.zod-jitless.client.ts now sets `z.config({ jitless:
  * true })`, which is zod's own switch for exactly this case, and the probe no
  * longer happens.
  *
