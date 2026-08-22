@@ -34,6 +34,7 @@ import type { APIRequestContext, APIResponse, BrowserContext, Page } from '@play
 
 import { playwrightPort } from '../../scripts/worktree-port'
 import { toHex } from '../../server/utils/hash'
+import { recordConsole } from '../lib/console'
 import { PADDLE_TEST_WEBHOOK_SECRET } from './webhook-secret'
 
 export const DAY_MS = 24 * 60 * 60 * 1000
@@ -86,7 +87,19 @@ async function hmacSha256Hex(secret: string, message: string): Promise<string> {
   return toHex(await crypto.subtle.sign('HMAC', key, encoder.encode(message)))
 }
 
-/** The `Paddle-Signature` header value, built the way server/utils/paddle.ts verifies it. */
+/**
+ * The `Paddle-Signature` header value, built the way server/utils/paddle.ts
+ * verifies it.
+ *
+ * ── Timing contract ─────────────────────────────────────────────────────────
+ * `ts` is stamped from `Date.now()` the instant this is called, and the
+ * server checks it against a 5-SECOND window (`toleranceSeconds` in
+ * server/utils/paddle.ts — production's value; not touched here). Call this
+ * as the LAST step before `apiRequest.post(...)`, with the request body
+ * already fully built — never earlier, never cached and reused. `sendPaddleEvent`
+ * below is the only real caller and does exactly that; see globalSetup.ts for
+ * the other half of keeping this window from being eaten by a cold compile.
+ */
 export async function signPaddleWebhook(
   rawBody: string,
   secret: string = PADDLE_TEST_WEBHOOK_SECRET,
@@ -174,24 +187,10 @@ export async function expectWebhookAccepted(response: APIResponse): Promise<void
 }
 
 // ─── Console / CSP violation watcher ─────────────────────────────────────────
-// Same technique as test/csp/csp.spec.ts's `recordViolations`: an init script
-// installed before any of the page's own scripts run, because those are
-// precisely the ones most likely to trip a violation. That suite only ever
-// looks at signed-out routes; this is the signed-in half — /dashboard and
-// /account never got a CSP/console sweep until now, and it found something
-// real on its first run — see KNOWN_HYDRATION_MISMATCH below.
-
-interface CspViolation {
-  directive: string
-  blockedURI: string
-  sourceFile: string
-}
-
-declare global {
-  interface Window {
-    __e2eCspViolations?: CspViolation[]
-  }
-}
+// Built on the shared recorder in test/lib/console.ts (also used by
+// test/csp/csp.spec.ts, which only ever looks at signed-out routes) — this
+// file owns the signed-in policy: every console error is fatal, with one
+// narrow, counted, documented exception below.
 
 /**
  * A pre-existing bug this suite surfaced, not a fixture artifact.
@@ -216,12 +215,16 @@ declare global {
  * a gated redirect, and never on a spec where access is actually granted.
  *
  * This suite's boundary is test/e2e/**, not app/**, so the fix (forward the
- * request's cookie in subscription.ts, the same gap likely also affects
- * app/middleware/auth.ts's own SSR checks if it ever grows a $fetch) belongs
- * in a follow-up, not here — see the final report for the flagged task.
- * Filtering ONLY this exact string, rather than every console error, is what
- * keeps this a real regression gate: a NEW console error still fails the
- * suite.
+ * request's cookie in subscription.ts — a separate session is on it) belongs
+ * in a follow-up, not here.
+ *
+ * The tolerance is PER SPEC and EXACT, not a blanket "ignore this string
+ * everywhere": only the call sites that genuinely drive a gated redirect
+ * pass `expectedHydrationMismatches`, asserted as an exact count, so a NEW
+ * mismatch — on /dashboard, on /account, or one extra on a call site that
+ * already expects some — still fails. Once the subscription.ts fix lands,
+ * every call site's expected count goes to 0 and this constant, the option,
+ * and this comment can all come out.
  */
 const KNOWN_HYDRATION_MISMATCH = 'Hydration completed but contains mismatches.'
 
@@ -230,51 +233,54 @@ export interface ViolationWatcher {
   assertClean(): Promise<void>
 }
 
-/** Call once per page, before the first navigation — see the class comment above. */
-export function watchForViolations(page: Page): ViolationWatcher {
-  const consoleErrors: string[] = []
-  const pageErrors: string[] = []
+export interface WatchForViolationsOptions {
+  /**
+   * How many KNOWN_HYDRATION_MISMATCH lines this test's flow is expected to
+   * log. Defaults to 0 — leave it unset unless this specific test drives a
+   * gated redirect through the bug documented above.
+   */
+  expectedHydrationMismatches?: number
+}
 
-  page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text())
-  })
-  page.on('pageerror', (error) => {
-    pageErrors.push(String(error))
-  })
-
-  const installed = page.addInitScript(() => {
-    const store: CspViolation[] = []
-    window.__e2eCspViolations = store
-    document.addEventListener('securitypolicyviolation', (event) => {
-      store.push({
-        directive: event.effectiveDirective || event.violatedDirective,
-        blockedURI: event.blockedURI,
-        sourceFile: `${event.sourceFile ?? '?'}:${event.lineNumber ?? 0}`,
-      })
-    })
-  })
+/** Call once per page, before the first navigation. */
+export function watchForViolations(
+  page: Page,
+  options: WatchForViolationsOptions = {},
+): ViolationWatcher {
+  const expectedHydrationMismatches = options.expectedHydrationMismatches ?? 0
+  const recorder = recordConsole(page)
 
   return {
     async assertClean() {
-      await installed
-      const violations = await page.evaluate(() => window.__e2eCspViolations ?? [])
+      const violations = await recorder.cspViolations()
       expect(
         violations.map((v) => `${v.directive} blocked ${v.blockedURI} (${v.sourceFile})`),
         `CSP violations on a signed-in page`,
       ).toEqual([])
 
-      const knownCount = consoleErrors.filter((message) => message === KNOWN_HYDRATION_MISMATCH).length
-      if (knownCount > 0) {
-        test.info().annotations.push({
-          type: 'warning',
-          description: `${knownCount}x known pre-existing hydration mismatch on a gated redirect — see KNOWN_HYDRATION_MISMATCH in test/e2e/fixtures.ts.`,
-        })
-      }
+      const consoleErrors = recorder.messages
+        .filter((message) => message.type() === 'error')
+        .map((message) => message.text())
+      const hydrationMismatchCount = consoleErrors.filter(
+        (text) => text === KNOWN_HYDRATION_MISMATCH,
+      ).length
       const unexpectedConsoleErrors = consoleErrors.filter(
-        (message) => message !== KNOWN_HYDRATION_MISMATCH,
+        (text) => text !== KNOWN_HYDRATION_MISMATCH,
       )
+
+      // Exact, not "at most" — a call site that stops redirecting (the fix
+      // landed) or starts redirecting twice is exactly as informative as a
+      // brand-new console error, and both deserve the same red build.
+      expect(
+        hydrationMismatchCount,
+        `expected exactly ${expectedHydrationMismatches} known hydration mismatch(es) ` +
+          `(app/middleware/subscription.ts's SSR cookie bug — see KNOWN_HYDRATION_MISMATCH ` +
+          `in test/e2e/fixtures.ts), got ${hydrationMismatchCount}`,
+      ).toBe(expectedHydrationMismatches)
       expect(unexpectedConsoleErrors, 'console errors on a signed-in page').toEqual([])
-      expect(pageErrors, 'uncaught page errors on a signed-in page').toEqual([])
+      expect(recorder.pageErrors.map(String), 'uncaught page errors on a signed-in page').toEqual(
+        [],
+      )
     },
   }
 }
@@ -360,6 +366,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
   sendPaddleEvent: async ({ apiRequest }, use) => {
     await use(async (event) => {
+      // Build the payload, THEN stamp+sign, THEN post — no step in between
+      // that could let the clock drift past the server's 5s tolerance before
+      // the request actually leaves. See signPaddleWebhook's timing contract.
       const body = JSON.stringify(event)
       const signature = await signPaddleWebhook(body)
       return apiRequest.post('/paddle/webhook', {

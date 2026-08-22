@@ -11,13 +11,12 @@
 // the flows below it would never really run.
 //
 // No `page` needed, so this doesn't touch the dev server at all — it still
-// waits on the `warmup` dependency because that's a project-level rule, not a
-// per-test one.
+// waits on `globalSetup` because that runs once for the whole config, not
+// per project.
 
 import { verifyPaddleSignature } from '../../server/utils/paddle'
 import { expect, signPaddleWebhook, test } from './fixtures'
-
-const SECRET = 'e2e-test-secret'
+import { PADDLE_TEST_WEBHOOK_SECRET as SECRET } from './webhook-secret'
 
 test('a webhook signed by the fixture verifies against the real Paddle check', async () => {
   const body = JSON.stringify({

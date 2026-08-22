@@ -55,8 +55,16 @@ export default defineConfig({
   // to give. `globalSetup` absorbs the cold build once instead.
   fullyParallel: true,
   // Runs after `webServer` (Playwright starts that as a plugin, and plugin
-  // setup precedes globalSetup), so the server is reachable by then.
-  globalSetup: './test/warmup/global-setup.ts',
+  // setup precedes globalSetup), so the server is reachable by then. Two
+  // independent warm-ups, run in order: the client bundle (a real page,
+  // test/warmup/) first, then the two API routes test/e2e/fixtures.ts races
+  // a signature clock against (test/e2e/global-setup.ts) — unrelated
+  // concerns, same array rather than one file doing two things.
+  globalSetup: ['./test/warmup/global-setup.ts', './test/e2e/global-setup.ts'],
+  // Pairs with the second globalSetup entry above: sweeps the e2e-* rows
+  // that entry (and every E2E spec) writes to the local dev DB, so `bun run
+  // ci` doesn't grow .data/db/sqlite.db forever. See that file for why.
+  globalTeardown: './test/e2e/global-teardown.ts',
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
 

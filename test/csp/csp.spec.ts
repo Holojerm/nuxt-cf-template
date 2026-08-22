@@ -30,6 +30,8 @@
 
 import { expect, test } from '@playwright/test'
 
+import { recordConsole } from '../lib/console'
+
 /**
  * Landing, the checkout entry point, and the auth surface — both halves of the
  * latter, since /auth/verify is the only page that fetches on mount and
@@ -48,18 +50,6 @@ import { expect, test } from '@playwright/test'
 const DUMMY_TOKEN = 'A'.repeat(43)
 
 const ROUTES = ['/', '/pricing', '/login', `/auth/verify#token=${DUMMY_TOKEN}`]
-
-interface CspViolation {
-  directive: string
-  blockedURI: string
-  sourceFile: string
-}
-
-declare global {
-  interface Window {
-    __cspViolations?: CspViolation[]
-  }
-}
 
 /**
  * ── `eval` refusals are fatal, and used not to be ────────────────────────────
@@ -86,43 +76,15 @@ declare global {
  * assertion at the bottom of this file exists to prevent.
  */
 
-/**
- * Installs a violation recorder at document_start.
- *
- * It has to be `addInitScript` rather than a listener attached after `goto`:
- * the framework's own inline scripts run before any assertion could attach one,
- * and those are precisely the scripts most likely to be blocked. Playwright
- * injects this through CDP, so it is not itself subject to the page's CSP.
- */
-async function recordViolations(page: import('@playwright/test').Page): Promise<void> {
-  await page.addInitScript(() => {
-    const store: CspViolation[] = []
-    window.__cspViolations = store
-    document.addEventListener('securitypolicyviolation', (event) => {
-      store.push({
-        directive: event.effectiveDirective || event.violatedDirective,
-        blockedURI: event.blockedURI,
-        sourceFile: `${event.sourceFile ?? '?'}:${event.lineNumber ?? 0}`,
-      })
-    })
-  })
-}
+// The recorder itself — addInitScript registration, the securitypolicyviolation
+// listener, the console/pageerror listeners — lives in test/lib/console.ts now,
+// shared with test/e2e/fixtures.ts. `recordConsole` does the recording; this
+// file still owns what counts as a failure here.
 
 for (const route of ROUTES) {
   test(`${route} renders with no CSP violation`, async ({ page }) => {
-    await recordViolations(page)
-
-    // Some blocks (a refused worker, a refused eval) surface only on the
-    // console, so both channels are watched and both are fatal.
-    const cspConsoleErrors: string[] = []
-    page.on('console', (message) => {
-      const text = message.text()
-      // No exception for `unsafe-eval` messages any more — the zod probe that
-      // produced the only benign ones is disabled at source. See the note above.
-      if (message.type() === 'error' && /content security policy/i.test(text)) {
-        cspConsoleErrors.push(text)
-      }
-    })
+    const recorder = recordConsole(page)
+    await recorder.ready
 
     await page.goto(route)
     // Hydration and lazily-imported chunks load after first paint, and a chunk
@@ -130,7 +92,15 @@ for (const route of ROUTES) {
     await page.waitForLoadState('networkidle')
 
     // Every violation counts, eval included — nothing is filtered out here.
-    const blocking = await page.evaluate(() => window.__cspViolations ?? [])
+    const blocking = await recorder.cspViolations()
+
+    // Some blocks (a refused worker, a refused eval) surface only on the
+    // console, so both channels are watched and both are fatal. No exception
+    // for `unsafe-eval` messages any more — the zod probe that produced the
+    // only benign ones is disabled at source. See the note above.
+    const cspConsoleErrors = recorder.messages
+      .filter((m) => m.type() === 'error' && /content security policy/i.test(m.text()))
+      .map((m) => m.text())
 
     expect(
       blocking.map((v) => `${v.directive} blocked ${v.blockedURI} (${v.sourceFile})`),
@@ -226,7 +196,8 @@ test.describe('the policy still permits what the vendors need', () => {
   })
 
   test('script-src does not block Paddle.js', async ({ page }) => {
-    await recordViolations(page)
+    const recorder = recordConsole(page)
+    await recorder.ready
     await page.goto('/')
 
     // Distinguishing a CSP refusal from a flaky CDN matters: only the first is
