@@ -27,7 +27,10 @@ export const LOGO_COMPONENT = 'app/components/Brand/Logo.vue'
 export const GENERATED_ASSETS = [
   'public/favicon.svg',
   'public/apple-touch-icon.png',
+  'public/icon-192.png',
+  'public/icon-512.png',
   'public/og.png',
+  'shared/utils/brand-colors.generated.ts',
 ] as const
 
 /**
@@ -35,8 +38,19 @@ export const GENERATED_ASSETS = [
  * icon's coverage, the favicon's corner radius. The fingerprint includes it, so
  * a template change re-flags every fork's assets as stale, which is the point:
  * the inputs didn't move, but the output would.
+ *
+ * Bumped to '2' when public/icon-192.png, public/icon-512.png and
+ * shared/utils/brand-colors.generated.ts joined the pipeline (Finding 14: web
+ * app manifest).
+ *
+ * Bumped to '3' when MASKABLE_COVERAGE moved from 0.8 to 0.56 (Wave 4.4 fix
+ * round, finding 1): 0.8 bounded the *diameter* Android's maskable safe zone
+ * guarantees, not the smaller square that actually fits inside it, so a fork
+ * that had already generated icons under the old value needs this bump to
+ * get flagged stale and re-render them — nothing in `fingerprintOf()` below
+ * hashes MASKABLE_COVERAGE itself, only this string.
  */
-export const GENERATOR_VERSION = '1'
+export const GENERATOR_VERSION = '3'
 
 export interface BrandColor {
   /** The `--color-*` token named in DESIGN.md › Brand mark. */

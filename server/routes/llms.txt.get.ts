@@ -10,11 +10,18 @@
 // the alternative is letting a model infer the shape of the product from
 // whichever marketing page it happened to land on.
 //
+// Blog posts are appended from the content collection, for the same reason they
+// are appended to sitemap.xml: they have no route-table entry to collect. They
+// are also the part of this file with the most to offer an answer engine — a
+// marketing page states what the product is, a post explains how it works, and
+// the second is what gets quoted.
+//
 // Suppressed on preview deploys for the same reason robots.txt is.
 
-import { buildLlmsTxt } from '../utils/seo'
+import { tryListBlogPosts } from '../utils/blog'
+import { llmsTxtResponse } from '../utils/seo'
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
 
   setResponseHeader(event, 'Content-Type', 'text/plain; charset=utf-8')
@@ -24,13 +31,25 @@ export default defineEventHandler((event) => {
     return 'Not found\n'
   }
 
-  setResponseHeader(event, 'Cache-Control', 'public, max-age=3600')
-  return buildLlmsTxt({
+  const { posts, ok } = await tryListBlogPosts(event)
+
+  const { body, cacheControl } = llmsTxtResponse({
     appName: config.public.appName,
     appUrl: config.public.appUrl,
     description: config.public.appDescription,
     supportEmail: config.public.supportEmail,
     legalEntity: config.public.legalEntity,
     pages: config.publicPages ?? [],
+    posts: posts.map((post) => ({
+      path: post.path,
+      title: post.title,
+      description: post.description,
+      date: post.date,
+    })),
+    // A failed post query must not be cached as if it were the truth.
+    complete: ok,
   })
+
+  setResponseHeader(event, 'Cache-Control', cacheControl)
+  return body
 })

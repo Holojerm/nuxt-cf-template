@@ -51,6 +51,70 @@ export default defineEventHandler(async (event) => {
       : null,
   })
 
+  // ── The referrer's half of the referral loop ───────────────────────────────
+  // This handler is the closest the app gets to observing money arrive, which
+  // is why the referrer is paid from here and not at signup: a reward triggered
+  // by account creation costs an attacker one fresh mailbox.
+  //
+  // Called on every qualifying event rather than on a detected "first" purchase
+  // — the reward's ref is derived from the referee's id, so the unique index
+  // makes a redelivery a repair rather than a second payout, and a customer's
+  // second pass pays nothing. Same contract as notifyBillingOutcome above:
+  // awaited so the isolate cannot be torn down mid-write, and it never throws,
+  // because a 500 here makes Paddle replay a money event.
+  //
+  // ── What "first paid" actually means, and what it does not ─────────────────
+  // For a pass, `kind: 'pass'` IS a `transaction.completed` — money landed.
+  //
+  // For a subscription it is a STATUS TRANSITION, not a payment: the first time
+  // this app sees the subscription (`previousStatus === null`) or the moment a
+  // trial converts. Those two are the only transitions that can be a first
+  // payment. Everything else is excluded on purpose — `past_due → active` is a
+  // dunning recovery on a subscription that already paid, `paused → active` is
+  // a resume, and `trialing` itself is not money.
+  //
+  // It is deliberately NOT keyed on `transaction.completed` carrying a
+  // `subscription_id`, which would be the truer signal. applyPaddleEvent
+  // classifies that as `ignored: 'subscription_transaction'` and returns no
+  // userId, so using it would mean widening that contract AND relying on Paddle
+  // to echo the checkout's `custom_data` onto subscription transactions — which
+  // is not something this template can verify. Getting that wrong pays no
+  // subscription referrer at all, silently, which is worse than the residue
+  // below.
+  //
+  // The residue: a subscription created `active` under manual collection before
+  // its invoice is paid, or one carrying a 100% discount, pays a referrer for
+  // a sale worth nothing. Neither is distinguishable from a status, and neither
+  // survives contact with the clawback — an unpaid invoice ends in a
+  // cancellation and a discounted one that is refunded revokes below.
+  const firstSubscriptionPayment =
+    outcome.kind === 'subscription' &&
+    outcome.status === 'active' &&
+    (outcome.previousStatus === null || outcome.previousStatus === 'trialing')
+
+  if (outcome.kind === 'pass' || firstSubscriptionPayment) {
+    // `data.id` is the ref of the entitlement row this purchase created — the
+    // transaction id for a pass, the subscription id for a subscription — and
+    // therefore exactly what a later adjustment will match on. Stored on the
+    // reward so a refund of THIS purchase can find it. Without it the reward
+    // is unreachable by any clawback.
+    await rewardReferrerForFirstPurchase(db, outcome.userId, {
+      earnedFromRef: paddleEvent.data.id,
+    })
+  }
+
+  // ── …and the paperwork for the clawback ────────────────────────────────────
+  // The clawback ITSELF is not here any more. It happens inside
+  // revokeForAdjustment (server/utils/entitlements.ts), keyed on the purchase
+  // via `earned_from_ref`, so every caller of that function gets it rather than
+  // just this route — including the reversal that puts a reward back when a
+  // chargeback is won. All that is left here is recording what it did, which is
+  // deliberately the caller's job so the money path cannot fail on an audit
+  // write. Never throws.
+  if (outcome.kind === 'adjustment') {
+    await recordReferralCascade(db, outcome.result)
+  }
+
   if (outcome.kind === 'subscription') {
     await captureServerEvent({
       distinctId: outcome.userId,

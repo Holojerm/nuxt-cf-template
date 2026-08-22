@@ -11,6 +11,29 @@
 // It is also the page answer engines care most about, so it carries the Offer
 // nodes and the FAQPage — both built from the same arrays the template renders
 // (app/utils/plans.ts, app/utils/faq.ts), never from a second copy of the copy.
+//
+// ── The `pricing-layout` experiment ──────────────────────────────────────────
+// `pass-first` leads with the one-time pass instead of the yearly subscription,
+// on the consumer hypothesis that a first-time visitor buys a thing more
+// readily than a commitment. Three properties keep it from being a mess:
+//
+//   1. It changes EMPHASIS ONLY — which card is featured — and never order.
+//      An earlier version reordered the grid with CSS `order`, and that had to
+//      go: `order` moves things visually and leaves the DOM alone, so tab order
+//      and screen-reader order kept saying monthly-yearly-pass while the screen
+//      said pass-first. That is WCAG 2.4.3 (Focus Order) failing by
+//      construction, on the page where somebody is about to spend money, and
+//      axe cannot see it because the a11y suite only ever renders the control
+//      arm. Emphasis is a narrower experiment and an honest one; if a future
+//      arm really needs a different order, reorder `PLANS` on the server so the
+//      DOM and the pixels agree.
+//   2. Exactly one plan is featured in either variant (DESIGN.md › Component
+//      behavior: one primary button per view). The badge follows the promotion
+//      rather than sitting on `plan.featured`, which is the control's answer.
+//   3. The Offer JSON-LD is built from PLANS, not from the rendered order, so
+//      the structured data an answer engine quotes is identical for everyone.
+//      A page whose machine-readable prices depend on a client-side flag is a
+//      page that publishes two different price lists.
 
 definePageMeta({
   publicPage: {
@@ -43,6 +66,33 @@ watch(loggedIn, (value) => {
 
 const pending = ref<string | null>(null)
 
+/**
+ * Every arm this page knows how to render.
+ *
+ * Passed to useFlagVariant so an arm added in the PostHog dashboard but not
+ * here clamps to `control` rather than arriving as an unknown string — which
+ * would render the control layout anyway (nothing matches 'pass-first') while
+ * REPORTING the unknown name on `checkout_started`, so the analyst would read a
+ * variant that was never shown to anybody. Clamping makes what renders and what
+ * is recorded the same fact.
+ */
+const PRICING_LAYOUT_VARIANTS = ['control', 'pass-first'] as const
+
+// Resolves in onMounted, so it is 'control' during SSR and for the first client
+// frame — which is why the arm may only change emphasis and copy, never
+// structure or order.
+const { variant: pricingLayout } = useFlagVariant(
+  'pricing-layout',
+  'control',
+  PRICING_LAYOUT_VARIANTS,
+)
+const passFirst = computed(() => pricingLayout.value === 'pass-first')
+
+/** The control's promoted plan comes from the data, not from a second literal. */
+const CONTROL_FEATURED_ID = PLANS.find((plan) => plan.featured)?.id ?? null
+
+const featuredId = computed(() => (passFirst.value ? 'pass' : CONTROL_FEATURED_ID))
+
 async function choose(plan: (typeof plans.value)[number]) {
   if (!loggedIn.value) {
     return navigateTo({ path: '/login', query: { redirect: '/pricing' } })
@@ -50,7 +100,20 @@ async function choose(plan: (typeof plans.value)[number]) {
   if (!plan.purchasable) return
 
   pending.value = plan.id
-  const opened = await openCheckout(plan.priceId, 'default')
+  // The variant rides on `checkout_started` — the funnel's denominator — so the
+  // experiment is measurable as "which layout sold which plan" rather than as
+  // two unrelated event streams.
+  const opened = await openCheckout(plan.priceId, 'default', {
+    pricing_variant: pricingLayout.value,
+    plan_id: plan.id,
+    // The arm applies identically at every width now that it is emphasis
+    // rather than order, so this is not an applicability flag — it is for
+    // slicing BEHAVIOUR. A featured card is a very different amount of screen
+    // on a phone (where the three plans are a vertical stack somebody scrolls)
+    // than on a desktop grid, and an arm that wins overall while losing on
+    // mobile is a result worth being able to see.
+    viewport: window.innerWidth < 768 ? 'narrow' : 'wide',
+  })
   pending.value = null
 
   if (!opened) {
@@ -124,13 +187,17 @@ useSeo({
       <UCard
         v-for="plan in plans"
         :key="plan.id"
-        :class="plan.featured ? 'ring-2 ring-primary' : ''"
+        :class="plan.id === featuredId ? 'ring-2 ring-primary' : ''"
       >
         <div class="flex h-full flex-col gap-6">
           <div>
             <div class="flex items-center gap-2">
               <h2 class="text-xl text-highlighted">{{ plan.name }}</h2>
-              <UBadge v-if="plan.featured" color="primary" variant="solid"> Best value </UBadge>
+              <!-- Solid, never subtle: clay-600 on a clay tint is 4.04:1 and
+                   fails AA (DESIGN.md › Color). -->
+              <UBadge v-if="plan.id === featuredId" color="primary" variant="solid">
+                {{ passFirst ? 'Start here' : 'Best value' }}
+              </UBadge>
             </div>
             <p class="mt-3 flex items-baseline gap-2">
               <span class="font-display text-3xl text-highlighted">{{ plan.price }}</span>
@@ -150,8 +217,8 @@ useSeo({
             <UButton
               block
               size="lg"
-              :color="plan.featured ? 'primary' : 'neutral'"
-              :variant="plan.featured ? 'solid' : 'outline'"
+              :color="plan.id === featuredId ? 'primary' : 'neutral'"
+              :variant="plan.id === featuredId ? 'solid' : 'outline'"
               :disabled="!plan.purchasable"
               :loading="pending === plan.id"
               @click="choose(plan)"

@@ -33,6 +33,17 @@ export default defineNuxtPlugin((nuxtApp) => {
 
     person_profiles: 'identified_only',
 
+    // Nothing secret may reach the analytics warehouse. Two flows in this app
+    // put a single-use credential in a URL (the magic-link confirmation page
+    // and the one-click unsubscribe link), and PostHog reads the current URL
+    // from three different places — autocapture's `location.href`, session
+    // replay's rrweb Meta event, and recorded network requests. Each needs its
+    // own switch; `sanitize_properties` covers only the first, because
+    // posthog-js returns from `calculateEventProperties` before the hook runs
+    // for `$snapshot`. All three live in one object so they cannot be
+    // half-applied. See app/utils/analytics-privacy.ts.
+    ...ANALYTICS_PRIVACY_OPTIONS,
+
     // Manual pageview capture below — Nuxt's SPA router doesn't emit the
     // navigation events posthog-js listens for by default.
     capture_pageview: false,
@@ -51,12 +62,10 @@ export default defineNuxtPlugin((nuxtApp) => {
     // *asking* half of feedback; app/components/Feedback/FeedbackWidget.vue →
     // POST /api/feedback is the *telling* half, and lands in your own D1.
 
-    session_recording: {
-      maskAllInputs: true,
-      // Add `data-private` to any element whose text shouldn't be recorded.
-      maskTextSelector: '[data-private]',
-      recordCrossOriginIframes: false,
-    },
+    // `session_recording` is set by ANALYTICS_PRIVACY_OPTIONS above — masking
+    // rules and the network-request scrubber belong together with the rest of
+    // the privacy config, not split across two objects where one can be edited
+    // without the other.
     enable_recording_console_log: true, // include console.* in replays
 
     loaded: (ph) => {
@@ -68,7 +77,13 @@ export default defineNuxtPlugin((nuxtApp) => {
   const router = useRouter()
   router.afterEach((to) => {
     nextTick(() => {
-      posthog.capture('$pageview', { $current_url: to.fullPath })
+      // Scrubbed, not truncated. `to.path` alone was over-correction: it threw
+      // away the query string on EVERY pageview, so `/pricing?plan=yearly` and
+      // a `?ref=` landing became indistinguishable from a bare visit and the
+      // attribution this app deliberately records first-touch for was
+      // unanswerable in PostHog. scrubUrl keeps the params that are analytics
+      // and redacts the ones that are credentials.
+      posthog.capture('$pageview', { $current_url: scrubUrl(to.fullPath) })
     })
   })
 

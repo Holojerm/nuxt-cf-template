@@ -1,15 +1,34 @@
-// Playwright config — exists solely to run the axe accessibility suite in
-// `test/a11y/`. Application logic is tested by Vitest in the `workerd` pool
-// (see vitest.config.ts); those two runners don't overlap, which is why the
-// specs here are named *.spec.ts while Vitest owns *.test.ts.
+// Playwright config — the suites that need a real browser. Application logic is
+// tested by Vitest in the `workerd` pool (see vitest.config.ts); those two
+// runners don't overlap, which is why the specs here are named *.spec.ts while
+// Vitest owns *.test.ts (its `include` globs only `*.test.ts`).
 //
-// axe needs a real browser, not jsdom: the rules that matter most here —
-// color-contrast above all — are computed from resolved styles and actual
-// layout, and jsdom reports them as "incomplete" rather than pass or fail.
+// Three suites live here, and all of them are here for the same reason — the
+// thing they check does not exist until a browser renders the page:
+//
+//   test/a11y/  axe. The rules that matter most — color-contrast above all —
+//               are computed from resolved styles and actual layout, and jsdom
+//               reports them as "incomplete" rather than pass or fail.
+//   test/csp/   the Content-Security-Policy in nuxt.config.ts. A CSP only
+//               exists as browser behaviour; nothing short of a real engine can
+//               tell you whether the policy you shipped blocks your own app.
+//
+// They are separate `projects` rather than one directory so each keeps its own
+// scope and shows up under its own name in the report — but they deliberately
+// share the single `webServer` below, because booting one dev server twice is
+// the slowest thing in `bun run ci`.
+//
+//   test/e2e/    the three flows the product exists for, end to end: sign in
+//               → gated page, buy → access, cancel → lose access. Unlike the
+//               two suites above, it writes real state — a signed-in session,
+//               real entitlement rows via signed Paddle webhooks — so it needs
+//               its own webhook secret on the shared server (see below) and a
+//               real user-per-scenario rather than a fixed route list.
 
 import { defineConfig, devices } from '@playwright/test'
 
 import { playwrightPort } from './scripts/worktree-port'
+import { PADDLE_TEST_WEBHOOK_SECRET } from './test/e2e/webhook-secret'
 
 // Derived from the checkout path rather than fixed at 3000, so parallel git
 // worktrees each get their own server. See scripts/worktree-port.ts for why a
@@ -21,15 +40,31 @@ const HOST = `http://localhost:${PORT}`
 // way to open the app while a run is in flight is to recompute the hash.
 // Playwright re-imports this config in every worker process, so print only from
 // the runner — otherwise the line repeats once per worker in the CI log.
-if (process.env.TEST_WORKER_INDEX === undefined) console.info(`a11y suite → ${HOST}`)
+if (process.env.TEST_WORKER_INDEX === undefined) console.info(`browser suites → ${HOST}`)
 
 export default defineConfig({
-  testDir: './test/a11y',
+  testDir: './test',
   testMatch: '**/*.spec.ts',
   // A failing contrast ratio is deterministic — a retry only hides flake in the
   // harness, and there is nothing here worth retrying.
   retries: 0,
+  // Deliberately NOT raising the 30s default. The first navigation of a run
+  // does blow through it on a cold Vite cache, but paying for that with a
+  // bigger budget everywhere makes a genuine hang cost three times as long in
+  // every one of eighteen tests, and blunts the one signal this timeout exists
+  // to give. `globalSetup` absorbs the cold build once instead.
   fullyParallel: true,
+  // Runs after `webServer` (Playwright starts that as a plugin, and plugin
+  // setup precedes globalSetup), so the server is reachable by then. Two
+  // independent warm-ups, run in order: the client bundle (a real page,
+  // test/warmup/) first, then the two API routes test/e2e/fixtures.ts races
+  // a signature clock against (test/e2e/global-setup.ts) — unrelated
+  // concerns, same array rather than one file doing two things.
+  globalSetup: ['./test/warmup/global-setup.ts', './test/e2e/global-setup.ts'],
+  // Pairs with the second globalSetup entry above: sweeps the e2e-* rows
+  // that entry (and every E2E spec) writes to the local dev DB, so `bun run
+  // ci` doesn't grow .data/db/sqlite.db forever. See that file for why.
+  globalTeardown: './test/e2e/global-teardown.ts',
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
 
@@ -40,7 +75,15 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
 
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  // No `dependencies` on any of these. Warming the dev server's first client
+  // build used to be a `warmup` project every other project depended on; it is
+  // `globalSetup` now, which happens once for the whole run and needs nothing
+  // declared per project — including by the next project someone adds.
+  projects: [
+    { name: 'a11y', testDir: './test/a11y', use: { ...devices['Desktop Chrome'] } },
+    { name: 'csp', testDir: './test/csp', use: { ...devices['Desktop Chrome'] } },
+    { name: 'e2e', testDir: './test/e2e', use: { ...devices['Desktop Chrome'] } },
+  ],
 
   webServer: {
     // The dev server rather than the built Worker: `wrangler dev` on .output
@@ -66,6 +109,17 @@ export default defineConfig({
     // NUXT_TYPECHECK=false keeps vue-tsc off the critical path; `bun run ci`
     // has already typechecked before this suite runs. NUXT_PORT is what makes
     // `nuxt dev` listen on the derived port instead of its own default 3000.
-    env: { NUXT_DEVTOOLS: 'false', NUXT_TYPECHECK: 'false', NUXT_PORT: String(PORT) },
+    // NUXT_PADDLE_WEBHOOK_SECRET only matters to the `e2e` project — a11y and
+    // csp never call the webhook — but it has to be set here, on the ONE
+    // server all three projects share, rather than per-project: Playwright
+    // has one `webServer` per config, not one per project. test/e2e/fixtures.ts
+    // signs every event with the same constant (see test/e2e/webhook-secret.ts
+    // for why it's imported rather than retyped).
+    env: {
+      NUXT_DEVTOOLS: 'false',
+      NUXT_TYPECHECK: 'false',
+      NUXT_PORT: String(PORT),
+      NUXT_PADDLE_WEBHOOK_SECRET: PADDLE_TEST_WEBHOOK_SECRET,
+    },
   },
 })

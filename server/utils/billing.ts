@@ -41,7 +41,8 @@ export async function requireSubscription(event: H3Event, productKey = 'default'
   return { user, entitlement }
 }
 
-/** Is this Paddle ref a one-time pass (`txn_…`) rather than a subscription? */
-export function isPass(paddleRef: string): boolean {
-  return paddleRef.startsWith('txn_')
-}
+// `isPass` used to live here. It moved to server/utils/paddle-refs.ts, along
+// with every other rule about what a ref prefix means, because four files were
+// reading that rule and this one is not a leaf — it reaches back into
+// entitlements.ts, which also needs the predicate. Nitro auto-imports the new
+// home Nitro-wide, so call sites are unchanged.

@@ -3,6 +3,8 @@
 // Auth comes from the global /api/* middleware; only the code's SHA-256 hash
 // is stored, so a DB leak doesn't leak live codes.
 
+import { sha256Hex } from '../../utils/hash'
+
 const CODE_TTL_SECONDS = 600 // 10 minutes
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789' // no 0/O/1/I/L lookalikes
 
@@ -13,13 +15,9 @@ function generateCode(): string {
 }
 
 export async function hashConnectCode(code: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(code.toUpperCase().replace(/[^A-Z0-9]/g, '')),
-  )
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
+  // Normalised before hashing so the dash and the casing a user types back are
+  // irrelevant. The digest itself is the shared one — see server/utils/hash.ts.
+  return sha256Hex(code.toUpperCase().replace(/[^A-Z0-9]/g, ''))
 }
 
 export default defineEventHandler(async (event) => {

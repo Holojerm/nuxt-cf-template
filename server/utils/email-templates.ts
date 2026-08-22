@@ -19,7 +19,7 @@ export interface EmailContent {
   text: string
 }
 
-interface LayoutOptions {
+export interface EmailLayoutOptions {
   heading: string
   /** Body paragraphs, plain sentences — no markup. */
   paragraphs: string[]
@@ -28,8 +28,14 @@ interface LayoutOptions {
   footnote?: string
 }
 
-/** Escape for interpolation into HTML — user names come from OAuth providers. */
-function escapeHtml(value: string): string {
+/**
+ * Escape for interpolation into HTML — user names come from OAuth providers.
+ *
+ * Exported as `escapeEmailHtml` rather than `escapeHtml`: Nitro auto-imports
+ * every name in server/utils into one namespace, and a bare `escapeHtml` there
+ * is the kind of name a second module will eventually also want.
+ */
+export function escapeEmailHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -37,43 +43,50 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;')
 }
 
-function layout(
+/**
+ * The one email chrome this app has: centered table, inline styles, hex colors,
+ * no web fonts, no external images. Exported because there were three
+ * hand-copied versions of this scaffold — here, in account-email.ts, and in
+ * auth-email-templates.ts — and three copies of a palette is three things to
+ * miss on the first rebrand. See the file header for why it looks like 2004.
+ */
+export function emailLayout(
   appName: string,
   appUrl: string,
-  opts: LayoutOptions,
+  opts: EmailLayoutOptions,
 ): { html: string; text: string } {
   const button = opts.action
     ? `<tr><td style="padding:8px 0 24px 0;">
-         <a href="${opts.action.url}" style="display:inline-block;background:#c74f2f;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:4px;font-weight:500;">${escapeHtml(opts.action.label)}</a>
+         <a href="${opts.action.url}" style="display:inline-block;background:#c74f2f;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:4px;font-weight:500;">${escapeEmailHtml(opts.action.label)}</a>
        </td></tr>`
     : ''
 
   const paragraphs = opts.paragraphs
     .map(
       (p) =>
-        `<tr><td style="padding:0 0 16px 0;font-size:16px;line-height:1.65;color:#292524;">${escapeHtml(p)}</td></tr>`,
+        `<tr><td style="padding:0 0 16px 0;font-size:16px;line-height:1.65;color:#292524;">${escapeEmailHtml(p)}</td></tr>`,
     )
     .join('')
 
   const footnote = opts.footnote
-    ? `<tr><td style="padding:24px 0 0 0;border-top:1px solid #e7e5e4;font-size:13px;line-height:1.5;color:#78716c;">${escapeHtml(opts.footnote)}</td></tr>`
+    ? `<tr><td style="padding:24px 0 0 0;border-top:1px solid #e7e5e4;font-size:13px;line-height:1.5;color:#78716c;">${escapeEmailHtml(opts.footnote)}</td></tr>`
     : ''
 
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>${escapeHtml(opts.heading)}</title></head>
+<title>${escapeEmailHtml(opts.heading)}</title></head>
 <body style="margin:0;padding:0;background:#fafaf9;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf9;padding:32px 16px;">
 <tr><td align="center">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e7e5e4;border-radius:4px;padding:32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
-    <tr><td style="padding:0 0 8px 0;font-size:13px;letter-spacing:0.04em;text-transform:uppercase;color:#78716c;">${escapeHtml(appName)}</td></tr>
-    <tr><td style="padding:0 0 20px 0;font-size:24px;line-height:1.3;color:#1c1917;">${escapeHtml(opts.heading)}</td></tr>
+    <tr><td style="padding:0 0 8px 0;font-size:13px;letter-spacing:0.04em;text-transform:uppercase;color:#78716c;">${escapeEmailHtml(appName)}</td></tr>
+    <tr><td style="padding:0 0 20px 0;font-size:24px;line-height:1.3;color:#1c1917;">${escapeEmailHtml(opts.heading)}</td></tr>
     ${paragraphs}
     ${button}
     ${footnote}
   </table>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;padding:16px 8px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
-    <tr><td style="font-size:12px;color:#a8a29e;"><a href="${appUrl}" style="color:#a8a29e;">${escapeHtml(appName)}</a></td></tr>
+    <tr><td style="font-size:12px;color:#a8a29e;"><a href="${appUrl}" style="color:#a8a29e;">${escapeEmailHtml(appName)}</a></td></tr>
   </table>
 </td></tr></table>
 </body></html>`
@@ -91,14 +104,14 @@ function layout(
   return { html, text }
 }
 
-interface Branding {
+export interface Branding {
   appName: string
   appUrl: string
 }
 
 /** First sign-in. Short on purpose — nobody reads a welcome tour. */
 export function welcomeEmail(brand: Branding, opts: { name: string }): EmailContent {
-  const body = layout(brand.appName, brand.appUrl, {
+  const body = emailLayout(brand.appName, brand.appUrl, {
     heading: `Welcome to ${brand.appName}`,
     paragraphs: [
       `Hi ${opts.name} — your account is ready.`,
@@ -120,7 +133,7 @@ export function purchaseEmail(
     ? opts.endsAt.toLocaleDateString('en-US', { dateStyle: 'long', timeZone: 'UTC' })
     : null
 
-  const body = layout(brand.appName, brand.appUrl, {
+  const body = emailLayout(brand.appName, brand.appUrl, {
     heading: isPassPurchase ? 'Your pass is active' : 'Your subscription is active',
     paragraphs: [
       `Thanks, ${opts.name}. Your access is live — nothing else to do.`,
@@ -142,7 +155,7 @@ export function purchaseEmail(
 
 /** A card failed. The only email here with real urgency, so it says the deadline. */
 export function paymentFailedEmail(brand: Branding, opts: { name: string }): EmailContent {
-  const body = layout(brand.appName, brand.appUrl, {
+  const body = emailLayout(brand.appName, brand.appUrl, {
     heading: 'Your payment did not go through',
     paragraphs: [
       `Hi ${opts.name} — the last charge for your ${brand.appName} subscription was declined.`,
@@ -157,15 +170,20 @@ export function paymentFailedEmail(brand: Branding, opts: { name: string }): Ema
 /** Access ended — cancellation, refund, or chargeback. Never argumentative. */
 export function accessEndedEmail(
   brand: Branding,
-  opts: { name: string; reason: 'canceled' | 'refunded' | 'chargeback' },
+  opts: { name: string; reason: 'canceled' | 'refunded' | 'chargeback' | 'comp_revoked' },
 ): EmailContent {
   const reasonLine = {
     canceled: `Your subscription has been canceled and your access has ended.`,
     refunded: `Your payment was refunded, so the access it paid for has ended.`,
     chargeback: `A chargeback was filed on this payment, so access has been suspended while it's resolved.`,
+    // No money was involved, so this says nothing about a payment. It also does
+    // not say "an admin removed it" — the customer did nothing wrong, the grant
+    // was ours to give and ours to correct, and an accusatory sentence about
+    // free access is the worst possible trade of goodwill for precision.
+    comp_revoked: `The complimentary access on your account has ended.`,
   }[opts.reason]
 
-  const body = layout(brand.appName, brand.appUrl, {
+  const body = emailLayout(brand.appName, brand.appUrl, {
     heading: 'Your access has ended',
     paragraphs: [
       `Hi ${opts.name} — ${reasonLine}`,
@@ -204,7 +222,7 @@ export function feedbackReplyEmail(
       ? `${opts.originalMessage.slice(0, 600)}…`
       : opts.originalMessage
 
-  const body = layout(brand.appName, brand.appUrl, {
+  const body = emailLayout(brand.appName, brand.appUrl, {
     heading: 'Re: your feedback',
     paragraphs: [opts.reply, '—', `You wrote: "${quoted}"`],
     footnote: `You're receiving this because you sent feedback through ${brand.appName}. Replying to this email reaches a person.`,

@@ -15,7 +15,22 @@ const year = new Date().getFullYear()
 
 const navLinks = computed(() => [
   { label: 'Pricing', to: '/pricing' },
-  ...(loggedIn.value ? [{ label: 'Dashboard', to: '/dashboard' }] : []),
+  // In the header, not only the footer: the blog is the top of the funnel, and
+  // a link a search visitor never sees is a link that never earns a second page
+  // view. It is also the internal link that tells a crawler /blog exists
+  // without waiting for the sitemap.
+  { label: 'Blog', to: '/blog' },
+  // Files is paying-only (middleware: ['auth', 'subscription']), but gated
+  // on `loggedIn` here, same as Dashboard just above — a signed-in visitor
+  // without a subscription clicking either link lands on /pricing via that
+  // page's own middleware, rather than this nav trying to duplicate the
+  // subscription check just to decide whether to show a link.
+  ...(loggedIn.value
+    ? [
+        { label: 'Dashboard', to: '/dashboard' },
+        { label: 'Files', to: '/files' },
+      ]
+    : []),
 ])
 
 // Mobile nav drawer. Two links don't need one — five do, and this is the seam a
@@ -122,6 +137,12 @@ watch(
          ever focused programmatically by the skip link, and a ring around the whole
          page region reads as a rendering bug. design-check-ignore -->
     <UContainer id="main" as="main" tabindex="-1" class="flex-1 py-8 focus:outline-none">
+      <!-- Dunning notice. Inside `main` rather than between the landmarks, so
+           it sits in a landmark (axe's `region` rule) and lines up with the
+           page content instead of floating over it. Renders nothing unless a
+           signed-in user's subscription is actually past_due — and costs a
+           signed-out visitor nothing at all, because it never mounts. -->
+      <BillingPastDueBanner v-if="loggedIn" />
       <slot />
     </UContainer>
 
@@ -134,6 +155,7 @@ watch(
           <p class="text-sm text-muted">© {{ year }} {{ appName }}</p>
           <nav aria-label="Footer" class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
             <ULink to="/pricing" class="text-muted hover:text-default">Pricing</ULink>
+            <ULink to="/blog" class="text-muted hover:text-default">Blog</ULink>
             <ULink to="/changelog" class="text-muted hover:text-default">Changelog</ULink>
             <ULink to="/terms" class="text-muted hover:text-default">Terms</ULink>
             <ULink to="/privacy" class="text-muted hover:text-default">Privacy</ULink>

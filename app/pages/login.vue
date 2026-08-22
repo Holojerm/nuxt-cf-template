@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { z } from 'zod'
 
-// The one page that must work before anything else does. Two paths:
-//   1. OAuth — the real flow. Buttons only appear for providers that are
-//      actually configured, because an unconfigured one dead-ends in
-//      nuxt-auth-utils' "missing configuration" error rather than a sign-in.
-//   2. Dev sign-in — email, no password, dev builds only. It's what makes
+// The one page that must work before anything else does. Three paths, in the
+// order a consumer meets them:
+//
+//   1. Magic link — the primary control, and the only one that needs nothing
+//      from the visitor but an address they already know. No password to invent
+//      now and none to reset in six months, which is the actual reason to do it
+//      this way rather than to save a form field.
+//   2. OAuth — Apple, Google, then GitHub, and only for providers a fork has
+//      actually configured (an unconfigured one dead-ends in nuxt-auth-utils'
+//      "missing configuration" error rather than a sign-in). GitHub sits last
+//      and ships off: see server/api/auth/providers.get.ts for why a developer
+//      credential does not belong at the top of a consumer sign-in page.
+//   3. Dev sign-in — email, no password, dev builds only. It's what makes
 //      `git clone && bun dev` land on a signed-in session instead of an OAuth
 //      registration detour. See server/api/auth/dev.post.ts.
 
@@ -19,7 +27,10 @@ const config = useRuntimeConfig()
 const { data: auth } = await useFetch('/api/auth/providers')
 
 // The OAuth round trip drops query params, so `?redirect=` can't survive it.
-// A cookie can: the server reads and clears it in popRedirectTarget().
+// A cookie can: the server reads and clears it in popRedirectTarget(). The
+// magic-link path sets the same cookie, and additionally copies the destination
+// onto the token row — the link may be opened on a different device, where this
+// cookie does not exist (server/db/schema.ts › magic_link_tokens).
 const redirectCookie = useCookie('auth-redirect', {
   path: '/',
   sameSite: 'lax',
@@ -37,27 +48,68 @@ watchEffect(() => {
 })
 
 // Provider errors come back as a code so the URL never carries a raw message.
-const ERROR_MESSAGES: Record<string, string> = {
-  no_email: "That provider didn't share an email address, so we can't create an account.",
-  unverified_email:
-    'That email address is unverified. Verify it with your provider, then try again.',
-  provider_error: "The sign-in provider returned an error. That's usually temporary — try again.",
-  sign_in_failed: 'Something went wrong signing you in. Try again.',
-}
-
-const errorMessage = computed(() => {
-  const code = route.query.error
-  if (typeof code !== 'string') return null
-  return ERROR_MESSAGES[code] ?? ERROR_MESSAGES.sign_in_failed
-})
+// The wording lives in app/utils/auth-errors.ts, shared with /auth/verify.
+const errorMessage = computed(() => authErrorMessage(route.query.error))
 
 const availableProviders = computed(() => auth.value?.providers.filter((p) => p.available) ?? [])
+const canEmailLink = computed(() => auth.value?.emailSignIn ?? false)
+const hasAnyMethod = computed(
+  () => canEmailLink.value || availableProviders.value.length > 0 || auth.value?.devSignIn === true,
+)
 
 function signInWith(providerId: string) {
   redirectCookie.value = redirectTarget.value
   // External navigation: this is a server route that 302s off-origin, not a
   // Vue route. navigateTo without `external` would try to match it client-side.
   return navigateTo(`/api/auth/${providerId}`, { external: true })
+}
+
+// ── Magic link ──────────────────────────────────────────────────────────────
+const linkSchema = z.object({ email: z.string().email('Enter a valid email address') })
+const linkState = reactive({ email: '' })
+const linkPending = ref(false)
+const linkSent = ref(false)
+const linkError = ref<string | null>(null)
+/** Echoed back in the confirmation, so a typo is visible instead of silent. */
+const sentTo = ref('')
+
+// ── Turnstile ───────────────────────────────────────────────────────────────
+// Gated on the site key, so a fork without a Turnstile account renders no
+// widget, loads nothing from challenges.cloudflare.com, and signs in exactly as
+// it did before. Not a computed: the key is baked into the bundle and cannot
+// change while the page is open.
+const challengeRequired = Boolean(config.public.turnstile.siteKey)
+const turnstileToken = ref('')
+// The component exposes reset(); we need it because a token is single-use and
+// this form can be submitted more than once (the "Send it again" button).
+const turnstile = ref<{ reset: () => void } | null>(null)
+
+async function sendMagicLink(resend = false) {
+  linkPending.value = true
+  linkError.value = null
+  try {
+    // Same cookie the OAuth buttons set, for the same reason.
+    redirectCookie.value = redirectTarget.value
+    await $fetch('/api/auth/magic-link', {
+      method: 'POST',
+      body: { email: linkState.email, turnstileToken: turnstileToken.value || null },
+    })
+    sentTo.value = linkState.email
+    linkSent.value = true
+    if (resend) toast.add({ title: 'Sent again', color: 'success', icon: 'i-lucide-mail-check' })
+  } catch (error) {
+    linkError.value = authErrorMessage(authErrorCode(error))
+  } finally {
+    linkPending.value = false
+    // After every attempt, not just the failures. Cloudflare invalidates a token
+    // once it has been redeemed at siteverify, so the one held here is spent
+    // whether the request succeeded or not — and "Send it again" is one click
+    // away in the state this lands in. Clearing the ref first is what disables
+    // that button until the replacement challenge resolves, rather than letting
+    // it fire a request that is guaranteed to 400.
+    turnstileToken.value = ''
+    turnstile.value?.reset()
+  }
 }
 
 // ── Dev sign-in ─────────────────────────────────────────────────────────────
@@ -91,7 +143,9 @@ useSeo({
   <div class="mx-auto flex max-w-md flex-col gap-6 py-12">
     <div>
       <h1 class="text-3xl text-highlighted">Sign in</h1>
-      <p class="mt-2 text-muted">No password to remember — we use the account you already have.</p>
+      <p class="mt-2 text-muted">
+        Enter your email and we'll send you a link. No password to create, and none to forget.
+      </p>
     </div>
 
     <UAlert
@@ -102,31 +156,127 @@ useSeo({
       :description="errorMessage"
     />
 
-    <UCard>
+    <UCard v-if="canEmailLink">
+      <!-- Sent state. Says "if that address has an account" rather than "sent to
+           you", because the endpoint deliberately answers identically for an
+           address it has never seen — see server/api/auth/magic-link.post.ts. -->
+      <div v-if="linkSent" class="flex flex-col gap-4">
+        <div class="flex items-start gap-3">
+          <UIcon name="i-lucide-mail-check" class="mt-1 size-5 shrink-0 text-primary" />
+          <div>
+            <p class="font-medium text-highlighted">Check your inbox</p>
+            <p class="mt-1 text-sm text-muted">
+              If <span class="text-default">{{ sentTo }}</span> can receive mail, a sign-in link is
+              on its way. It works once and expires in 15 minutes.
+            </p>
+          </div>
+        </div>
+
+        <UAlert
+          v-if="linkError"
+          color="error"
+          variant="subtle"
+          icon="i-lucide-circle-alert"
+          :description="linkError"
+        />
+
+        <!-- A second challenge, because "Send it again" is a second request and
+             the first token was spent reaching this state. Only one of these two
+             widgets is ever mounted — they sit either side of a v-if/v-else — so
+             the shared `turnstile` ref always points at the live one. -->
+        <NuxtTurnstile v-if="challengeRequired" ref="turnstile" v-model="turnstileToken" />
+
+        <div class="flex flex-col gap-2 sm:flex-row">
+          <UButton
+            color="neutral"
+            variant="outline"
+            block
+            :loading="linkPending"
+            :disabled="challengeRequired && !turnstileToken"
+            @click="sendMagicLink(true)"
+          >
+            Send it again
+          </UButton>
+          <UButton color="neutral" variant="ghost" block @click="linkSent = false">
+            Use a different address
+          </UButton>
+        </div>
+      </div>
+
+      <UForm
+        v-else
+        :schema="linkSchema"
+        :state="linkState"
+        class="flex flex-col gap-4"
+        @submit="sendMagicLink()"
+      >
+        <UFormField label="Email" name="email">
+          <UInput
+            v-model="linkState.email"
+            type="email"
+            autocomplete="email"
+            placeholder="you@example.com"
+            size="lg"
+            class="w-full"
+          />
+        </UFormField>
+
+        <!-- Rendered only once a site key is configured, so the default template
+             shows exactly the form it always did. Sits above the submit button
+             because that is the order it is completed in. -->
+        <NuxtTurnstile v-if="challengeRequired" ref="turnstile" v-model="turnstileToken" />
+
+        <UAlert
+          v-if="linkError"
+          color="error"
+          variant="subtle"
+          icon="i-lucide-circle-alert"
+          :description="linkError"
+        />
+
+        <UButton
+          type="submit"
+          size="lg"
+          icon="i-lucide-mail"
+          block
+          :loading="linkPending"
+          :disabled="challengeRequired && !turnstileToken"
+        >
+          Email me a sign-in link
+        </UButton>
+      </UForm>
+    </UCard>
+
+    <template v-if="availableProviders.length">
+      <USeparator label="or" />
+
       <div class="flex flex-col gap-3">
+        <!-- All neutral, all outline. One primary button per view (DESIGN.md ›
+             Component behavior), and on this page that button is the magic
+             link. -->
         <UButton
           v-for="provider in availableProviders"
           :key="provider.id"
           :icon="provider.icon"
           size="lg"
+          color="neutral"
+          variant="outline"
           block
-          :color="provider.id === availableProviders[0]?.id ? 'primary' : 'neutral'"
-          :variant="provider.id === availableProviders[0]?.id ? 'solid' : 'outline'"
           @click="signInWith(provider.id)"
         >
           Continue with {{ provider.label }}
         </UButton>
-
-        <UAlert
-          v-if="!availableProviders.length"
-          color="neutral"
-          variant="subtle"
-          icon="i-lucide-key-round"
-          title="No sign-in provider is configured"
-          description="Set NUXT_OAUTH_GITHUB_CLIENT_ID and NUXT_OAUTH_GITHUB_CLIENT_SECRET (or the Google pair) to enable real sign-in. See .env.example."
-        />
       </div>
-    </UCard>
+    </template>
+
+    <UAlert
+      v-if="!hasAnyMethod"
+      color="neutral"
+      variant="subtle"
+      icon="i-lucide-key-round"
+      title="No sign-in method is configured"
+      description="Set NUXT_RESEND_API_KEY and NUXT_RESEND_FROM to enable email sign-in, or add an OAuth provider. See .env.example."
+    />
 
     <!-- Dev-only. `devSignIn` is a compile-time constant on the server, so this
          block is unreachable in a production build. -->
@@ -146,6 +296,8 @@ useSeo({
       >
         <p class="text-sm text-muted">
           Any email signs you in — no password, no provider. This route returns 404 in production.
+          With no Resend key set, the magic link above logs its URL to the dev server console
+          instead of sending it.
         </p>
         <UFormField label="Email" name="email">
           <UInput v-model="devState.email" type="email" autocomplete="off" class="w-full" />

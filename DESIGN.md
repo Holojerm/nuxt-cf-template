@@ -59,7 +59,10 @@ file is derived from that component by `bun run brand:generate`:
 |---|---|---|
 | `public/favicon.svg` | 32 grid | The browser tab. Carries its own ground — a transparent mark vanishes against a dark tab strip. |
 | `public/apple-touch-icon.png` | 180×180 | iOS home screen. Full-bleed: iOS applies its own corner mask, so baking one in double-rounds it. |
+| `public/icon-192.png` | 192×192 | Android/desktop "Add to Home Screen", via `manifest.webmanifest`. Maskable-safe: the mark's bounding square covers 56% of the icon — bounding a *square* inside Android's 80%-diameter safe-zone *circle* takes a smaller number than the circle itself, not the same one (`MASKABLE_COVERAGE` in `scripts/generate-brand-assets.ts`). |
+| `public/icon-512.png` | 512×512 | Same treatment, larger — the splash-screen source in `manifest.webmanifest`. |
 | `public/og.png` | 1200×630 | Every link preview of this site — mark, app name, one sentence. |
+| `shared/utils/brand-colors.generated.ts` | — | `theme_color`/`background_color` for `manifest.webmanifest`, resolved from the Color roles table below — a manifest has no color mode either. |
 
 `bun run brand:check` (part of `bun run ci`) fails the build when those files no longer match
 the component. A favicon a redesign behind the app is the normal outcome otherwise; nothing
@@ -90,8 +93,10 @@ A PNG has no color mode, so each role below resolves to a concrete ramp token ra
 | `og-ground` | `--color-stone-50` | Share image background |
 | `og-ink` | `--color-stone-900` | Share image title |
 | `og-muted` | `--color-stone-500` | Share image description and footer |
+| `manifest-theme` | `--color-clay-600` | `theme_color` in `manifest.webmanifest` — the browser UI tint once installed |
+| `manifest-ground` | `--color-stone-50` | `background_color` in `manifest.webmanifest` — the splash screen before the app paints |
 
-In-app the mark takes `text-primary` and inherits the color mode for free. These six exist
+In-app the mark takes `text-primary` and inherits the color mode for free. These eight exist
 only for the files that can't.
 
 ### Never
@@ -99,7 +104,8 @@ only for the files that can't.
 - A second mark. If a surface seems to need a different logo, the logo is wrong.
 - Effects: shadow, gradient, outline, rotation, or animation on the mark.
 - The wordmark in anything but the display face at weight 400 (DESIGN.md › Typography).
-- Hand-editing anything in `public/` that this pipeline generates.
+- Hand-editing anything in `public/` — or `shared/utils/brand-colors.generated.ts` — that
+  this pipeline generates.
 
 ---
 
@@ -239,6 +245,11 @@ because this system is for reading. Never set arbitrary sizes (`text-[13px]`).
   header wrap to two lines or scroll sideways.
 - **Links:** inline prose links are `text-primary` **and** underlined (see Accessibility ›
   Contrast). Standalone links in navigation or footers are colour-only by design.
+- **Long-form content:** markdown (the blog, `content/`) renders through NuxtUI's `Prose*`
+  components, which already read the token layer. Two of their defaults contradict this file
+  and are overridden in `app.config.ts` under `ui.prose`: `h1`–`h3` drop `font-bold`, and
+  inline links get a real `underline` instead of a hover-only bottom border. Measure is
+  `max-w-2xl` — a reading column, not the full container.
 - **Empty states:** one line of `text-muted` explanation plus one action. No illustrations.
 - **Tables:** `font-mono` for numeric columns, right-aligned. Row separators, not zebra striping.
 

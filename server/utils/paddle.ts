@@ -5,6 +5,12 @@
 // `Paddle-Signature: ts=<unix seconds>;h1=<hex>` (h1 may repeat during secret
 // rotation). Verify against the EXACT raw body bytes — any reformatting
 // invalidates the signature. Docs: developer.paddle.com/webhooks/signature-verification
+//
+// The hex encoder and the constant-time compare come from server/utils/hash.ts
+// — one copy each, shared with the unsubscribe token check, because a second
+// timing-safe compare is a second place for somebody to "simplify" the loop.
+
+import { timingSafeEqual, toHex } from './hash'
 
 const encoder = new TextEncoder()
 
@@ -16,19 +22,7 @@ async function hmacSha256Hex(secret: string, message: string): Promise<string> {
     false,
     ['sign'],
   )
-  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(message))
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  const ab = encoder.encode(a)
-  const bb = encoder.encode(b)
-  if (ab.length !== bb.length) return false
-  let diff = 0
-  for (let i = 0; i < ab.length; i++) diff |= ab[i]! ^ bb[i]!
-  return diff === 0
+  return toHex(await crypto.subtle.sign('HMAC', key, encoder.encode(message)))
 }
 
 export interface PaddleSignatureCheck {

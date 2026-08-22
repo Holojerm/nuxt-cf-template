@@ -14,6 +14,8 @@
 // Newest first. Keep entries short — this is a list of things that changed, not
 // release notes, and nobody reads the second paragraph.
 
+import { formatLongDate } from './dates'
+
 export type ChangeKind = 'added' | 'improved' | 'fixed'
 
 export interface ChangelogEntry {
@@ -71,14 +73,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ]
 
-/** `2026-08-21` → `21 August 2026`. Fixed locale so SSR and client agree. */
+/**
+ * `2026-08-21` → `21 August 2026`. Fixed locale so SSR and client agree.
+ *
+ * The implementation moved to app/utils/dates.ts when the blog needed the same
+ * UTC handling; the name stays because it reads better at the call site.
+ */
 export function formatChangelogDate(iso: string): string {
-  const parsed = new Date(`${iso}T00:00:00Z`)
-  if (Number.isNaN(parsed.getTime())) return iso
-  return parsed.toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'UTC',
-  })
+  return formatLongDate(iso)
 }

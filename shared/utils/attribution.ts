@@ -20,6 +20,8 @@
 
 import { z } from 'zod'
 
+import { REFERRAL_CODE_LENGTH, REFERRAL_CODE_PATTERN, normalizeReferralCode } from './referral'
+
 /** Cookie name. Short — it rides on every request to this origin. */
 export const ATTRIBUTION_COOKIE = 'attr'
 
@@ -42,6 +44,28 @@ export const attributionSchema = z.object({
   medium: z.string().max(SHORT_MAX).optional().catch(undefined),
   campaign: z.string().max(SHORT_MAX).optional().catch(undefined),
   referrer: z.string().max(REFERRER_MAX).optional().catch(undefined),
+  /**
+   * Another account's referral code, from `?ref=` on the landing URL.
+   *
+   * The strictest field here by a distance, and it earns that: the other four
+   * end up in marketing columns, while this one decides whether a stranger gets
+   * credited with a customer and eventually paid in access days. So it is
+   * pinned to the exact alphabet AND the exact length the generator produces
+   * (#shared/utils/referral) rather than merely capped — anything else is
+   * dropped, not truncated. Truncating would turn a mistyped 9-character code
+   * into a valid 8-character one belonging to somebody else.
+   *
+   * It is still only a *claim*. Resolving it to a real, non-tombstoned account
+   * that isn't the new user happens server-side at provisioning
+   * (server/utils/users.ts › findReferrerByCode), and nothing is ever paid out
+   * on it until that account's referee completes a Paddle transaction.
+   */
+  referralCode: z
+    .string()
+    .max(REFERRAL_CODE_LENGTH)
+    .regex(REFERRAL_CODE_PATTERN)
+    .optional()
+    .catch(undefined),
 })
 
 export type Attribution = z.infer<typeof attributionSchema>
@@ -107,7 +131,14 @@ export interface ParseAttributionInput {
  * Precedence: explicit UTM parameters beat an inferred referrer, because if
  * someone took the trouble to tag the link, the tag is the truth. `gclid` /
  * `fbclid` are recognised as paid clicks even with no utm_source, since ad
- * platforms often auto-tag with only those.
+ * platforms often auto-tag with only those. `?ref=` sits between the two: it is
+ * an explicit tag, so it beats a guessed referrer host, but an operator who
+ * tagged the same link with UTMs meant those.
+ *
+ * `referralCode` rides on EVERY branch, including the one that classifies the
+ * visit as something else entirely. The code is a fact about the link, not a
+ * channel classification, and dropping it because a UTM tag also happened to be
+ * present would silently un-credit anyone who shares through a tagged campaign.
  *
  * Pure, and exported for test/attribution.test.ts.
  */
@@ -122,6 +153,7 @@ export function parseAttribution({ url, referrer, origin }: ParseAttributionInpu
   const utmSource = clean(params.get('utm_source'))
   const utmMedium = clean(params.get('utm_medium'))
   const campaign = clean(params.get('utm_campaign'))
+  const referralCode = normalizeReferralCode(params.get('ref'))
 
   // A referrer on our own origin means an internal navigation, not an arrival.
   let referrerHost: string | undefined
@@ -140,7 +172,13 @@ export function parseAttribution({ url, referrer, origin }: ParseAttributionInpu
   }
 
   if (utmSource) {
-    return { source: utmSource, medium: utmMedium ?? 'unknown', campaign, referrer: referrerUrl }
+    return {
+      source: utmSource,
+      medium: utmMedium ?? 'unknown',
+      campaign,
+      referrer: referrerUrl,
+      referralCode,
+    }
   }
 
   // Ad-platform click ids, which frequently arrive untagged otherwise.
@@ -152,15 +190,30 @@ export function parseAttribution({ url, referrer, origin }: ParseAttributionInpu
         ? 'bing'
         : undefined
   if (paidClick) {
-    return { source: paidClick, medium: 'paid', campaign, referrer: referrerUrl }
+    return { source: paidClick, medium: 'paid', campaign, referrer: referrerUrl, referralCode }
+  }
+
+  // ── A referral link IS the channel ─────────────────────────────────────────
+  // Most invites are pasted into a chat app, which sends no referrer, so
+  // without this branch every referred signup files itself under `direct` —
+  // and "how many customers did the referral program bring" stops being
+  // answerable from `users.signup_source` in one query, which is the entire
+  // reason those columns exist rather than trusting PostHog.
+  //
+  // `medium: 'invite'` and not `'referral'`: classifyReferrer() already uses
+  // `referral` for "some website linked to us", and a bucket that means two
+  // things is a bucket nobody can report on. The referring URL, when there is
+  // one, still rides along in `referrer`.
+  if (referralCode) {
+    return { source: 'referral', medium: 'invite', campaign, referrer: referrerUrl, referralCode }
   }
 
   if (referrerHost) {
     const { source, medium } = classifyReferrer(referrerHost)
-    return { source, medium, campaign, referrer: referrerUrl }
+    return { source, medium, campaign, referrer: referrerUrl, referralCode }
   }
 
-  return { source: 'direct', medium: 'none', campaign, referrer: undefined }
+  return { source: 'direct', medium: 'none', campaign, referrer: undefined, referralCode }
 }
 
 /**
@@ -177,7 +230,51 @@ export function readAttributionCookie(raw: string | undefined): Attribution | nu
   }
   const parsed = attributionSchema.safeParse(candidate)
   if (!parsed.success) return null
-  const { source, medium, campaign, referrer } = parsed.data
-  if (!source && !medium && !campaign && !referrer) return null
+  const { source, medium, campaign, referrer, referralCode } = parsed.data
+  if (!source && !medium && !campaign && !referrer && !referralCode) return null
   return parsed.data
+}
+
+/**
+ * What the attribution cookie should hold after this landing, or null to leave
+ * it alone.
+ *
+ * ── The hole this closes ─────────────────────────────────────────────────────
+ * The plugin used to bail out the moment ANY cookie existed. That is right for
+ * the marketing fields and wrong for the referral code, and the gap is most of
+ * the audience: the cookie lasts 90 days, so anybody who read a blog post via
+ * search last week already has one — and when a friend later sends them a
+ * `?ref=` link, the code was dropped on the floor. They sign up, nobody is
+ * credited, and the share card had promised "the credit is recorded on their
+ * first visit". The people most likely to accept an invite are exactly the
+ * people who have heard of you before.
+ *
+ * ── Why only that one field ──────────────────────────────────────────────────
+ * First touch is the point of the other four (see the file header): the channel
+ * that INTRODUCED somebody is the one worth spending on, and refreshing them on
+ * a later visit is how attribution decays into "everyone came from Google". A
+ * referral code is not a channel measurement, it is a claim about a person, and
+ * an existing cookie holding no code is not a competing claim — it is silence.
+ * So this fills a hole and never overwrites: a visitor who already arrived on
+ * someone's link cannot be re-credited to whoever sends them the next one.
+ *
+ * Returns null when nothing needs writing, so the plugin does not touch the
+ * cookie — and therefore does not extend its 90-day life — on ordinary visits.
+ *
+ * Pure, and exported for test/attribution.test.ts.
+ */
+export function nextAttributionCookie(
+  existing: Attribution | null,
+  landing: Attribution,
+): Attribution | null {
+  // No usable cookie: this IS the first touch. Also covers a corrupt or
+  // unparseable one, which readAttributionCookie reports as absent — replacing
+  // junk is better than being stuck behind it forever.
+  if (!existing) return landing
+
+  if (!existing.referralCode && landing.referralCode) {
+    return { ...existing, referralCode: landing.referralCode }
+  }
+
+  return null
 }

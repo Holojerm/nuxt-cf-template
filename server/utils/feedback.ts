@@ -12,6 +12,8 @@ import { z } from 'zod'
 import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
 import type { Feedback } from '../db/schema'
+import { saltedHash } from './hash'
+import { turnstileTokenSchema } from './turnstile'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type FeedbackDb = ReturnType<typeof drizzle<typeof tables>>
@@ -51,6 +53,15 @@ export const feedbackSubmissionSchema = z.object({
   /** PostHog session replay deep link, from useFeedback() on the client. */
   replayUrl: z.string().max(1000).nullish(),
   posthogDistinctId: z.string().max(200).nullish(),
+  /**
+   * Solved Turnstile challenge, sent only by anonymous submitters and only when
+   * a site key is configured. Nullish here rather than required because the
+   * decision about whether it is *needed* belongs to the route (which knows
+   * whether the submitter is signed in), not to the body shape — see
+   * server/api/feedback.post.ts. Never stored: it is single-use and worthless
+   * once verified.
+   */
+  turnstileToken: turnstileTokenSchema.nullish(),
 })
 
 export type FeedbackSubmission = z.infer<typeof feedbackSubmissionSchema>
@@ -68,11 +79,10 @@ export interface FeedbackContext {
  * per source in an hour, nothing else.
  */
 export async function hashIp(ip: string | undefined, salt: string): Promise<string | null> {
-  if (!ip) return null
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${salt}:${ip}`))
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
+  // Delegates to the one implementation (server/utils/hash.ts) so this digest
+  // and the audit trail's stay comparable — two copies of a salted hash is two
+  // ways for the construction to drift apart.
+  return saltedHash(ip, salt)
 }
 
 /** True when this source has already used up its hourly submission budget. */

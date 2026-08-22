@@ -1,6 +1,7 @@
 {
   "name": "nuxt-cf-template",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "portless": {
     "name": "my-app",
@@ -20,26 +21,32 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply my-app-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply my-app-db --remote",
+    "db:migrate:preview": "wrangler d1 migrations apply my-app-db-preview --remote",
     "db:studio": "drizzle-kit studio",
     "seed": "bun run scripts/seed.ts",
     "rename": "bun run scripts/rename.ts",
     "design:check": "bun run scripts/check-design-tokens.ts",
     "brand:generate": "bun run scripts/generate-brand-assets.ts",
     "brand:check": "bun run scripts/check-brand.ts",
+    "mirror:check": "bun run scripts/check-mirrors.ts",
     "seo:check": "bun run scripts/check-seo.ts",
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:a11y": "playwright test",
     "playwright:install": "playwright install chromium",
-    "ci": "bun run lint && bun run design:check && bun run brand:check && bun run seo:check && bun run typecheck && bun run test && bun run playwright:install && bun run test:a11y && bun run build",
+    "ci": "bun run lint && bun run design:check && bun run brand:check && bun run mirror:check && bun run seo:check && bun run typecheck && bun run test && bun run playwright:install && bun run test:a11y && bun run build",
     "deploy": "nuxt build && wrangler --cwd .output deploy",
+    "build:preview": "CLOUDFLARE_ENV=preview nuxt build",
+    "deploy:preview": "CLOUDFLARE_ENV=preview nuxt build && wrangler --cwd .output deploy",
     "mcp:dev": "bun run --cwd mcp dev",
     "mcp:typecheck": "bun run --cwd mcp typecheck",
     "mcp:deploy": "bun run --cwd mcp deploy"
   },
   "dependencies": {
+    "@nuxt/content": "^3.15.2",
     "@nuxt/ui": "^4.10.0",
+    "@nuxtjs/turnstile": "^1.1.3",
     "drizzle-orm": "^0.45.2",
     "nuxt": "^4.5.2",
     "nuxt-auth-utils": "^0.5.30",
@@ -69,7 +76,8 @@
     "wrangler": "^4.125.0"
   },
   "engines": {
-    "bun": ">=1.3.0"
+    "bun": ">=1.3.0",
+    "node": ">=22.13.0"
   },
   "packageManager": "bun@1.3.11"
 }

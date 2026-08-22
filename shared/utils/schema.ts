@@ -157,6 +157,62 @@ export function softwareApplicationSchema(
   }
 }
 
+export interface BlogPostInput {
+  /** Absolute canonical URL of the post — the same one useSeo() emits. */
+  url: string
+  title: string
+  description: string
+  /** `YYYY-MM-DD`. A date with no time is still valid ISO 8601. */
+  datePublished: string
+  /** Omit when the post has never been revised; `datePublished` is then used. */
+  dateModified?: string
+  /**
+   * Byline. Omitted, or equal to the site's legal entity, means the post is the
+   * company's own and is attributed to the existing Organization node.
+   */
+  author?: string
+}
+
+/**
+ * One post, as an article an answer engine can attribute and date.
+ *
+ * Two things make this worth more than the WebPage node useSeo() already emits.
+ * `datePublished`/`dateModified` are the only machine-readable signal that a
+ * quote is current — an engine with no date will happily present a two-year-old
+ * claim as today's. And `author` resolves the piece to an entity: a Person node
+ * for a named byline, or a reference to the site's Organization when the post
+ * is the company writing as itself. Minting a second Organization for the
+ * latter would split one entity into two, which is exactly what `@id` linking
+ * exists to prevent.
+ *
+ * `mainEntityOfPage` points at the WebPage node for the same URL, so the graph
+ * reads as "this article is the main thing on that page" rather than as two
+ * unrelated descriptions of one URL.
+ */
+export function blogPostingSchema(site: SiteContext, post: BlogPostInput): JsonLdNode | null {
+  if (!site.appUrl || !post.url) return null
+
+  const organization = { '@id': `${site.appUrl}/${SCHEMA_IDS.organization}` }
+  const byline = post.author?.trim() ?? ''
+  const isCompany = !byline || byline.toLowerCase() === site.legalEntity.trim().toLowerCase()
+
+  return {
+    '@type': 'BlogPosting',
+    // Distinct from the WebPage node, which is anchored at the bare URL.
+    '@id': `${post.url}#post`,
+    url: post.url,
+    headline: post.title,
+    description: post.description,
+    datePublished: post.datePublished,
+    dateModified: post.dateModified || post.datePublished,
+    author: isCompany ? organization : { '@type': 'Person', name: byline },
+    publisher: organization,
+    isPartOf: { '@id': `${site.appUrl}/${SCHEMA_IDS.website}` },
+    mainEntityOfPage: { '@id': post.url },
+    inLanguage: 'en',
+  }
+}
+
 export interface FaqItem {
   question: string
   /** Plain text. Rendered on the page too — see rule 2 at the top of this file. */

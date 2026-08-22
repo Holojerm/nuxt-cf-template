@@ -5,10 +5,16 @@
 // app name declared in DESIGN.md › Brand mark. Nothing here is a design
 // decision; it is a compiler, the same way /design-sync is one.
 //
-//   public/favicon.svg          32-grid icon, rounded, ground included
-//   public/apple-touch-icon.png 180x180, full-bleed (iOS applies its own mask)
-//   public/og.png               1200x630 link preview
-//   brand.lock.json             fingerprint of the inputs, read by brand:check
+//   public/favicon.svg              32-grid icon, rounded, ground included
+//   public/apple-touch-icon.png     180x180, full-bleed (iOS applies its own mask)
+//   public/icon-192.png             192x192, maskable-safe, for the web manifest
+//   public/icon-512.png             512x512, maskable-safe, for the web manifest
+//   public/og.png                   1200x630 link preview
+//   shared/utils/brand-colors.generated.ts  theme_color / background_color for
+//                                    server/routes/manifest.webmanifest.get.ts —
+//                                    a manifest has no color mode either, so
+//                                    these are resolved here, not hand-written.
+//   brand.lock.json                 fingerprint of the inputs, read by brand:check
 //
 // Rasterizing uses the Chromium that Playwright already installs for the a11y
 // suite — no new dependency, and the OG image is composed in the same engine
@@ -30,20 +36,47 @@ import { chromium, type Page } from '@playwright/test'
 import {
   collectBrandInputs,
   GENERATED_ASSETS,
+  GENERATOR_VERSION,
   LOCK_FILE,
   ROOT,
   type BrandInputs,
 } from './brand-inputs'
-import { BRAND_ROLES, markTransform, type BrandRole } from './brand-source'
+import { BRAND_ROLES, markPlacement, markTransform, type BrandRole } from './brand-source'
 
 const OG = { width: 1200, height: 630 }
 const APPLE_TOUCH = 180
+/** Sizes Android/Chrome expect in a web app manifest — the 192 is what shows
+ *  on the home screen and app switcher, the 512 is the splash-screen source. */
+const MANIFEST_ICON_SIZES = [192, 512] as const
 /** The mark's height on the share image. Smaller than ~80px it reads as debris
  *  at the size a timeline actually shows a link preview. */
 const OG_MARK = 96
 /** Share of the icon square the mark covers. Below ~0.6 it reads as a dot. */
 const ICON_COVERAGE = 0.7
 const APPLE_COVERAGE = 0.66
+/**
+ * Share of the canvas the mark's bounding *square* covers on the two manifest
+ * icons. Android applies a maskable icon's own mask shape (circle, squircle,
+ * rounded square — the OS chooses) and only guarantees a centered circle of
+ * SAFE_ZONE_DIAMETER survives every shape — so this has to bound a circle,
+ * not a square, and those are two different numbers.
+ *
+ * The worst case is the ink's bounding-box *corner*, not its edges: a square
+ * of side `MASKABLE_COVERAGE · size`, centered, has its farthest corner at
+ * `(MASKABLE_COVERAGE / 2) · √2 · size` from center. For that to stay inside
+ * the safe-zone radius (`SAFE_ZONE_DIAMETER / 2 · size`):
+ *
+ *   MASKABLE_COVERAGE ≤ SAFE_ZONE_DIAMETER / √2  ≈  0.8 / 1.41  ≈  0.566
+ *
+ * 0.56 leaves a small margin below that ceiling. This mark clears it with
+ * room to spare (assertMaskableSafeZone measures the real ink and checks —
+ * the margin above isn't the guarantee, that assertion is).
+ */
+const MASKABLE_COVERAGE = 0.56
+/** Diameter, as a fraction of icon size, of the circle every maskable mask
+ *  shape is guaranteed to leave unclipped. Android's own contract, not this
+ *  repo's — see https://developer.chrome.com/docs/android/trusted-web-activity/maskable-icons */
+const SAFE_ZONE_DIAMETER = 0.8
 /** Corner radius on the 32 grid — favicons are not masked by the browser. */
 const FAVICON_RADIUS = 7
 
@@ -59,17 +92,35 @@ const browser = await chromium.launch().catch((error: unknown) => {
 const context = await browser.newContext({ deviceScaleFactor: 1 })
 const page = await context.newPage()
 
+// Before anything is written: a fork that redraws the mark fuller than this
+// template's does could pass MASKABLE_COVERAGE's margin comfortably and still
+// clip on Android, and brand:check could never catch it — it fingerprints
+// inputs, it never measures pixels. This does.
+await assertMaskableSafeZone(page, inputs)
+
 const palette = await resolvePalette(page, inputs)
 
 writeFileSync(join(ROOT, 'public/favicon.svg'), faviconSvg(inputs, palette))
 
 await shoot(
   page,
-  appleTouchHtml(inputs, palette),
+  iconGroundHtml(inputs, palette, APPLE_TOUCH, APPLE_COVERAGE),
   APPLE_TOUCH,
   APPLE_TOUCH,
   'public/apple-touch-icon.png',
 )
+
+for (const size of MANIFEST_ICON_SIZES) {
+  await shoot(
+    page,
+    iconGroundHtml(inputs, palette, size, MASKABLE_COVERAGE),
+    size,
+    size,
+    `public/icon-${size}.png`,
+  )
+}
+
+writeFileSync(join(ROOT, 'shared/utils/brand-colors.generated.ts'), brandColorsTs(palette))
 
 const fontsLoaded = await shoot(
   page,
@@ -85,8 +136,9 @@ writeFileSync(
   `${JSON.stringify(
     {
       _comment:
-        'Generated by `bun run brand:generate`. Fingerprints the inputs behind public/favicon.svg, apple-touch-icon.png, and og.png so `bun run brand:check` can fail the build when they drift. Commit it.',
+        'Generated by `bun run brand:generate`. Fingerprints the inputs behind the files listed in `generated` below so `bun run brand:check` can fail the build when they drift. `generatorVersion` is recorded separately from `fingerprint` so brand:check can tell "the pipeline changed" apart from "your inputs changed" — see scripts/check-brand.ts. Commit it.',
       fingerprint: inputs.fingerprint,
+      generatorVersion: GENERATOR_VERSION,
       generated: GENERATED_ASSETS,
     },
     null,
@@ -134,12 +186,22 @@ function faviconSvg(inputs: BrandInputs, palette: Palette): string {
 `
 }
 
-function appleTouchHtml(inputs: BrandInputs, palette: Palette): string {
-  // No corner radius: iOS masks home-screen icons itself, and a baked-in
-  // radius shows up as a double-rounded edge.
+/**
+ * A square, full-bleed icon: the ground fills the canvas edge-to-edge and the
+ * mark sits centred at `coverage` of it. Shared by the apple-touch icon and
+ * the two manifest icons because the same fact is true of all three — the OS
+ * applies its own mask (iOS's rounded square, Android's maskable shape), so a
+ * radius baked in here would double up with — or conflict with — that mask.
+ */
+function iconGroundHtml(
+  inputs: BrandInputs,
+  palette: Palette,
+  size: number,
+  coverage: number,
+): string {
   return htmlPage(`
-    <div style="width:${APPLE_TOUCH}px;height:${APPLE_TOUCH}px;background:${palette['icon-ground']};display:flex;align-items:center;justify-content:center">
-      ${markSvg(inputs, palette['icon-ink'], APPLE_TOUCH * APPLE_COVERAGE)}
+    <div style="width:${size}px;height:${size}px;background:${palette['icon-ground']};display:flex;align-items:center;justify-content:center">
+      ${markSvg(inputs, palette['icon-ink'], size * coverage)}
     </div>
   `)
 }
@@ -172,6 +234,29 @@ function ogHtml(inputs: BrandInputs, palette: Palette): string {
   )
 }
 
+/**
+ * The web manifest's `theme_color`/`background_color`, resolved to hex at
+ * generate time and written as a TS module — never as hand-typed hex in
+ * server/routes/manifest.webmanifest.get.ts. Same reasoning as the PNGs
+ * (DESIGN.md › Brand mark › Color roles): a manifest is a JSON file with no
+ * color mode, so `--ui-*` aliases (which flip between light and dark) aren't
+ * a valid source for it.
+ */
+function brandColorsTs(palette: Palette): string {
+  return `// GENERATED by \`bun run brand:generate\`. Hand-edits are overwritten and
+// \`bun run brand:check\` fails on them.
+//
+// theme_color / background_color for server/routes/manifest.webmanifest.get.ts,
+// resolved from DESIGN.md › Brand mark › Color roles \`manifest-theme\` and
+// \`manifest-ground\` — see scripts/generate-brand-assets.ts.
+
+export const BRAND_MANIFEST_COLORS = {
+  themeColor: '${palette['manifest-theme']}',
+  backgroundColor: '${palette['manifest-ground']}',
+} as const
+`
+}
+
 /** One <link> per family: a single stylesheet request naming a family that the
  *  provider doesn't have fails the whole request, taking the others with it. */
 function htmlPage(body: string, families: string[] = []): string {
@@ -193,6 +278,65 @@ function escapeHtml(value: string): string {
 }
 
 // ── Browser work ────────────────────────────────────────────────────────────
+
+/**
+ * Measures the mark's REAL rendered ink — not the constant's worst-case
+ * arithmetic above — and fails `bun run brand:generate` if any corner of it
+ * falls outside Android's maskable safe zone. MASKABLE_COVERAGE's margin
+ * assumes the ink is no fuller than a square bounding box scaled to
+ * `MASKABLE_COVERAGE · size`; a redesigned mark (via `/logo-sync`) that draws
+ * closer to its own viewBox edges could break that assumption while the
+ * constant itself is untouched, and nothing else in this pipeline would
+ * notice — `brand:check` only fingerprints inputs, it never measures pixels.
+ *
+ * `getBBox()` on the ink, wrapped in a bare `<g>` with no transform, returns
+ * its bounding box in the mark's own viewBox units — unaffected by whatever
+ * size the icon ends up rendered at, so this only needs to run once,
+ * independent of MANIFEST_ICON_SIZES. markPlacement() with SIZE = 1 then maps
+ * those viewBox units onto the same centred scale/translate the icons are
+ * actually placed with (verified equivalent to the flex-centered <svg>
+ * iconGroundHtml() renders: both are a uniform scale-to-fit-and-center of the
+ * viewBox, so the same formula answers for either), so every distance below
+ * is a fraction of the icon's own size — the same units SAFE_ZONE_DIAMETER is in.
+ */
+async function assertMaskableSafeZone(page: Page, inputs: BrandInputs): Promise<void> {
+  const { viewBox, inner } = inputs.mark
+
+  await page.setContent(
+    `<!doctype html><html><body><svg xmlns="http://www.w3.org/2000/svg"><g id="ink">${inner}</g></svg></body></html>`,
+  )
+  const ink = await page.evaluate(() => {
+    const g = document.getElementById('ink') as unknown as SVGGraphicsElement
+    const box = g.getBBox()
+    return { x: box.x, y: box.y, width: box.width, height: box.height }
+  })
+
+  const SIZE = 1 // a unit canvas — every distance computed below is a fraction of icon size
+  const { x: translateX, y: translateY, scale } = markPlacement(viewBox, SIZE, MASKABLE_COVERAGE)
+
+  const corners = [
+    [ink.x, ink.y],
+    [ink.x + ink.width, ink.y],
+    [ink.x, ink.y + ink.height],
+    [ink.x + ink.width, ink.y + ink.height],
+  ]
+  const center = SIZE / 2
+  const safeRadius = SAFE_ZONE_DIAMETER / 2
+  const farthest = Math.max(
+    ...corners.map(([mx = 0, my = 0]) =>
+      Math.hypot(translateX + mx * scale - center, translateY + my * scale - center),
+    ),
+  )
+
+  if (farthest > safeRadius) {
+    throw new Error(
+      `The mark's ink reaches ${(farthest * 100).toFixed(1)}% of the icon size from center at ` +
+        `MASKABLE_COVERAGE = ${MASKABLE_COVERAGE} (scripts/generate-brand-assets.ts) — Android's ` +
+        `maskable safe zone only guarantees ${(safeRadius * 100).toFixed(0)}%. Lower ` +
+        `MASKABLE_COVERAGE, or redraw the mark closer to its viewBox center.`,
+    )
+  }
+}
 
 /**
  * Resolve each declared token to an sRGB hex by painting one pixel with it.

@@ -19,6 +19,21 @@ export default defineNuxtRouteMiddleware(async (to) => {
   try {
     const entitlement = await $fetch('/api/billing/entitlement')
     if (entitlement.active) return
+
+    // Blocked either way — but not for the same reason, so not to the same
+    // place. A customer in dunning already bought this; sending them to a page
+    // that sells it is the product telling them to purchase what they are
+    // currently paying for, while the one thing that would fix it (update the
+    // card) lives somewhere else entirely.
+    //
+    // /account is where the payment-failed treatment and the update-card CTA
+    // are (app/components/Billing/PastDueAlert.vue). This changes the
+    // DESTINATION only: `past_due` is still not in ACTIVE_STATUSES, still has
+    // no access, and requireSubscription() still 402s every API route behind
+    // it. Weakening the gate here would promise access the server denies.
+    if (entitlement.state === 'past_due') {
+      return navigateTo({ path: '/account', query: { from: to.path } })
+    }
   } catch {
     // A failing entitlement check shouldn't strand a paying customer on a
     // pricing page. Let the page render; its API calls enforce the real gate.

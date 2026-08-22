@@ -28,7 +28,38 @@ import { expect, test } from '@playwright/test'
 // kind of second list `definePageMeta({ publicPage })` exists to abolish — so
 // the `sitemap coverage` test at the bottom of this file fails the build if the
 // two ever disagree. Add a public page, forget this list, and CI tells you.
-const ROUTES = ['/', '/pricing', '/changelog', '/login', '/terms', '/privacy']
+//
+// /auth/verify and /unsubscribe are scanned with no parameters, which is
+// exactly the state a stale or mangled link produces — the one a reader is most
+// likely to meet on a bad day, and therefore the one whose error copy has to
+// survive both color modes. Both are public and reachable straight from an
+// email, by people who are not signed in and may never have been.
+const ROUTES = [
+  '/',
+  '/pricing',
+  '/blog',
+  // One post stands in for all of them — see BLOG_POST_PREFIX below. This one
+  // is chosen because it exercises the most rendered markdown: h2s, lists,
+  // inline code, bold, and an inline link, which is the node most likely to
+  // fail contrast in one of the two modes.
+  '/blog/how-billing-works',
+  '/changelog',
+  '/login',
+  '/auth/verify',
+  '/unsubscribe',
+  '/terms',
+  '/privacy',
+]
+
+/**
+ * Blog posts are content, not pages: every one of them renders through the same
+ * app/pages/blog/[slug].vue, so the markup axe sees differs only in prose.
+ * Scanning all of them would make writing a post a CI failure until someone
+ * remembered this file — which trains people to weaken the guard rather than
+ * use it. The coverage test below accepts any URL under this prefix, and
+ * separately insists that at least one real post is actually scanned.
+ */
+const BLOG_POST_PREFIX = '/blog/'
 
 const COLOR_MODES = ['light', 'dark'] as const
 
@@ -76,7 +107,12 @@ for (const route of ROUTES) {
       // NuxtUI's color mode defaults to `system`, so emulating the media query
       // is enough — no cookie or class juggling.
       await page.emulateMedia({ colorScheme: mode })
-      await page.goto(route)
+      const response = await page.goto(route)
+
+      // The 404 page is accessible. That is not what this suite is for, and a
+      // route that quietly stopped existing — a renamed post, a moved page —
+      // would otherwise be scanned green forever while nobody could reach it.
+      expect(response?.status(), `${route} did not return 200`).toBe(200)
 
       // Contrast is measured against rendered pixels, so the webfonts have to
       // have landed before axe runs or it can sample a fallback face.
@@ -159,7 +195,36 @@ test('sitemap coverage: every public page is in ROUTES', async ({ request }) => 
 
   expect(paths.length).toBeGreaterThan(0)
 
-  const missing = paths.filter((path) => !ROUTES.includes(path))
+  // ── The exemption, and the two checks that keep it honest ─────────────────
+  //
+  // Posts are exempt from the sitemap→ROUTES direction on purpose: they all
+  // render through one app/pages/blog/[slug].vue, so scanning every one adds
+  // nothing, and requiring it would fail CI on a pure content commit — which
+  // trains people to delete the guard rather than use it.
+  //
+  // What that exemption cannot be allowed to do is let the sample post go
+  // stale. Asserting only that ROUTES *mentions* something under /blog/ is not
+  // enough: rename a post and ROUTES still mentions the old slug, the scan
+  // fetches a 404, and axe finds the error page perfectly accessible. So the
+  // sampled posts are checked against the live sitemap, which is the same list
+  // the app actually publishes. (The per-route status assertion above closes
+  // the same hole from the other side, for every route.)
+  const sampled = ROUTES.filter((route) => route.startsWith(BLOG_POST_PREFIX))
+  expect(
+    sampled,
+    'ROUTES must scan at least one blog post — it stands in for all of them.',
+  ).not.toEqual([])
+
+  const stale = sampled.filter((route) => !paths.includes(route))
+  expect(
+    stale,
+    `ROUTES scans blog posts that are not in the sitemap: ${stale.join(', ')}. ` +
+      'A renamed or deleted post leaves the sweep scanning a 404.',
+  ).toEqual([])
+
+  const missing = paths.filter(
+    (path) => !ROUTES.includes(path) && !path.startsWith(BLOG_POST_PREFIX),
+  )
   expect(
     missing,
     `Public pages missing from the a11y sweep: ${missing.join(', ')}. ` +

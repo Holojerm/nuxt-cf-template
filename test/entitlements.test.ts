@@ -9,10 +9,12 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
+import { eq } from 'drizzle-orm'
 import {
   applyPaddleEvent,
   findActiveEntitlement,
   getBillingOverview,
+  isBillingLive,
   paddleEventSchema,
   type PaddleEvent,
 } from '../server/utils/entitlements'
@@ -328,7 +330,7 @@ describe('billing overview', () => {
     )
 
     const overview = await getBillingOverview(db, USER)
-    expect(overview.subscriptionIds).toEqual(['sub_1'])
+    expect(overview.cancellableSubscriptionIds).toEqual(['sub_1'])
     expect(overview.paddleCustomerId).toBe('ctm_9')
     expect(overview.history).toHaveLength(2)
     expect(overview.active?.paddleSubscriptionId).toBe('sub_1')
@@ -337,6 +339,140 @@ describe('billing overview', () => {
   it('has nothing to cancel for a pass-only customer', async () => {
     await applyPaddleEvent(db, passPurchase('txn_1', new Date()))
     const overview = await getBillingOverview(db, USER)
-    expect(overview.subscriptionIds).toEqual([])
+    expect(overview.cancellableSubscriptionIds).toEqual([])
+  })
+})
+
+// ── Paddle's scheduled_change ───────────────────────────────────────────────
+// "Cancel at period end" does not change a subscription's status. Paddle keeps
+// it `active` and hangs `scheduled_change` off the entity until the effective
+// date, so a row that will never be billed again is indistinguishable from one
+// that renews next month unless this is stored. Not storing it meant the
+// deletion guard refused, for up to a year, to delete an account whose
+// subscription was already cancelled — and told the customer to go cancel it.
+//
+// Payloads below are shaped like the real thing (developer.paddle.com), because
+// the field this is about is one `paddleEventSchema` used to strip silently.
+
+function subscriptionEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    event_id: 'evt_1',
+    event_type: 'subscription.updated',
+    data: {
+      id: 'sub_sched',
+      status: 'active',
+      customer_id: 'ctm_1',
+      custom_data: { userId: USER },
+      current_billing_period: { ends_at: '2026-09-01T00:00:00Z' },
+      ...overrides,
+    },
+  }
+}
+
+describe('scheduled_change', () => {
+  async function subscriptionRow() {
+    return db.query.entitlements.findFirst({
+      where: eq(schema.entitlements.paddleSubscriptionId, 'sub_sched'),
+    })
+  }
+
+  it('stores a pending cancel with its effective date', async () => {
+    await applyPaddleEvent(
+      db,
+      paddleEventSchema.parse(
+        subscriptionEvent({
+          scheduled_change: { action: 'cancel', effective_at: '2026-09-01T00:00:00Z' },
+        }),
+      ),
+    )
+
+    const row = await subscriptionRow()
+    expect(row?.status).toBe('active')
+    expect(row?.scheduledChangeAction).toBe('cancel')
+    expect(row?.scheduledChangeAt?.toISOString()).toBe('2026-09-01T00:00:00.000Z')
+  })
+
+  it('makes a pending cancel not billing-live, though its status still says active', async () => {
+    await applyPaddleEvent(
+      db,
+      paddleEventSchema.parse(
+        subscriptionEvent({
+          scheduled_change: { action: 'cancel', effective_at: '2026-09-01T00:00:00Z' },
+        }),
+      ),
+    )
+
+    const row = await subscriptionRow()
+    expect(row!.status).toBe('active')
+    expect(isBillingLive(row!)).toBe(false)
+  })
+
+  it('CLEARS it when Paddle sends scheduled_change: null — the un-cancel case', async () => {
+    // The case that makes `?? null` load-bearing rather than stylistic. Every
+    // subscription.* event carries the full entity, so an explicit null means
+    // the customer withdrew the cancellation. Skipping the column on update
+    // would leave a live subscription looking dead forever, blocking deletion
+    // and telling /account it ends on a date that will never come.
+    await applyPaddleEvent(
+      db,
+      paddleEventSchema.parse(
+        subscriptionEvent({
+          scheduled_change: { action: 'cancel', effective_at: '2026-09-01T00:00:00Z' },
+        }),
+      ),
+    )
+    expect((await subscriptionRow())?.scheduledChangeAction).toBe('cancel')
+
+    await applyPaddleEvent(
+      db,
+      paddleEventSchema.parse(subscriptionEvent({ scheduled_change: null })),
+    )
+
+    const row = await subscriptionRow()
+    expect(row?.scheduledChangeAction).toBeNull()
+    expect(row?.scheduledChangeAt).toBeNull()
+    expect(isBillingLive(row!)).toBe(true)
+  })
+
+  it('clears it when the field is absent entirely, not just explicitly null', async () => {
+    // Paddle omits the key rather than nulling it in some payloads; absent and
+    // null have to mean the same thing here.
+    await applyPaddleEvent(
+      db,
+      paddleEventSchema.parse(
+        subscriptionEvent({ scheduled_change: { action: 'cancel', effective_at: null } }),
+      ),
+    )
+    await applyPaddleEvent(db, paddleEventSchema.parse(subscriptionEvent()))
+
+    expect((await subscriptionRow())?.scheduledChangeAction).toBeNull()
+  })
+
+  it('keeps a pause scheduled without calling the subscription dead', async () => {
+    // A pause resumes and bills again; only a cancel ends the money.
+    await applyPaddleEvent(
+      db,
+      paddleEventSchema.parse(
+        subscriptionEvent({
+          scheduled_change: { action: 'pause', effective_at: '2026-09-01T00:00:00Z' },
+        }),
+      ),
+    )
+
+    const row = await subscriptionRow()
+    expect(row?.scheduledChangeAction).toBe('pause')
+    expect(isBillingLive(row!)).toBe(true)
+  })
+
+  it('tolerates a cancel with no effective date', async () => {
+    await applyPaddleEvent(
+      db,
+      paddleEventSchema.parse(subscriptionEvent({ scheduled_change: { action: 'cancel' } })),
+    )
+
+    const row = await subscriptionRow()
+    expect(row?.scheduledChangeAction).toBe('cancel')
+    expect(row?.scheduledChangeAt).toBeNull()
+    expect(isBillingLive(row!)).toBe(false)
   })
 })

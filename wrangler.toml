@@ -6,14 +6,32 @@
 # which requires `wrangler login` OR CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID env vars.
 #
 # ─── PROJECT NAME ────────────────────────────────────────────────────────────
-# Run `bun run rename <your-name>` — it updates `name`, `database_name`,
-# `bucket_name`, and `NUXT_PUBLIC_APP_NAME` here plus the other five places
-# `my-app` appears (package.json scripts + portless.name, .mcp.json, mcp/).
+# Run `bun run rename <your-name>`. In THIS file it rewrites `name`,
+# `database_name`, `bucket_name`, both queue names and their dead-letter
+# queues, `NUXT_EMAIL_QUEUE_NAME`, `NUXT_PUBLIC_APP_NAME` — and all of that
+# again inside [env.preview], which repeats every binding. It also covers
+# package.json (scripts + portless.name), .mcp.json, and mcp/. Run it once and
+# read what it prints; the placeholders it cannot fill in are listed there.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name = "my-app"
 compatibility_date = "2025-09-01"
-compatibility_flags = ["nodejs_compat"]
+# `queue_consumer_wait_for_wait_until` is not decoration — it PINS today's
+# default, and the email consumer's correctness rests on it.
+#
+# Nitro's `queue()` handler returns synchronously and only `waitUntil`s the
+# hook, so every ack()/retry() in server/plugins/email-queue-consumer.ts runs
+# after the handler has returned. Cloudflare's default is to wait for
+# `waitUntil` promises before acknowledging a batch, which is what makes that
+# safe. The opposite flag, `queue_consumer_no_wait_for_wait_until`, is
+# experimental with no enable date today — but if a `compatibility_date` bump
+# ever makes it the default, every batch would be acked before a single
+# decision was made and `retry()` would silently become a no-op. Mail would
+# disappear while the logs still reported retries.
+#
+# Pinning the disable flag makes a future date bump safe. `compatibility_flags`
+# is inheritable, so [env.preview] gets it too without repeating it.
+compatibility_flags = ["nodejs_compat", "queue_consumer_wait_for_wait_until"]
 
 [[d1_databases]]
 binding = "DB"
@@ -29,8 +47,100 @@ id = "YOUR_KV_NAMESPACE_ID"
 binding = "BLOB"
 bucket_name = "my-app-blob"
 
+# Native rate limiting, the primary limiter for the auth surface.
+# server/utils/rate-limit.ts prefers this and falls back to the KV counter.
+#
+# Three constraints worth knowing before you touch the numbers:
+#
+#   * `period` must be exactly 10 or 60. There is no other value; wrangler
+#     rejects the config rather than rounding, which is the good failure.
+#   * `limit` and `period` are FIXED AT DEPLOY. `limit({ key })` takes only a
+#     key — a caller cannot ask for a different budget at request time. So this
+#     one binding enforces exactly one (limit, period) pair, and every call site
+#     that wants a different pair stays on KV. That rule lives in one place:
+#     NATIVE_LIMITER in server/utils/rate-limit.ts, which must MATCH the two
+#     numbers below. test/rate-limit.test.ts probes the real binding and fails
+#     if they ever drift.
+#   * `namespace_id` is any positive integer, unique per Cloudflare account —
+#     not an id Cloudflare issues you, and nothing to create in the dashboard.
+#     Adding a second limiter means picking a different number here.
+#
+# Sized for the auth surface: server/middleware/auth.ts throttles all of
+# /api/auth/ at 30 requests per 60s, and this is that limit made native.
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 }
+
+# ─── Transactional email queue ───────────────────────────────────────────────
+# server/utils/email.ts hands the built Resend request to this queue instead of
+# POSTing it on the request path; server/plugins/email-queue-consumer.ts
+# delivers it with retries. No consumer binding is needed — a Worker consumes
+# the queues named in [[queues.consumers]] through its `queue()` handler, which
+# Nitro's cloudflare_module preset already exports.
+#
+# YOU MUST CREATE THESE FIRST — `wrangler deploy` fails on a queue that does not
+# exist (unlike the dead-letter queue, which is created for you):
+#
+#     wrangler queues create my-app-email
+#
+# One producer and one consumer naming the SAME queue is a Worker sending to
+# itself. That is a supported pattern and the right one here: there is no second
+# codebase, and the consumer needs the same runtime config (Resend key) the app
+# already has.
+[[queues.producers]]
+binding = "EMAIL_QUEUE"
+queue = "my-app-email"
+
+[[queues.consumers]]
+queue = "my-app-email"
+# 1 second, not the 30s default. The default is tuned for throughput, and it
+# would add up to half a minute to the magic-link email — the one message a user
+# is actively waiting on with a "check your inbox" screen in front of them.
+# Batching is worth little here anyway: each message is a separate Resend POST,
+# so a full batch saves one Worker invocation, not one API call.
+max_batch_timeout = 1
+max_batch_size = 10
+# RETRIES, not deliveries: a message is delivered once and then retried up to
+# this many times, so `message.attempts` runs 1…4. EMAIL_QUEUE_MAX_ATTEMPTS in
+# server/utils/email-queue.ts must therefore be `max_retries + 1`, not this
+# number — it was this number, and the consumer logged "final attempt" on the
+# third of four deliveries. Cloudflare owns the real cap: `message.retry()` on
+# the last delivery is what moves a message to the dead-letter queue.
+max_retries = 3
+# Created automatically on deploy if it doesn't exist. Anything in here is mail
+# that failed four transient attempts: read it with `wrangler queues consumer`
+# or attach a consumer. Note that a PERMANENT failure (a 4xx from Resend — bad
+# `from` domain, suppressed recipient) never lands here; it is acked and logged
+# as `email_permanent_failure` with `dropped: true`, because a fourth identical
+# rejection teaches nothing.
+#
+# PII AT REST. A dead-lettered message is the whole rendered email, so this
+# queue holds recipient addresses and full message bodies, readable by anyone
+# with account access. The consumer is careful never to log those; this queue
+# stores them by design. Drain it rather than letting it accumulate, and
+# remember it exists when you answer a deletion request.
+dead_letter_queue = "my-app-email-dlq"
+
+# ─── Scheduled tasks ─────────────────────────────────────────────────────────
+# Every expression here must appear VERBATIM as a key in `nitro.scheduledTasks`
+# in nuxt.config.ts. That map is what turns a trigger into a task, and the join
+# is an exact string match — a cron listed here with no matching key wakes the
+# Worker on schedule and runs nothing, with no error and no log line.
+#
+# Cron triggers run on UTC, and changes take up to 15 minutes to propagate.
+[triggers]
+crons = ["0 4 * * *"]
+
 [vars]
 NUXT_PUBLIC_APP_NAME = "My App"
+# Which queue server/plugins/email-queue-consumer.ts owns. MUST equal the
+# `queue` in [[queues.consumers]] above — and the [env.preview] copy must equal
+# ITS consumer's queue, which is a different string. That is the whole reason
+# this is a var and not a constant in the bundle: a constant matched production
+# and silently failed to match preview, and a consumer that skips a batch acks
+# it by omission, so every preview email was destroyed without a log line.
+NUXT_EMAIL_QUEUE_NAME = "my-app-email"
 # Canonical public origin, no trailing slash. Emails, sitemap.xml, robots.txt
 # and og: tags build absolute links from this — a webhook has no request to
 # infer it from. Set it to your real domain before the first production deploy.
@@ -43,12 +153,150 @@ NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
 # NUXT_PUBLIC_PADDLE_PRICE_MONTHLY = "pri_..."
 # NUXT_PUBLIC_PADDLE_PRICE_YEARLY = "pri_..."
 # NUXT_PUBLIC_PADDLE_PRICE_PASS = "pri_..."
+# Cloudflare Turnstile site key (public by design — it names the widget, it
+# authorises nothing). Empty = no widget renders and no challenge script loads.
+# Its partner, NUXT_TURNSTILE_SECRET_KEY, is a secret — see the list below.
+# NUXT_PUBLIC_TURNSTILE_SITE_KEY = "0x4AAA..."
 
-# Secrets — set via `wrangler secret put <NAME>`, never in this file:
-#   NUXT_SESSION_PASSWORD        32+ char random string for sealed sessions (required)
+# ─── Preview environment ─────────────────────────────────────────────────────
+#
+# Selected at BUILD time with `CLOUDFLARE_ENV=preview`, NOT with `wrangler
+# --env preview`. That is the single most surprising thing in this file, so it
+# is worth being precise about why.
+#
+# ── How this block reaches Cloudflare ────────────────────────────────────────
+# Nothing deploys this file. `bun run build` generates
+# `.output/server/wrangler.json` and wrangler deploys THAT. Nitro copies this
+# file into it verbatim (triggers, queues and all), and then NuxtHub rewrites
+# the result on the `close` hook — see @nuxthub/core › processWranglerConfigFile:
+#
+#   * with `CLOUDFLARE_ENV=preview` set, it FLATTENS `env.preview` into the top
+#     level — dropping the top-level non-inheritable keys, spreading preview's
+#     over what remains — and deletes the `env` key.
+#   * with it unset, it deletes the `env` key and keeps production's bindings.
+#
+# Either way the generated config ends up with NO environments in it. So
+# `wrangler versions upload --env preview` against `.output` cannot work: there
+# is no `preview` environment left in the file by the time wrangler reads it.
+# The environment is chosen by the build, and the deploy command stays plain.
+# README › Preview environment has the exact dashboard settings.
+#
+# ── Why `name` is set here ───────────────────────────────────────────────────
+# `name` is inheritable, so without this line a preview build would produce a
+# config still named `my-app` — preview bindings on the production Worker,
+# sharing its secrets, one accidental promotion away from being live. Naming it
+# explicitly makes the preview a genuinely separate Worker, which is also what
+# wrangler's own `--env` would have done (`{name}-{env}`).
+#
+# ── Why this block exists ────────────────────────────────────────────────────
+# Without it, a preview build (`wrangler versions upload`, which Workers Builds
+# runs for every non-production branch) uploads a version of the PRODUCTION
+# Worker, carrying production's bindings. A preview URL is public and runs
+# branch code against the live D1, the live R2 bucket, and the live rate-limit
+# counters. Every unreviewed migration, every half-written destructive query,
+# every seeded fixture lands in the real database. That is the default, and it
+# is the reason this is worth the duplication below.
+#
+# ── Why everything is repeated ───────────────────────────────────────────────
+# Bindings and `vars` are NON-INHERITABLE. Wrangler's rule is all-or-nothing:
+# override one of them in an environment and you must override all of them, or
+# validation fails at deploy. NuxtHub's flattening applies the same rule with
+# its own list. So this block is not "the differences" — it is the complete
+# set, and adding a binding above means adding it here too.
+#
+# `compatibility_date`, `compatibility_flags` and `triggers` ARE inherited and
+# are deliberately not repeated: the cron schedule should not drift between
+# environments, and a preview deploy purging its own D1 is correct behaviour.
+#
+# ── Create the resources first ───────────────────────────────────────────────
+# See README › Preview environment for the exact commands. Nothing below works
+# until they exist and the two placeholder ids are replaced.
+
+# Inheritable, so it MUST be set — see "Why `name` is set here" above.
+[env.preview]
+name = "my-app-preview"
+
+[[env.preview.d1_databases]]
+binding = "DB"
+database_name = "my-app-db-preview"
+database_id = "YOUR_PREVIEW_D1_DATABASE_ID"
+migrations_dir = "./server/db/migrations"
+
+[[env.preview.kv_namespaces]]
+binding = "KV"
+id = "YOUR_PREVIEW_KV_NAMESPACE_ID"
+
+[[env.preview.r2_buckets]]
+binding = "BLOB"
+bucket_name = "my-app-blob-preview"
+
+# A DIFFERENT namespace_id from production's 1001, and that is load-bearing
+# rather than tidy. The namespace is scoped to the Cloudflare ACCOUNT, not to
+# the Worker, so reusing 1001 would put preview traffic and production traffic
+# in the same counters — a branch under test could rate-limit real users out of
+# signing in. The (limit, period) pair still has to match NATIVE_LIMITER in
+# server/utils/rate-limit.ts, so those two numbers stay identical.
+#
+# This one is also REQUIRED rather than optional, for a reason specific to this
+# stack: `ratelimits` is absent from NuxtHub's own non-inheritable list, so
+# without this block a preview build would inherit namespace_id 1001 — the very
+# sharing the paragraph above exists to prevent.
+[[env.preview.ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1002"
+simple = { limit = 30, period = 60 }
+
+[[env.preview.queues.producers]]
+binding = "EMAIL_QUEUE"
+queue = "my-app-email-preview"
+
+[[env.preview.queues.consumers]]
+queue = "my-app-email-preview"
+max_batch_timeout = 1
+max_batch_size = 10
+max_retries = 3
+dead_letter_queue = "my-app-email-preview-dlq"
+
+[env.preview.vars]
+NUXT_PUBLIC_APP_NAME = "My App (preview)"
+# The PREVIEW queue's name — deliberately different from the one in [vars], and
+# the reason that value cannot be a compile-time constant.
+NUXT_EMAIL_QUEUE_NAME = "my-app-email-preview"
+# The preview Worker's own origin. `wrangler versions upload` also mints a
+# per-version URL that this cannot know in advance; this value is what emails,
+# canonical tags and sitemap entries are built from, so pointing it at the
+# stable preview origin keeps them from claiming to be production.
+NUXT_PUBLIC_APP_URL = "https://my-app-preview.workers.dev"
+NUXT_PUBLIC_SUPPORT_EMAIL = "support@example.com"
+NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
+# The point of the whole block, from an SEO angle: robots.txt disallows
+# everything, every page renders noindex, and sitemap.xml and llms.txt go empty.
+# A public preview URL indexed alongside production splits your ranking between
+# two copies of the same site.
+NUXT_PUBLIC_INDEXABLE = "false"
+
+# Secrets — set via `wrangler secret put <NAME>`, never in this file.
+# Secrets are per-environment too: add `--env preview` to set them on the
+# preview Worker, which starts with none of production's.
+#
+#   wrangler secret put NUXT_SESSION_PASSWORD --env preview
+#
+# The list:
+#   NUXT_SESSION_PASSWORD        32+ char random string for sealed sessions (required).
+#                                Safe to rotate — signing everyone out is the
+#                                users.sessions_invalid_before watermark, not this — and
+#                                rotating it does NOT re-arm spent referral welcome
+#                                trials, whose salt is a generated row in D1
+#                                (instance_secrets; see server/utils/identity.ts).
 #   NUXT_OAUTH_GITHUB_CLIENT_ID / _SECRET    GitHub sign-in
 #   NUXT_OAUTH_GOOGLE_CLIENT_ID / _SECRET    Google sign-in
 #   NUXT_PADDLE_WEBHOOK_SECRET   Paddle → Developer tools → Notifications
 #   NUXT_PADDLE_API_KEY          only needed for the customer-portal link
 #   NUXT_RESEND_API_KEY          transactional email; unset = emails no-op
 #   NUXT_RESEND_FROM             e.g. "My App <hello@myapp.com>" (verified domain)
+#   NUXT_TURNSTILE_SECRET_KEY    bot check on the public forms; unset = skipped.
+#                                Pairs with NUXT_PUBLIC_TURNSTILE_SITE_KEY below —
+#                                set BOTH or neither. Site key alone renders a
+#                                widget nobody verifies (server/utils/turnstile.ts
+#                                logs `turnstile_half_configured` when it sees that).
+#                                Both from dash.cloudflare.com → Turnstile → Add site.

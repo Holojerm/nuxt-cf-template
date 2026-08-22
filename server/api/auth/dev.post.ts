@@ -31,6 +31,15 @@ export default defineEventHandler(async (event) => {
 
   const { email, name } = await readValidatedBody(event, bodySchema.parse)
 
+  // The same reserved-address rule the magic-link endpoint enforces. Nothing
+  // here is reachable in production, so this is consistency rather than
+  // defence: a developer poking at a deleted account's tombstone address should
+  // meet the same wall locally that a stranger would meet in production, or the
+  // local behaviour teaches the wrong model. See isUndeliverableAddress().
+  if (isUndeliverableAddress(email)) {
+    throw createError({ statusCode: 400, message: 'Reserved address' })
+  }
+
   const { user, created } = await establishSession(event, {
     profile: { provider: 'dev', email, name: name ?? null, avatarUrl: null },
     emailVerified: true, // there is no provider to verify against; dev only

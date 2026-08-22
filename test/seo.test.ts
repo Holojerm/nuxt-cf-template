@@ -7,9 +7,21 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { buildLlmsTxt, buildRobotsTxt, AI_CRAWLERS } from '../server/utils/seo'
+import {
+  blogPostLastmod,
+  buildLlmsTxt,
+  buildRobotsTxt,
+  buildSitemap,
+  crawlerCacheControl,
+  llmsTxtResponse,
+  sitemapResponse,
+  AI_CRAWLERS,
+  CRAWLER_CACHE_CONTROL,
+  DEGRADED_CACHE_CONTROL,
+} from '../server/utils/seo'
 import type { SiteContext } from '../shared/utils/schema'
 import {
+  blogPostingSchema,
   faqSchema,
   jsonLdGraph,
   offerSchema,
@@ -199,6 +211,254 @@ describe('softwareApplicationSchema', () => {
   })
 })
 
+describe('blogPostingSchema', () => {
+  const POST = {
+    url: 'https://example.com/blog/how-billing-works',
+    title: 'How the billing model works',
+    description: 'Two products, one entitlements table.',
+    datePublished: '2026-06-18',
+    author: 'Ada Lovelace',
+  }
+
+  it('dates the article, and defaults dateModified to the publication date', () => {
+    // An undated article is one an answer engine will happily quote as current
+    // two years from now. dateModified must never be absent, so an unrevised
+    // post says "modified when it was published" rather than saying nothing.
+    const node = blogPostingSchema(SITE, POST)
+    expect(node?.datePublished).toBe('2026-06-18')
+    expect(node?.dateModified).toBe('2026-06-18')
+
+    const revised = blogPostingSchema(SITE, { ...POST, dateModified: '2026-08-05' })
+    expect(revised?.dateModified).toBe('2026-08-05')
+  })
+
+  it('links into the existing graph instead of restating it', () => {
+    const node = blogPostingSchema(SITE, POST)
+    // Its own @id, distinct from the WebPage node useSeo() emits at the bare
+    // URL — two nodes describing one page, not one node overwriting the other.
+    expect(node?.['@id']).toBe('https://example.com/blog/how-billing-works#post')
+    expect(node?.mainEntityOfPage).toEqual({ '@id': 'https://example.com/blog/how-billing-works' })
+    expect(node?.isPartOf).toEqual({ '@id': 'https://example.com/#website' })
+    expect(node?.publisher).toEqual({ '@id': 'https://example.com/#organization' })
+  })
+
+  it('names a byline as a Person', () => {
+    expect(blogPostingSchema(SITE, POST)?.author).toEqual({
+      '@type': 'Person',
+      name: 'Ada Lovelace',
+    })
+  })
+
+  it('attributes the company to the Organization node rather than minting a second one', () => {
+    // Same entity, two spellings, and one of them is already in the graph.
+    // A duplicate Organization would split the site's identity in half.
+    const asCompany = blogPostingSchema(SITE, { ...POST, author: '  my company ltd ' })
+    const unsigned = blogPostingSchema(SITE, { ...POST, author: undefined })
+    const organization = { '@id': 'https://example.com/#organization' }
+
+    expect(asCompany?.author).toEqual(organization)
+    expect(unsigned?.author).toEqual(organization)
+  })
+
+  it('returns null with no origin, like every other builder here', () => {
+    expect(blogPostingSchema({ ...SITE, appUrl: '' }, POST)).toBeNull()
+    expect(blogPostingSchema(SITE, { ...POST, url: '' })).toBeNull()
+  })
+})
+
+describe('buildSitemap', () => {
+  const PAGE = {
+    path: '/pricing',
+    changefreq: 'weekly' as const,
+    priority: '0.8',
+    lastmod: '2026-08-22',
+  }
+  const POST = {
+    path: '/blog/how-billing-works',
+    changefreq: 'monthly' as const,
+    priority: '0.5',
+    lastmod: '2026-06-18',
+  }
+  const BASE = { appUrl: 'https://example.com', indexable: true, entries: [PAGE, POST] }
+
+  it('gives a blog post its own lastmod rather than the build date', () => {
+    // The whole reason the sitemap route queries the collection: a post knows
+    // when it was written, and a crawler that sees every URL change on every
+    // deploy stops believing any of them.
+    const xml = buildSitemap(BASE)
+    expect(xml).toContain('<loc>https://example.com/blog/how-billing-works</loc>')
+    expect(xml).toContain('<lastmod>2026-06-18</lastmod>')
+    expect(xml).toContain('<lastmod>2026-08-22</lastmod>')
+    expect(xml.match(/<url>/g)).toHaveLength(2)
+  })
+
+  it('emits well-formed but empty XML when there is nothing to publish', () => {
+    // Empty, never broken: a malformed sitemap is a crawl error that lingers in
+    // Search Console, while an empty one is simply a true statement.
+    for (const input of [
+      { ...BASE, entries: [] },
+      { ...BASE, indexable: false },
+      { ...BASE, appUrl: '' },
+    ]) {
+      const xml = buildSitemap(input)
+      expect(xml).toContain('<urlset')
+      expect(xml).not.toContain('<url>')
+    }
+  })
+
+  it('reports the revision date once a post has one', () => {
+    // The reason a post's lastmod is worth querying for at all: a revised post
+    // should be recrawled, and an unrevised one should not claim it was.
+    expect(blogPostLastmod({ date: '2026-06-18' })).toBe('2026-06-18')
+    expect(blogPostLastmod({ date: '2026-06-18', updated: '2026-08-05' })).toBe('2026-08-05')
+    // Nullable in SQLite, so an empty string has to fall back rather than
+    // publishing `<lastmod></lastmod>`.
+    expect(blogPostLastmod({ date: '2026-06-18', updated: '' })).toBe('2026-06-18')
+  })
+
+  it('escapes the location and never doubles the origin slash', () => {
+    const xml = buildSitemap({
+      ...BASE,
+      appUrl: 'https://example.com/',
+      entries: [{ ...PAGE, path: '/search?q=a&b' }],
+    })
+    expect(xml).not.toContain('example.com//')
+    expect(xml).toContain('<loc>https://example.com/search</loc>')
+  })
+
+  it('escapes every value in the row, not just the URL', () => {
+    // `lastmod` looks like it cannot contain markup, but nothing enforces its
+    // shape at runtime: @nuxt/content builds SQL columns from the collection
+    // schema without ever running its refinements, so the value is whatever a
+    // human typed into frontmatter. One `<` there would break the document for
+    // every crawler, not just for the post that caused it.
+    const xml = buildSitemap({
+      ...BASE,
+      entries: [{ ...PAGE, lastmod: '2026-06-18<!--', priority: '0.5 & up' }],
+    })
+    expect(xml).toContain('<lastmod>2026-06-18&lt;!--</lastmod>')
+    expect(xml).toContain('<priority>0.5 &amp; up</priority>')
+    expect(xml).not.toContain('<!--')
+  })
+})
+
+describe('the crawler files under a failed blog query', () => {
+  // Both routes deliberately keep serving when the content collection cannot be
+  // read: a document missing its posts beats a 500. The danger is the second
+  // half of that decision. A crawler cannot tell "the query failed" from "the
+  // posts were deleted", so serving the degraded answer with the usual one-hour
+  // public cache turns a momentary D1 blip into an hour of Google believing the
+  // blog was removed — and the docstring on tryListBlogPosts() names the most
+  // likely trigger as the first request after a deploy.
+  //
+  // These assert the pairing at the only seam a test can reach. The routes
+  // themselves cannot be imported here (the pool has no Nitro auto-imports and
+  // no `#content/*` build aliases), which is exactly why every decision they
+  // make was moved into the two functions below.
+  const PAGES = [
+    {
+      path: '/pricing',
+      changefreq: 'weekly' as const,
+      priority: '0.8',
+      title: 'Pricing',
+      summary: 'Every plan and what it costs.',
+    },
+  ]
+  const POSTS = [{ path: '/blog/how-billing-works', date: '2026-06-18' }]
+  const SITEMAP = {
+    appUrl: 'https://example.com',
+    indexable: true,
+    buildDate: '2026-08-22',
+    pages: PAGES,
+    posts: POSTS,
+  }
+  const LLMS = {
+    appName: 'My App',
+    appUrl: 'https://example.com',
+    description: 'A template.',
+    supportEmail: 'support@example.com',
+    legalEntity: 'My Company Ltd',
+    pages: PAGES,
+    posts: [
+      {
+        path: '/blog/how-billing-works',
+        title: 'How the billing model works',
+        description: 'Two products, one entitlements table.',
+        date: '2026-06-18',
+      },
+    ],
+  }
+
+  it('caches sitemap.xml for an hour only when the post list is trustworthy', () => {
+    expect(sitemapResponse({ ...SITEMAP, complete: true }).cacheControl).toBe(CRAWLER_CACHE_CONTROL)
+    const degraded = sitemapResponse({ ...SITEMAP, posts: [], complete: false })
+    expect(degraded.cacheControl).toBe(DEGRADED_CACHE_CONTROL)
+    // Still a real document — the static pages survive the blog going dark.
+    expect(degraded.body).toContain('<loc>https://example.com/pricing</loc>')
+    expect(degraded.body).not.toContain('/blog/')
+  })
+
+  it('caches llms.txt for an hour only when the post list is trustworthy', () => {
+    expect(llmsTxtResponse({ ...LLMS, complete: true }).cacheControl).toBe(CRAWLER_CACHE_CONTROL)
+    const degraded = llmsTxtResponse({ ...LLMS, posts: [], complete: false })
+    expect(degraded.cacheControl).toBe(DEGRADED_CACHE_CONTROL)
+    expect(degraded.body).toContain('## Pages')
+    expect(degraded.body).not.toContain('## Blog')
+  })
+
+  it('does not treat a deliberately empty document as a failure', () => {
+    // A preview deploy publishes an empty sitemap on purpose. That answer is
+    // stable and belongs in a cache; only degradation does not.
+    const suppressed = sitemapResponse({ ...SITEMAP, indexable: false, complete: true })
+    expect(suppressed.cacheControl).toBe(CRAWLER_CACHE_CONTROL)
+    expect(suppressed.body).not.toContain('<url>')
+  })
+
+  it('is one decision, so the two documents can never disagree', () => {
+    expect(crawlerCacheControl(true)).toBe(CRAWLER_CACHE_CONTROL)
+    expect(crawlerCacheControl(false)).toBe(DEGRADED_CACHE_CONTROL)
+    expect(DEGRADED_CACHE_CONTROL).toBe('no-store')
+  })
+})
+
+describe('sitemapResponse', () => {
+  it('dates static pages from the build and posts from their own frontmatter', () => {
+    const { body } = sitemapResponse({
+      appUrl: 'https://example.com',
+      indexable: true,
+      buildDate: '2026-08-22',
+      pages: [
+        {
+          path: '/pricing',
+          changefreq: 'weekly',
+          priority: '0.8',
+          title: 'Pricing',
+          summary: '…',
+        },
+      ],
+      posts: [
+        { path: '/blog/older', date: '2026-06-18' },
+        { path: '/blog/revised', date: '2026-07-09', updated: '2026-08-05' },
+      ],
+      complete: true,
+    })
+
+    // The whole reason the sitemap queries the collection at all.
+    expect(body).toContain(
+      '<loc>https://example.com/pricing</loc>\n    <lastmod>2026-08-22</lastmod>',
+    )
+    expect(body).toContain(
+      '<loc>https://example.com/blog/older</loc>\n    <lastmod>2026-06-18</lastmod>',
+    )
+    expect(body).toContain(
+      '<loc>https://example.com/blog/revised</loc>\n    <lastmod>2026-08-05</lastmod>',
+    )
+    // Posts are ranked below the marketing pages they support.
+    expect(body).toContain('<priority>0.5</priority>')
+    expect(body).toContain('<changefreq>monthly</changefreq>')
+  })
+})
+
 describe('faqSchema', () => {
   it('returns null for an empty FAQ instead of an empty FAQPage', () => {
     expect(faqSchema([])).toBeNull()
@@ -294,5 +554,33 @@ describe('buildLlmsTxt', () => {
     const body = buildLlmsTxt({ ...INPUT, pages: [] })
     expect(body).not.toContain('## Pages')
     expect(body).toContain('## About')
+  })
+
+  it('lists blog posts under their own heading, with the date on the line', () => {
+    const body = buildLlmsTxt({
+      ...INPUT,
+      posts: [
+        {
+          path: '/blog/how-billing-works',
+          title: 'How the billing model works',
+          description: 'Two products, one entitlements table.',
+          date: '2026-06-18',
+        },
+      ],
+    })
+    expect(body).toContain('## Blog')
+    expect(body).toContain(
+      '- [How the billing model works](https://example.com/blog/how-billing-works): ' +
+        'Two products, one entitlements table. (published 2026-06-18)',
+    )
+    // Pages first, posts second, About last — a model reading top-down should
+    // meet the product before the commentary on it.
+    expect(body.indexOf('## Pages')).toBeLessThan(body.indexOf('## Blog'))
+    expect(body.indexOf('## Blog')).toBeLessThan(body.indexOf('## About'))
+  })
+
+  it('omits the Blog section entirely when there are no posts', () => {
+    expect(buildLlmsTxt(INPUT)).not.toContain('## Blog')
+    expect(buildLlmsTxt({ ...INPUT, posts: [] })).not.toContain('## Blog')
   })
 })

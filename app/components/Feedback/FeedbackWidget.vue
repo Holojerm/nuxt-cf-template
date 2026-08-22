@@ -20,10 +20,45 @@ const props = withDefaults(defineProps<Props>(), {
   label: 'Feedback',
 })
 
+// Fires after a successful submission — the only consumer today is the
+// inline instance embedded in the onboarding checklist's "send feedback"
+// step (app/components/Onboarding/Checklist.vue), which has no other way
+// to learn that its own embedded widget just did something that could
+// change what the checklist shows.
+const emit = defineEmits<{ submitted: [] }>()
+
 const open = ref(false)
 const toast = useToast()
 const { loggedIn } = useUserSession()
 const { submit, pending } = useFeedback()
+
+// Turnstile, for signed-out submitters only — matching what the server
+// enforces (server/api/feedback.post.ts). Gated on the site key rather than on
+// the module being installed, so a fork without a Turnstile account renders no
+// widget and fetches no challenge script. `challengeRequired` is what the
+// template branches on; both halves of that condition matter.
+const turnstileSiteKey = useRuntimeConfig().public.turnstile.siteKey
+const challengeRequired = computed(() => Boolean(turnstileSiteKey) && !loggedIn.value)
+const turnstileToken = ref('')
+
+/**
+ * The widget instance, because clearing the v-model is NOT how you get a new
+ * challenge.
+ *
+ * `<NuxtTurnstile>` writes into the model when Cloudflare hands it a token; it
+ * never watches the model to decide whether to re-issue. Writing `''` back
+ * therefore leaves the component holding a spent token and the submit button
+ * disabled on `!turnstileToken` — with nothing to re-enable it until the
+ * component's own ~4-minute refresh timer fires. One rejected challenge and the
+ * form was dead for four minutes. `reset()` is the documented way to ask for
+ * another, and it is what login.vue already does.
+ */
+const turnstile = ref<{ reset: () => void } | null>(null)
+
+function resetChallenge() {
+  turnstileToken.value = ''
+  turnstile.value?.reset()
+}
 
 // Mirrors server/utils/feedback.ts — the server re-validates either way.
 const schema = z.object({
@@ -52,6 +87,7 @@ function reset() {
   state.kind = 'idea'
   state.message = ''
   state.email = ''
+  resetChallenge()
 }
 
 async function onSubmit(event: FormSubmitEvent<Schema>) {
@@ -59,9 +95,14 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
     kind: event.data.kind,
     message: event.data.message,
     email: event.data.email || null,
+    turnstileToken: turnstileToken.value || null,
   })
 
   if (!sent) {
+    // A rejected challenge lands here too. Tokens are single-use and expire
+    // after five minutes, so a retry has to start from a fresh one — and only
+    // reset() asks for one. See resetChallenge().
+    resetChallenge()
     toast.add({
       title: 'That didn’t send',
       description: 'Something went wrong on our end. Please try again.',
@@ -79,6 +120,7 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
     color: 'success',
     icon: 'i-lucide-check',
   })
+  emit('submitted')
 }
 </script>
 
@@ -123,9 +165,26 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
           <UInput v-model="state.email" type="email" class="w-full" placeholder="you@example.com" />
         </UFormField>
 
+        <!-- Only for signed-out submitters, and only once a site key exists.
+             Renders nothing — and loads nothing from challenges.cloudflare.com —
+             in a fork that hasn't configured Turnstile. -->
+        <UFormField
+          v-if="challengeRequired"
+          label="Confirm you’re human"
+          name="turnstile"
+          description="A quick automated check. Usually nothing to click."
+        >
+          <NuxtTurnstile ref="turnstile" v-model="turnstileToken" />
+        </UFormField>
+
         <div class="flex justify-end gap-2">
           <UButton color="neutral" variant="ghost" label="Cancel" @click="open = false" />
-          <UButton type="submit" label="Send feedback" :loading="pending" />
+          <UButton
+            type="submit"
+            label="Send feedback"
+            :loading="pending"
+            :disabled="challengeRequired && !turnstileToken"
+          />
         </div>
       </UForm>
     </template>

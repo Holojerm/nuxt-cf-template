@@ -11,6 +11,8 @@
 //   completeOAuthSignIn()  → wraps it in the 302s an OAuth callback must return.
 
 import type { H3Event } from 'h3'
+import type { UserSession } from '#auth-utils'
+import type { Attribution } from '#shared/utils/attribution'
 import { ATTRIBUTION_COOKIE, readAttributionCookie } from '#shared/utils/attribution'
 import type { OAuthProfile } from './users'
 
@@ -67,6 +69,91 @@ interface EstablishSessionOptions {
    * subscription. Every caller must answer this explicitly.
    */
   emailVerified: boolean
+  /**
+   * First-touch attribution to record if this call creates the account.
+   *
+   * Omit it — the normal case — and it is read from the `attr` cookie on THIS
+   * request, which is correct for an OAuth callback: the browser that started
+   * the flow is the browser that finishes it.
+   *
+   * Magic-link sign-in is the exception, and it is why this option exists. That
+   * flow routinely finishes on a different device from the one that asked for
+   * the link, where no `attr` cookie has ever been set, so it captures
+   * attribution at mint time and hands it back here explicitly
+   * (server/utils/magic-link.ts). Passing `null` asserts "there is none" and
+   * suppresses the cookie fallback; leaving it `undefined` keeps the fallback.
+   */
+  attribution?: Attribution | null
+}
+
+/**
+ * The exact top-level shape of a sealed session. See the note at its call site.
+ *
+ * Derived from `UserSession` rather than written out, so that adding a field
+ * there without adding it below is a type error here rather than a silent
+ * carry-over of the previous user's value. `id` is omitted because h3 owns it.
+ */
+export type SessionPayload = Omit<UserSession, 'id'>
+
+/** The keys `buildSessionPayload` must write. Asserted by test/session-payload.test.ts. */
+export const SESSION_PAYLOAD_KEYS = ['user', 'issuedAt'] as const
+
+/**
+ * Run something that happens AFTER the session cookie is sealed, and never let
+ * it fail the sign-in.
+ *
+ * ── Why this is a function and not a bare try/catch ──────────────────────────
+ * Because the rule it enforces is easy to state and easy to forget: once
+ * `replaceUserSession` has run, the user IS signed in — but the caller is still
+ * inside `completeOAuthSignIn`'s try/catch, which turns any throw into
+ * `sign_in_failed`. On the magic-link path that is unrecoverable, because the
+ * token was consumed one statement earlier: the person is told sign-in failed,
+ * and their link is already spent.
+ *
+ * The welcome email is what sits there today, and it looked safe because
+ * `sendEmail` never throws — but the two calls around it do. `isNotificationEnabled`
+ * is a D1 read and `buildUnsubscribeUrl` is an HKDF derivation that throws on a
+ * missing session password. Anything added to that tail in future gets the same
+ * protection by being put inside this.
+ */
+export async function afterSignIn(label: string, work: () => Promise<void>): Promise<void> {
+  try {
+    await work()
+  } catch (error) {
+    console.warn(JSON.stringify({ kind: 'after_sign_in_failed', label, error: String(error) }))
+  }
+}
+
+/**
+ * Build the whole session payload, every key written explicitly.
+ *
+ * Pure, and exported, for one reason: `replaceUserSession` shallow-merges over
+ * the previous session rather than replacing it (the mechanism is written out
+ * at the call site), so "every top-level key of `UserSession` is written here"
+ * is a real invariant with a real failure mode — the previous account's value
+ * surviving a sign-in on a shared browser. test/session-payload.test.ts asserts
+ * the key set so adding a field to `UserSession` and forgetting this fails
+ * loudly instead of silently.
+ *
+ * `issuedAt` is what makes revocation possible at all: a sealed cookie has no
+ * server-side record to delete, so the only way to invalidate one is to date it
+ * and compare against `users.sessions_invalid_before`. Seconds, matching the
+ * resolution D1 stores timestamps at.
+ */
+export function buildSessionPayload(
+  user: { id: string; email: string; name: string; avatarUrl: string | null; role: string },
+  now: number = Date.now(),
+): SessionPayload {
+  return {
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+      role: user.role,
+    },
+    issuedAt: Math.floor(now / 1000),
+  }
 }
 
 /**
@@ -76,7 +163,7 @@ interface EstablishSessionOptions {
  */
 export async function establishSession(
   event: H3Event,
-  { profile, emailVerified }: EstablishSessionOptions,
+  { profile, emailVerified, attribution: providedAttribution }: EstablishSessionOptions,
 ) {
   if (!profile.email) {
     console.warn(JSON.stringify({ kind: 'auth_no_email', provider: profile.provider }))
@@ -97,7 +184,18 @@ export async function establishSession(
   // parses it through a strict, length-capped Zod schema and returns null for
   // anything else, so a hand-crafted cookie can dirty one row's marketing
   // columns and nothing more.
-  const attribution = readAttributionCookie(getCookie(event, ATTRIBUTION_COOKIE))
+  // The caller may have captured it earlier on a different device — see
+  // `attribution` on EstablishSessionOptions.
+  //
+  // Read ONLY when the caller did not decide. There is no merging: a caller
+  // that supplies attribution (the magic-link path) has already decided, and
+  // topping it up from this request's cookie is how a shared browser credits a
+  // stranger's referral link — see the note in
+  // server/api/auth/magic-link/verify.post.ts.
+  const attribution =
+    providedAttribution !== undefined
+      ? providedAttribution
+      : readAttributionCookie(getCookie(event, ATTRIBUTION_COOKIE))
 
   const { user, created } = await upsertOAuthUser(db, profile, attribution)
 
@@ -105,15 +203,25 @@ export async function establishSession(
   // from this browser (shared machines, and every demo you ever give).
   if (created && attribution) deleteCookie(event, ATTRIBUTION_COOKIE, { path: '/' })
 
-  await setUserSession(event, {
-    user: {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      avatarUrl: user.avatarUrl,
-      role: user.role,
-    },
-  })
+  // ── replaceUserSession does not, in fact, replace ──────────────────────────
+  // Read the h3 source before trusting the name. `replaceUserSession` calls
+  // `session.clear()` then `session.update(data)`. `clearSession` deletes the
+  // cached session off `event.context` and queues an outgoing clear cookie — it
+  // does not touch the INCOMING `Cookie` header. `update` then finds no cached
+  // session, re-unseals the request's cookie, and shallow-merges `data` over
+  // the old contents. So it is "shallow merge over whatever was there", one
+  // level deep, and the only reason nothing leaks today is that the payload
+  // below writes every top-level key of `UserSession`.
+  //
+  // That is the invariant to keep, and buildSessionPayload() exists to make it
+  // checkable rather than remembered: add a key to `UserSession`
+  // (app/types/auth.d.ts) without adding it here and the previous user's value
+  // for it survives a sign-in. test/session-payload.test.ts pins the key set.
+  //
+  // It is still the right call over `setUserSession`, which deep-merges through
+  // defu and additionally skips nulls — so a null avatarUrl would inherit the
+  // previous account's picture rather than clearing it.
+  await replaceUserSession(event, buildSessionPayload(user))
 
   await captureServerEvent({
     distinctId: user.id,
@@ -132,11 +240,64 @@ export async function establishSession(
     },
   })
 
+  // ── Nothing past the session write may fail the sign-in ────────────────────
+  // The cookie is sealed by this point, so the user IS signed in — but the
+  // caller is still inside a try/catch that turns a throw into `sign_in_failed`.
+  // On the magic-link path that is unrecoverable: the token was consumed one
+  // statement earlier, so the person is told sign-in failed and their link is
+  // already spent. `sendEmail` never throws, but the two calls around it do:
+  // `isNotificationEnabled` is a D1 read, and `buildUnsubscribeUrl` does an HKDF
+  // derivation that throws on a missing session password. A welcome email is not
+  // permitted to cost somebody their account.
   if (created) {
-    // Awaited, not floated: Workers can tear down the isolate the moment the
-    // response is sent, so a dangling promise here is a welcome email that
-    // sometimes doesn't exist. sendEmail never throws.
-    await sendEmail({ to: user.email, ...welcomeEmail(emailBranding(), { name: user.name }) })
+    await afterSignIn('welcome_email', async () => {
+      // Welcome is the one optional email that exists today, so it's the one
+      // wired through the preferences reader + List-Unsubscribe header. A
+      // brand-new user can't have a preference row yet, so this check is
+      // always true in practice — kept anyway so the next optional email added
+      // here doesn't have to remember to add it.
+      if (await isNotificationEnabled(db, user.id, 'welcome')) {
+        const config = useRuntimeConfig(event)
+        const unsubscribeUrl = await buildUnsubscribeUrl(
+          config.sessionPassword,
+          config.public.appUrl,
+          user.id,
+          'welcome',
+        )
+        // Awaited, not floated: Workers can tear down the isolate the moment the
+        // response is sent, so a dangling promise here is a welcome email that
+        // sometimes doesn't exist. sendEmail never throws.
+        await sendEmail({
+          to: user.email,
+          ...welcomeEmail(emailBranding(), { name: user.name }),
+          unsubscribe: { eventType: 'welcome', url: unsubscribeUrl },
+        })
+      }
+    })
+  }
+
+  // ── The referee's half of the referral loop ────────────────────────────────
+  // Only on a brand-new account that resolved a referral code moments ago
+  // (upsertOAuthUser writes `referred_by` on the INSERT branch, and only when
+  // the code named a real, live, other account).
+  //
+  // Inside afterSignIn for the reason that helper exists: the session cookie is
+  // already sealed, so a throw here would tell someone sign-in failed while
+  // they are, in fact, signed in — and on the magic-link path their token is
+  // already spent. grantRefereeWelcome() never throws either; both guards are
+  // deliberate, because free trial days are never worth an account creation.
+  if (created && user.referredBy) {
+    await afterSignIn('referral_welcome', async () => {
+      // The welcome ref is a salted hash of the MAILBOX — that is what makes
+      // the trial once-per-inbox instead of once-per-account, and therefore not
+      // renewable by deleting and re-registering. Its salt is provisioned in D1
+      // rather than configured (server/utils/identity.ts); `sessionPassword` is
+      // passed for one job only, recognising refs minted under the previous
+      // construction, and can be deleted with that check.
+      await grantRefereeWelcome(db, user, {
+        sessionPassword: useRuntimeConfig(event).sessionPassword,
+      })
+    })
   }
 
   return { user, created }
