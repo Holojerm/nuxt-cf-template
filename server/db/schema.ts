@@ -425,8 +425,9 @@ export const files = sqliteTable(
     mimeType: text('mime_type').notNull(),
     sizeBytes: integer('size_bytes').notNull(),
     r2Key: text('r2_key').notNull().unique(),
-    // pending | uploaded. The row is written before the object exists (the client
-    // uploads to R2 directly), so `pending` is the honest default and a row that
+    // pending | uploaded. The row is written before the object exists in R2 —
+    // the server writes it there itself (server/api/files/index.post.ts), not
+    // the client directly — so `pending` is the honest default and a row that
     // never reaches `uploaded` is an abandoned upload for a sweeper to collect.
     status: text('status').notNull().default('pending'),
     // pending → uploaded is a real transition, so updated_at means something here

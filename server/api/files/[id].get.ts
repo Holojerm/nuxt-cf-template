@@ -41,6 +41,13 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, message: 'File not found' })
   }
 
-  setHeader(event, 'Content-Disposition', contentDispositionValue(file.filename))
+  // PDFs are forced to download rather than render in-browser — see
+  // dispositionForMimeType() (server/utils/files.ts) for why an `inline`
+  // PDF at this app's origin is a bigger risk than an `inline` image.
+  setHeader(
+    event,
+    'Content-Disposition',
+    contentDispositionValue(file.filename, dispositionForMimeType(file.mimeType)),
+  )
   return blob.serve(event, file.r2Key)
 })

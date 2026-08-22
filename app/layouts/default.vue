@@ -20,7 +20,17 @@ const navLinks = computed(() => [
   // view. It is also the internal link that tells a crawler /blog exists
   // without waiting for the sitemap.
   { label: 'Blog', to: '/blog' },
-  ...(loggedIn.value ? [{ label: 'Dashboard', to: '/dashboard' }] : []),
+  // Files is paying-only (middleware: ['auth', 'subscription']), but gated
+  // on `loggedIn` here, same as Dashboard just above — a signed-in visitor
+  // without a subscription clicking either link lands on /pricing via that
+  // page's own middleware, rather than this nav trying to duplicate the
+  // subscription check just to decide whether to show a link.
+  ...(loggedIn.value
+    ? [
+        { label: 'Dashboard', to: '/dashboard' },
+        { label: 'Files', to: '/files' },
+      ]
+    : []),
 ])
 
 // Mobile nav drawer. Two links don't need one — five do, and this is the seam a

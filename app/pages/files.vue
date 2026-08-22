@@ -22,14 +22,58 @@ interface FilesResponse {
 const toast = useToast()
 const { data, status, refresh } = await useFetch<FilesResponse>('/api/files')
 
-const files = computed(() => data.value?.files ?? [])
+// ── Pagination ───────────────────────────────────────────────────────────────
+// `files`/`nextCursor` are local state, not computed straight off `data`:
+// `data` only ever holds ONE page (whatever /api/files last returned), and
+// "Load more" needs to APPEND a second page onto the first rather than
+// replace it. The watcher below is what keeps them in sync with `data` for
+// every load that SHOULD replace the list — the initial fetch and any
+// refresh() (upload, delete) — while loadMore() below updates them directly
+// without ever touching `data` or re-running this watcher.
+const files = ref<FileView[]>([])
+const nextCursor = ref<string | null>(null)
+const loadingMore = ref(false)
+
+watch(
+  data,
+  (value) => {
+    files.value = value?.files ?? []
+    nextCursor.value = value?.nextCursor ?? null
+  },
+  { immediate: true },
+)
+
+async function loadMore() {
+  if (!nextCursor.value || loadingMore.value) return
+  loadingMore.value = true
+  try {
+    const page = await $fetch<FilesResponse>('/api/files', {
+      query: { cursor: nextCursor.value },
+    })
+    files.value = [...files.value, ...page.files]
+    nextCursor.value = page.nextCursor
+  } catch {
+    // The 400-on-a-bad-cursor case (server/api/files/index.get.ts) can't
+    // happen from a token this page minted itself, so anything landing
+    // here is transient — the same "try again" the rest of this page's
+    // error handling reaches for.
+    toast.add({
+      title: 'Could not load more files',
+      description: 'Try again.',
+      color: 'error',
+      icon: 'i-lucide-triangle-alert',
+    })
+  } finally {
+    loadingMore.value = false
+  }
+}
 
 function handleUploaded() {
   // Simplest correct thing: re-fetch rather than splice the new row into
-  // local state by hand. A page that lists at most a couple of pages of
-  // files does not need to optimize this round trip away, and refetching
-  // is what keeps the list's ordering and cursor logic in exactly one
-  // place (server/utils/files.ts › listFiles()).
+  // local state by hand. Re-running the first page (rather than trying to
+  // preserve however many pages "Load more" had already pulled in) is a
+  // deliberate simplification — the same one delete already made — and the
+  // watcher above resets `files`/`nextCursor` to match once `data` updates.
   void refresh()
 }
 
@@ -137,61 +181,75 @@ useSeo({
            in this empty state too. -->
       <p v-else-if="files.length === 0" class="text-muted">You haven't uploaded anything yet.</p>
 
-      <div v-else class="overflow-x-auto rounded-lg border border-default">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-default text-left text-muted">
-              <th scope="col" class="px-4 py-3 font-medium">Name</th>
-              <th scope="col" class="px-4 py-3 font-medium">Status</th>
-              <th scope="col" class="px-4 py-3 text-right font-medium">Size</th>
-              <th scope="col" class="px-4 py-3 font-medium">Uploaded</th>
-              <th scope="col" class="px-4 py-3">
-                <span class="sr-only">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-default">
-            <tr v-for="file in files" :key="file.id">
-              <td class="px-4 py-3 text-default">
-                <a
-                  v-if="file.status === 'uploaded'"
-                  :href="`/api/files/${file.id}`"
-                  target="_blank"
-                  rel="noopener"
-                  class="text-primary underline underline-offset-2"
-                >
-                  {{ file.filename }}
-                </a>
-                <span v-else>{{ file.filename }}</span>
-              </td>
-              <td class="px-4 py-3">
-                <UBadge
-                  :color="statusBadge(file).color"
-                  :icon="statusBadge(file).icon"
-                  variant="subtle"
-                >
-                  {{ statusBadge(file).label }}
-                </UBadge>
-              </td>
-              <td class="px-4 py-3 text-right font-mono text-muted">
-                {{ formatFileSize(file.sizeBytes) }}
-              </td>
-              <td class="px-4 py-3 text-muted">{{ formattedDate(file.createdAt) }}</td>
-              <td class="px-4 py-3 text-right">
-                <UButton
-                  icon="i-lucide-trash-2"
-                  color="error"
-                  variant="ghost"
-                  size="sm"
-                  class="min-touch"
-                  :aria-label="`Delete ${file.filename}`"
-                  @click="confirmDelete(file)"
-                />
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <template v-else>
+        <div class="overflow-x-auto rounded-lg border border-default">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-default text-left text-muted">
+                <th scope="col" class="px-4 py-3 font-medium">Name</th>
+                <th scope="col" class="px-4 py-3 font-medium">Status</th>
+                <th scope="col" class="px-4 py-3 text-right font-medium">Size</th>
+                <th scope="col" class="px-4 py-3 font-medium">Uploaded</th>
+                <th scope="col" class="px-4 py-3">
+                  <span class="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-default">
+              <tr v-for="file in files" :key="file.id">
+                <td class="px-4 py-3 text-default">
+                  <a
+                    v-if="file.status === 'uploaded'"
+                    :href="`/api/files/${file.id}`"
+                    target="_blank"
+                    rel="noopener"
+                    class="text-primary underline underline-offset-2"
+                  >
+                    {{ file.filename }}
+                  </a>
+                  <span v-else>{{ file.filename }}</span>
+                </td>
+                <td class="px-4 py-3">
+                  <UBadge
+                    :color="statusBadge(file).color"
+                    :icon="statusBadge(file).icon"
+                    variant="subtle"
+                  >
+                    {{ statusBadge(file).label }}
+                  </UBadge>
+                </td>
+                <td class="px-4 py-3 text-right font-mono text-muted">
+                  {{ formatFileSize(file.sizeBytes) }}
+                </td>
+                <td class="px-4 py-3 text-muted">{{ formattedDate(file.createdAt) }}</td>
+                <td class="px-4 py-3 text-right">
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    color="error"
+                    variant="ghost"
+                    size="sm"
+                    class="min-touch"
+                    :aria-label="`Delete ${file.filename}`"
+                    @click="confirmDelete(file)"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Secondary action — the uploader above is still the page's one
+             primary button, so this stays a neutral outline, not primary. -->
+        <div v-if="nextCursor" class="mt-4 flex justify-center">
+          <UButton
+            label="Load more"
+            color="neutral"
+            variant="outline"
+            :loading="loadingMore"
+            @click="loadMore"
+          />
+        </div>
+      </template>
     </div>
 
     <UModal
