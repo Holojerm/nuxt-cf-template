@@ -55,10 +55,7 @@ export default defineEventHandler(async (event) => {
   // PDFs are forced to download rather than render in-browser — see
   // dispositionForMimeType() (server/utils/files.ts) for why an `inline`
   // PDF at this app's origin is a bigger risk than an `inline` image.
-  const disposition = contentDispositionValue(
-    file.filename,
-    dispositionForMimeType(file.mimeType),
-  )
+  const disposition = contentDispositionValue(file.filename, dispositionForMimeType(file.mimeType))
 
   const wanted = isTransformableImage(file.mimeType)
     ? parseImageRequest(getQuery(event), getHeader(event, 'accept'))
