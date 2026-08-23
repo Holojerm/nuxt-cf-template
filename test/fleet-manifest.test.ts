@@ -35,13 +35,15 @@ const valid: FleetManifestInput = {
 }
 
 describe('FleetManifestSchema', () => {
-  it('accepts the template’s own fleet.json', () => {
+  it('accepts this repo’s own fleet.json, whatever it has been renamed to', () => {
+    // Deliberately not pinned to `my-app`: this test ships to every fork, and
+    // `bun run rename` rewrites the manifest before anyone runs it there.
     const parsed = FleetManifestSchema.parse(templateManifest)
     expect(parsed.schema).toBe(FLEET_MANIFEST_SCHEMA_VERSION)
-    expect(parsed.slug).toBe('my-app')
-    expect(parsed.stage).toBe('unreleased')
-    expect(parsed.workers[0]).toBe('my-app')
+    expect(parsed.workers[0]).toBe(parsed.slug)
+    expect(parsed.bindings.d1[0]?.name).toBe(`${parsed.slug}-db`)
   })
+
 
   it('accepts a fully populated manifest and fills the optional lists', () => {
     const parsed = FleetManifestSchema.parse(valid)
