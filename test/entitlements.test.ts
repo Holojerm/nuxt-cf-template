@@ -88,6 +88,8 @@ describe('one-time pass', () => {
     const active = await findActiveEntitlement(db, USER)
     expect(active?.status).toBe('active')
     expect(active?.currentPeriodEnd?.getTime()).toBe(atSecond(billedAt.getTime() + 30 * DAY_MS))
+    // Both ends of the window are stored: the clawback measures from the start.
+    expect(active?.periodStart?.getTime()).toBe(atSecond(billedAt.getTime()))
   })
 
   it('is idempotent across webhook redelivery', async () => {
@@ -146,6 +148,9 @@ describe('stacking passes', () => {
     // The user now has ~50 days of runway, from two separate rows.
     const active = await findActiveEntitlement(db, USER)
     expect(active?.paddleSubscriptionId).toBe('txn_2')
+    // The stacked pass OPENS where the first one closes — the window it was
+    // granted, not the moment it was bought.
+    expect(active?.periodStart?.getTime()).toBe(firstResult.endsAt.getTime())
   })
 
   it('starts fresh when the previous pass has already lapsed', async () => {
@@ -269,6 +274,58 @@ describe('refunds and chargebacks', () => {
     const row = await db.query.entitlements.findFirst()
     expect(row?.status).toBe('chargeback')
     expect(await findActiveEntitlement(db, USER)).toBeNull()
+  })
+
+  it('gives a pass back when the customer WINS the chargeback', async () => {
+    // No `subscription.*` event ever arrives for a `txn_` pass, so nothing else
+    // in the system would ever notice the dispute resolved — a customer who won
+    // simply lost 30 paid days, forever, and no later Paddle event repaired it.
+    await activePass()
+    const paidUntil = (await findActiveEntitlement(db, USER))!.currentPeriodEnd!.getTime()
+
+    await applyPaddleEvent(
+      db,
+      refund({ transactionId: 'txn_1', action: 'chargeback', status: 'pending_approval' }),
+    )
+    // Paddle redelivers. The second write must not stamp `now` over the window
+    // the first one recorded, or the row becomes unrestorable.
+    await applyPaddleEvent(
+      db,
+      refund({ transactionId: 'txn_1', action: 'chargeback', status: 'pending_approval' }),
+    )
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+
+    const outcome = await applyPaddleEvent(
+      db,
+      refund({ transactionId: 'txn_1', action: 'chargeback', status: 'reversed' }),
+    )
+    expect(outcome).toMatchObject({ result: { outcome: 'reversed', paddleRef: 'txn_1' } })
+    // Not a revoke, so the route's `paddle_access_revoked` capture stays quiet.
+    if (outcome.kind !== 'adjustment') throw new Error('wrong kind')
+    expect(outcome.result.userId).toBeUndefined()
+
+    const row = await findActiveEntitlement(db, USER)
+    expect(row?.status).toBe('active')
+    // The window they paid for, not a fresh one from today.
+    expect(row?.currentPeriodEnd?.getTime()).toBe(paidUntil)
+    expect(row?.restorePeriodEnd).toBeNull()
+  })
+
+  it('does NOT give a pass back when the money was refunded, whatever arrives later', async () => {
+    // `refunded` is written by us, never by Paddle's lifecycle: the money went
+    // back and stayed back, and a stray reversal on that transaction is not a
+    // dispute we won.
+    await activePass()
+    await applyPaddleEvent(db, refund({ transactionId: 'txn_1' }))
+
+    const outcome = await applyPaddleEvent(
+      db,
+      refund({ transactionId: 'txn_1', action: 'chargeback_reverse' }),
+    )
+    expect(outcome).toMatchObject({ result: { outcome: 'reversed' } })
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+    const row = await db.query.entitlements.findFirst()
+    expect(row?.status).toBe('refunded')
   })
 
   it('ignores credits and chargeback warnings', async () => {

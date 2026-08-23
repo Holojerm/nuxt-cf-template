@@ -1,0 +1,1 @@
+ALTER TABLE `entitlements` ADD `period_start` integer;

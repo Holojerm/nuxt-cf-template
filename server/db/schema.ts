@@ -124,6 +124,25 @@ export const entitlements = sqliteTable(
     // Paddle subscription statuses: active | trialing | past_due | paused | canceled
     status: text('status').notNull(),
     currentPeriodEnd: integer('current_period_end', { mode: 'timestamp' }),
+    // When this row's window OPENS — the end of the stack at the moment it was
+    // granted (server/utils/entitlements.ts › stackingBase), or the grant moment
+    // itself when nothing was running.
+    //
+    // Written by every grant path that stacks: purchased passes, comps, and
+    // both referral grants. NULL on `sub_` rows (Paddle owns their period) and
+    // on every row written before this column existed.
+    //
+    // ── Why the window has to be stored rather than inferred ───────────────────
+    // The clawback removes the days a revoked row still had left, and puts
+    // exactly those days back if the charge is reinstated. Both numbers are
+    // `end − start`, and reconstructing `start` from whichever sibling rows are
+    // ACTIVE at the time reads a different answer at revoke time than at
+    // restore time whenever anything changed in between: a subscription lapsing
+    // between a chargeback and its reversal would turn a 30-day restore into a
+    // 60-day one, minting free access out of a dispute. A stored start is a
+    // fact about the grant, so both directions read the same one no matter
+    // what happened to the account meanwhile.
+    periodStart: integer('period_start', { mode: 'timestamp' }),
     // ── Paddle's scheduled_change ──────────────────────────────────────────────
     // "Cancel at period end" does NOT change a subscription's status. Paddle
     // keeps it `active` and attaches `scheduled_change: { action, effective_at }`

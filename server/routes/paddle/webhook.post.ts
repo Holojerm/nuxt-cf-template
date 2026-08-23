@@ -146,6 +146,11 @@ export default defineEventHandler(async (event) => {
         status: paddleEvent.data.status,
         transactionId: paddleEvent.data.transaction_id,
         outcome: outcome.result.outcome,
+        // How many derived rows (referral rewards) moved with it. Zero is the
+        // ordinary case — most purchases were nobody's referral — but without
+        // it a clawback that found nothing is indistinguishable from one that
+        // was never attempted.
+        derived: outcome.result.derived?.length ?? 0,
       }),
     )
     if (outcome.result.userId) {

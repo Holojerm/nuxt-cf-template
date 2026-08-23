@@ -206,9 +206,12 @@ export interface GrantPassResult {
  * Stacking rule: buying a second pass while one is still running EXTENDS from
  * the current expiry, never from the purchase date — nobody loses days they
  * already paid for. (Stated on /pricing so the behaviour isn't a surprise.)
- * Each pass stays its own row, so refunding one leaves the others alone;
- * the accepted rough edge is that refunding an *earlier* stacked pass doesn't
- * pull the later one's window back.
+ * Each pass stays its own row, so refunding one leaves the others alone; the
+ * accepted rough edge is that refunding an *earlier* stacked PAID pass doesn't
+ * pull the later one's window back — the customer paid for those days
+ * separately. Free days are the opposite case and are compacted, because
+ * otherwise revoking one of them takes nothing away at all: see
+ * revokeDerivedEntitlements.
  *
  * Idempotent: Paddle redelivers webhooks, and the unique index on the Paddle
  * ref means a redelivery updates `updated_at` and nothing else.
@@ -221,12 +224,12 @@ export async function grantPass(
   const billedAt = params.billedAt ?? new Date()
 
   const existing = await findActiveEntitlement(db, userId, productKey)
-  const runningUntil =
-    existing?.currentPeriodEnd && existing.currentPeriodEnd > billedAt
-      ? existing.currentPeriodEnd
-      : null
-  // One pass laid on the running expiry — the same arithmetic a multi-pass comp
-  // grant uses, so the two can never disagree about a stacking date.
+  // Through the shared helpers, not a second copy of the arithmetic: comp
+  // grants (server/utils/admin-grants.ts) and referral grants stack with the
+  // identical rule, and "nobody loses days they already paid for" must not be
+  // able to differ between three ways of granting.
+  const runningUntil = stackingBase(existing, billedAt)
+  const startsAt = toSeconds(runningUntil ?? billedAt)
   const endsAt = passEndDates(runningUntil ?? billedAt, 1)[0]!
 
   const inserted = await db
@@ -237,6 +240,9 @@ export async function grantPass(
       paddleSubscriptionId: transactionId, // the column holds the Paddle ref, txn_ or sub_
       productKey,
       status: 'active',
+      // Both ends of the window, truncated the same way — see `period_start` in
+      // server/db/schema.ts for why the start is stored rather than inferred.
+      periodStart: startsAt,
       currentPeriodEnd: endsAt,
     })
     .onConflictDoUpdate({
@@ -330,7 +336,13 @@ export async function upsertSubscription(
 export interface AdjustmentInput {
   action: string
   status?: string | null
-  /** `full` or `partial` — recorded, but both revoke (see policy note below). */
+  /**
+   * `full` or `partial`, and NOTHING may branch on it — it is carried for the
+   * log line only. Paddle labels an item-level 100% refund of a single-item
+   * transaction `partial`, and the field is absent often enough to be
+   * `.nullish()` in the event schema, so every rule ever keyed on this word has
+   * failed open. See revokeForAdjustment.
+   */
   type?: string | null
   transactionId?: string | null
   subscriptionId?: string | null
@@ -385,28 +397,6 @@ function isRevoking({ action, status }: AdjustmentInput): boolean {
 }
 
 /**
- * Did the money actually, fully go back?
- *
- * A separate question from isRevoking(), and the difference is the whole reason
- * derived rows need their own test. The customer's OWN access ends on any
- * approved refund, full or partial — a deliberate policy stated on /legal/refunds
- * and in revokeForAdjustment below, because we sell one indivisible thing and
- * pro-rating it would be a worse rule than a predictable one.
- *
- * A referral reward cannot inherit that. A $2 goodwill credit on a $120 annual
- * subscription is a support gesture, not a reversal of the sale, and it would
- * have permanently destroyed a reward somebody genuinely earned — for a
- * subscriber-referrer, a window that could be a year long. So a derived row is
- * only clawed back when the purchase behind it was undone in full, or when a
- * bank pulled the funds.
- */
-function isFullReversal({ action, type }: AdjustmentInput): boolean {
-  if (action === 'chargeback') return true
-  if (action === 'refund') return type === 'full'
-  return false
-}
-
-/**
  * Is this the bank giving the money BACK — a chargeback the merchant won?
  *
  * Paddle spells it two ways and both have to count: a distinct
@@ -418,6 +408,122 @@ function isFullReversal({ action, type }: AdjustmentInput): boolean {
 function isReversing({ action, status }: AdjustmentInput): boolean {
   if (action === 'chargeback_reverse') return true
   return action === 'chargeback' && status === 'reversed'
+}
+
+/**
+ * Access a window still has left at `at` — its UNSPENT remainder, in ms.
+ *
+ * ── Why the remainder and not the whole window ───────────────────────────────
+ * This is the amount a clawback removes, and the difference is somebody else's
+ * money. A referrer who has already lived through 29 of a reward's 30 days and
+ * then buys a pass holds one free day and thirty paid ones; taking the whole
+ * 30-day window off the stack when the referee refunds bills them 29 days of
+ * the pass they paid for. Only the day they had not spent yet was ever ours to
+ * take back. Days already lived cannot be un-lived in either direction.
+ *
+ * A window that has not opened yet is untouched by this — nothing of it is
+ * spent, so the remainder is the whole window, which is why the `start > at`
+ * branch exists rather than always measuring from `at`.
+ */
+function unspentMs(start: Date | null | undefined, end: Date, at: Date): number {
+  const from = start && start > at ? start : at
+  return Math.max(0, end.getTime() - from.getTime())
+}
+
+/**
+ * The rows stacked ON TOP of a window ending at `end` — the ones that have to
+ * slide when it is taken out or put back.
+ *
+ * ── Why anything has to slide ────────────────────────────────────────────────
+ * Grants STACK: each one starts where the running expiry ends (stackingBase),
+ * so a referrer with three rewards holds three rows ending at T+30, T+60 and
+ * T+90. Revoking the middle one takes away nothing at all — the T+90 row still
+ * covers those days — which is how three referees who each bought and refunded
+ * left their referrer holding the full ninety. Taking a window out of a stack
+ * means closing the gap behind it too.
+ *
+ * The tail is everything ending at or after this window, because that is what
+ * "laid on top of it" means for rows that run end to end.
+ *
+ * Paid rows are in the tail on purpose. Sliding them is not a charge — it is
+ * the gap closing — and it is only correct because the amount is the UNSPENT
+ * remainder above: the pass keeps every one of its days, they just start
+ * sooner. Leaving paid rows out would strand the free days as a hole in the
+ * middle of the stack, which is the bug this whole mechanism exists to fix.
+ *
+ * `sub_` rows are the exception: Paddle owns their dates, and one written here
+ * is either overwritten by the next webhook or takes away access somebody is
+ * still paying for. Spent windows stay out too, for the reason the revoke skips
+ * them — dragging a date that is already past rewrites how much access somebody
+ * actually had.
+ */
+async function stackTail(
+  db: EntitlementDb,
+  row: Entitlement,
+  end: Date,
+  now: Date,
+): Promise<Entitlement[]> {
+  const siblings = await db.query.entitlements.findMany({
+    where: and(
+      eq(tables.entitlements.userId, row.userId),
+      eq(tables.entitlements.productKey, row.productKey),
+      inArray(tables.entitlements.status, ACTIVE_STATUSES),
+    ),
+  })
+
+  const tail: Entitlement[] = []
+  for (const sibling of siblings) {
+    if (sibling.id === row.id) continue
+    const siblingEnd = sibling.currentPeriodEnd
+    if (!siblingEnd || siblingEnd < end) continue
+    if (isSubscriptionRef(sibling.paddleSubscriptionId)) continue
+    if (siblingEnd > now) tail.push(sibling)
+  }
+  return tail
+}
+
+/**
+ * Slide a tail of stacked rows by `byMs` — BOTH ends of each window.
+ *
+ * The start moves with the end because a slide relocates a window, it does not
+ * resize one: the row still grants exactly the days it was granted, just
+ * sooner or later. Leaving `period_start` behind would strand each slid row
+ * claiming a window it no longer has, and since that column is what the next
+ * clawback measures from, the second refund in a row of three would compute a
+ * remainder of zero and take nothing at all.
+ *
+ * Clamped at `now` in the shrinking direction: compacting can pull a stack past
+ * the present, and a row whose end lands in the past simply stops granting.
+ * Rows that clamp together lose their order against each other, which is the
+ * honest outcome — elapsed days cannot be handed back to make room. A start is
+ * never allowed past its own end for the same reason.
+ */
+async function slideStack(
+  db: EntitlementDb,
+  tail: Entitlement[],
+  byMs: number,
+  now: Date,
+): Promise<void> {
+  if (!byMs) return
+  for (const row of tail) {
+    const end = row.currentPeriodEnd
+    if (!end) continue
+    const movedEnd = new Date(end.getTime() + byMs)
+    const clampedEnd = movedEnd < now ? now : movedEnd
+    const movedStart = row.periodStart ? new Date(row.periodStart.getTime() + byMs) : null
+
+    await db
+      .update(tables.entitlements)
+      .set({
+        currentPeriodEnd: clampedEnd,
+        periodStart: movedStart && movedStart > clampedEnd ? clampedEnd : movedStart,
+        updatedAt: new Date(),
+      })
+      // Compare-and-set on the date this shift was computed from: two
+      // adjustment deliveries in flight both plan the same slide, and only one
+      // of them may apply it.
+      .where(and(eq(tables.entitlements.id, row.id), eq(tables.entitlements.currentPeriodEnd, end)))
+  }
 }
 
 /**
@@ -437,13 +543,18 @@ function isReversing({ action, status }: AdjustmentInput): boolean {
  * A `sub_` row is skipped even if something ever tags one: Paddle owns those,
  * and a local status written onto one is either overwritten by the next webhook
  * or takes away access the customer paid for.
+ *
+ * Revoking the row is only half the job — see stackTail above. The days a
+ * reward still had are only actually taken away once the rows stacked on top of
+ * it slide down to fill the gap, which is what makes N refunded referees cost
+ * a referrer N whole rewards instead of nothing.
  */
 export async function revokeDerivedEntitlements(
   db: EntitlementDb,
   earningRef: string,
   now: Date = new Date(),
 ): Promise<DerivedChange[]> {
-  const rows = await db.query.entitlements.findMany({
+  const scanned = await db.query.entitlements.findMany({
     where: and(
       eq(tables.entitlements.earnedFromRef, earningRef),
       inArray(tables.entitlements.status, ACTIVE_STATUSES),
@@ -451,14 +562,31 @@ export async function revokeDerivedEntitlements(
   })
 
   const changed: DerivedChange[] = []
-  for (const row of rows) {
-    if (isSubscriptionRef(row.paddleSubscriptionId)) continue
+  for (const found of scanned) {
+    if (isSubscriptionRef(found.paddleSubscriptionId)) continue
+
+    // Re-read rather than trust the scan: compacting the previous row's stack
+    // may have moved this one, and revoking against the stale date would stamp
+    // a restore_period_end that hands back days the compaction already took.
+    const row = await db.query.entitlements.findFirst({
+      where: eq(tables.entitlements.id, found.id),
+    })
+    if (!row || !ACTIVE_STATUSES.includes(row.status)) continue
+
     // Its window already closed, so there is nothing to take away — and
     // writing `current_period_end = now` here would drag a PAST date forward,
     // rewriting history to say the holder had access longer than they did.
     // It also gives the policy a sensible edge for free: a chargeback on month
     // seven finds a reward whose days were spent long ago and leaves it alone.
     if (row.currentPeriodEnd && row.currentPeriodEnd <= now) continue
+
+    // Measured while the row is still IN the stack. The amount is the days it
+    // had LEFT, from its stored start (createdAt only for rows written before
+    // that column existed) — never the whole window, which would bill the
+    // holder for days they had already lived through. See unspentMs.
+    const end = row.currentPeriodEnd
+    const removing = end ? unspentMs(row.periodStart ?? row.createdAt, end, now) : 0
+    const tail = end ? await stackTail(db, row, end, now) : []
 
     const updated = await db
       .update(tables.entitlements)
@@ -490,6 +618,9 @@ export async function revokeDerivedEntitlements(
         userId: row.userId,
         periodEnd: row.currentPeriodEnd,
       })
+      // Close the gap. Without this the rows above still cover the days this
+      // one was supposed to take back, and the revoke is cosmetic.
+      await slideStack(db, tail, -removing, now)
     }
   }
   return changed
@@ -507,16 +638,21 @@ export async function revokeDerivedEntitlements(
  * window they would have had. If that date has since passed, the row restores
  * as expired, which is the truth rather than a consolation.
  *
- * Note the deliberate asymmetry: this restores the REFERRER's derived row and
- * not the referee's own entitlement. Paddle owns that one, and it comes back
- * through Paddle's own events; reaching around the billing system to re-grant
- * access on a dispute is exactly what revokeCompPass refuses to do.
+ * The stack is put back too, exactly as the revoke took it apart: this row's
+ * window goes back in, and everything laid on top of it moves up by the same
+ * length the compaction pulled it down by. A restore that only rewrote this one
+ * date would leave the referrer permanently short of the rows that slid.
+ *
+ * Note the deliberate asymmetry with the referee's own row: this function is
+ * about the rows that EXIST BECAUSE of a purchase. The buyer's own entitlement
+ * is repaired by reverseAdjustment, which owns the ref that was charged back.
  */
 export async function restoreDerivedEntitlements(
   db: EntitlementDb,
   earningRef: string,
+  now: Date = new Date(),
 ): Promise<DerivedChange[]> {
-  const rows = await db.query.entitlements.findMany({
+  const scanned = await db.query.entitlements.findMany({
     where: and(
       eq(tables.entitlements.earnedFromRef, earningRef),
       isNotNull(tables.entitlements.restorePeriodEnd),
@@ -524,12 +660,37 @@ export async function restoreDerivedEntitlements(
   })
 
   const changed: DerivedChange[] = []
-  for (const row of rows) {
+  for (const found of scanned) {
+    // Re-read for the same reason the revoke does: restoring one row slides the
+    // rows above it, so a second row from the same scan would be measured — and
+    // moved — against a date that is no longer there.
+    const row = await db.query.entitlements.findFirst({
+      where: eq(tables.entitlements.id, found.id),
+    })
+    const restorePeriodEnd = row?.restorePeriodEnd
+    if (!row || !restorePeriodEnd) continue
+
+    // ── Measured from what the REVOKE wrote down, not from the stack today ────
+    // Both dates were persisted by the revoke: `restore_period_end` is the
+    // window it destroyed and `current_period_end` is the instant it did so, so
+    // this is the identical arithmetic run over identical inputs and the
+    // restore returns exactly what was removed.
+    //
+    // Reconstructing the length from whichever siblings happen to be ACTIVE now
+    // would be wrong whenever anything changed in between: a subscription
+    // lapsing between a chargeback and its reversal moves the row's apparent
+    // start earlier and pays the referrer 60 days for a 30-day reward. Rows
+    // written before `period_start` existed fall back to
+    // `restore_period_end − current_period_end`, which is the same number for
+    // every window that had already opened.
+    const returning = unspentMs(row.periodStart, restorePeriodEnd, row.currentPeriodEnd ?? now)
+    const tail = await stackTail(db, row, restorePeriodEnd, now)
+
     const restored = await db
       .update(tables.entitlements)
       .set({
         status: 'active',
-        currentPeriodEnd: row.restorePeriodEnd,
+        currentPeriodEnd: restorePeriodEnd,
         // Cleared, so the row is no longer "revoked and restorable" — a second
         // reversal delivery finds nothing to do rather than re-restoring.
         restorePeriodEnd: null,
@@ -544,11 +705,102 @@ export async function restoreDerivedEntitlements(
       changed.push({
         ref: row.paddleSubscriptionId,
         userId: row.userId,
-        periodEnd: row.restorePeriodEnd,
+        periodEnd: restorePeriodEnd,
       })
+      await slideStack(db, tail, returning, now)
     }
   }
   return changed
+}
+
+/**
+ * Put back what a chargeback the merchant WON took away.
+ *
+ * ── Only a chargeback, and only one that is still standing ───────────────────
+ * The gate is the BUYER's own row, and it is the whole point of this function.
+ * `restore_period_end` alone is not evidence that a reversal should restore
+ * anything: a purchase that was honestly refunded in March leaves a revoked
+ * reward behind, and a chargeback reversal arriving on that same transaction
+ * later would otherwise hand the referrer their days back over money that
+ * never came back to us. So the reward returns only when the purchase it was
+ * paid for is itself being reinstated — status `chargeback`, now reversed —
+ * and never when that row says `refunded`.
+ *
+ * The buyer's own row is repaired here too, and it has to be. A `txn_` pass
+ * gets no lifecycle events from Paddle at all: nothing else in this system will
+ * ever notice that the dispute resolved, so a customer who WON their dispute
+ * would silently keep the loss of 30 days they had paid for. `sub_` rows are
+ * left alone on purpose — Paddle owns those, and its next `subscription.*`
+ * event carries the true status.
+ */
+async function reverseAdjustment(
+  db: EntitlementDb,
+  refs: string[],
+  now: Date,
+): Promise<RevokeResult> {
+  const derived: DerivedChange[] = []
+  let paddleRef: string | undefined
+
+  for (const ref of refs) {
+    const row = await db.query.entitlements.findFirst({
+      where: eq(tables.entitlements.paddleSubscriptionId, ref),
+    })
+    if (!row) continue
+
+    // ── A `sub_` row cannot be asked whether it was charged back ──────────────
+    // Paddle rewrites the status of a subscription row on EVERY subscription.*
+    // event, and disputes take days to resolve — so by the time the reversal
+    // lands, `chargeback` has long since been overwritten by whatever the
+    // subscription is doing now. Gating on it would strand the referrer's
+    // reward revoked forever on exactly the disputes that were won.
+    //
+    // What survives is the reward's own `restore_period_end` (the predicate
+    // restoreDerivedEntitlements already scans on, and which nothing but the
+    // cascade sets) plus one fact this row does keep: `refunded` is written by
+    // us and never by Paddle's lifecycle, so a purchase we agreed to refund
+    // still reverses nothing.
+    if (isSubscriptionRef(row.paddleSubscriptionId)) {
+      if (row.status === REVOKED_STATUS.refund) continue
+      paddleRef ??= ref
+      derived.push(...(await restoreDerivedEntitlements(db, ref, now)))
+      continue
+    }
+
+    // A `txn_` row is ours alone — nothing overwrites its status, so it is
+    // trustworthy evidence and stays the gate.
+    if (row.status !== REVOKED_STATUS.chargeback) continue
+    paddleRef ??= ref
+
+    if (row.restorePeriodEnd) {
+      await db
+        .update(tables.entitlements)
+        .set({
+          status: 'active',
+          currentPeriodEnd: row.restorePeriodEnd,
+          restorePeriodEnd: null,
+          updatedAt: new Date(),
+        })
+        // Re-asserted, so two reversal deliveries cannot restore twice.
+        .where(
+          and(
+            eq(tables.entitlements.id, row.id),
+            eq(tables.entitlements.status, REVOKED_STATUS.chargeback),
+          ),
+        )
+    } else {
+      // A row charged back before this column was written: the window it had is
+      // gone and no honest value can be invented for it. Worth a line — it is a
+      // customer owed days that only a comp can now give back.
+      console.warn(JSON.stringify({ kind: 'entitlement_reversal_unrestorable', paddleRef: ref }))
+    }
+
+    derived.push(...(await restoreDerivedEntitlements(db, ref, now)))
+  }
+
+  // `userId` is deliberately absent even when a row was restored: the webhook
+  // route keys its `paddle_access_revoked` capture on it, and this is the
+  // opposite event. The ref is reported so the audit row can name the purchase.
+  return { outcome: 'reversed', paddleRef, derived }
 }
 
 /**
@@ -564,6 +816,26 @@ export async function restoreDerivedEntitlements(
  * (Refunding one month of a still-live subscription revokes now, but the next
  * `subscription.*` event will legitimately restore it — Paddle's status stays
  * the source of truth for subs.)
+ *
+ * ── The cascade follows the ACCESS, never the adjustment's label ─────────────
+ * Rows that exist BECAUSE of this purchase — referral rewards, keyed by
+ * `earned_from_ref` — come down whenever the buyer's own row actually goes.
+ * Not when Paddle calls the adjustment `full`: that field is `.nullish()` in
+ * the schema and Paddle labels an item-level 100% refund of a single-item
+ * transaction `partial`, so keying on the word failed open — the buyer lost
+ * every day they had and the referrer kept the reward it paid for. The
+ * property that matters is the one above: this product sells one indivisible
+ * thing, so the buyer losing access IS the sale coming undone.
+ *
+ * The residue, stated plainly: a goodwill refund on one month of a live
+ * subscription revokes that row (policy) and now takes the referrer's reward
+ * with it, and the next `subscription.*` event restores the subscriber without
+ * restoring the reward. That direction is deliberate — a comp puts back a
+ * reward taken in error, and nothing puts back days already farmed.
+ *
+ * The cascade lives in here rather than at the call site so no caller can
+ * forget it; the caller's only remaining job is writing the audit rows for what
+ * it did (server/utils/referral.ts › recordReferralCascade).
  */
 export async function revokeForAdjustment(
   db: EntitlementDb,
@@ -572,51 +844,66 @@ export async function revokeForAdjustment(
   const refs = [adjustment.transactionId, adjustment.subscriptionId].filter((r): r is string =>
     Boolean(r),
   )
+  const now = new Date()
 
   // ── A chargeback the merchant WON ──────────────────────────────────────────
   // Handled before the revoking tests, because it reaches neither of them: a
   // reversal is not an action that revokes and not a status that is final, so
-  // it used to fall straight out of this function. That left every derived row
-  // revoked forever on a dispute that went our way — money taken back from a
-  // referrer over a chargeback that never stood.
-  if (isReversing(adjustment)) {
-    const derived: DerivedChange[] = []
-    for (const ref of refs) derived.push(...(await restoreDerivedEntitlements(db, ref)))
-    return { outcome: 'reversed', derived }
-  }
+  // it would otherwise fall straight out of this function. That leaves every
+  // derived row revoked forever on a dispute that went our way — money taken
+  // back from a referrer over a chargeback that never stood.
+  if (isReversing(adjustment)) return await reverseAdjustment(db, refs, now)
 
   if (adjustment.action !== 'refund' && adjustment.action !== 'chargeback') {
     return { outcome: 'action_not_revoking' }
   }
   if (!isRevoking(adjustment)) return { outcome: 'status_not_final' }
 
-  // Computed once, before the loop: whether derived rows come down with this
-  // adjustment is a property of the ADJUSTMENT, not of which ref matched.
-  const full = isFullReversal(adjustment)
-  const now = new Date()
-
   for (const ref of refs) {
-    const revoked = await db
+    const row = await db.query.entitlements.findFirst({
+      where: eq(tables.entitlements.paddleSubscriptionId, ref),
+    })
+    if (!row) continue
+
+    // A chargeback can be reversed, and for a `txn_` row this write is the only
+    // record of the window it destroys — so keep it, once. Only while the row
+    // is still granting: a redelivery would otherwise stamp `now` over the
+    // original date and make the row unrestorable, which is the same hazard
+    // revokeDerivedEntitlements guards against with its status re-assertion.
+    const reinstatable =
+      adjustment.action === 'chargeback' &&
+      !isSubscriptionRef(row.paddleSubscriptionId) &&
+      ACTIVE_STATUSES.includes(row.status) &&
+      Boolean(row.currentPeriodEnd && row.currentPeriodEnd > now)
+
+    await db
       .update(tables.entitlements)
       .set({
         status: REVOKED_STATUS[adjustment.action],
         // Expire the window too: anything that only checks the date (the MCP
         // worker's raw SQL gate, a future report) must agree with the status.
         currentPeriodEnd: now,
+        // A conditional spread, unlike upsertSubscription's deliberate `?? null`
+        // — here an absent key is the point. Only the FIRST revoke may write
+        // this column; every later delivery must leave it exactly as it is.
+        ...(reinstatable ? { restorePeriodEnd: row.currentPeriodEnd } : {}),
         updatedAt: new Date(),
       })
-      .where(eq(tables.entitlements.paddleSubscriptionId, ref))
-      .returning({ userId: tables.entitlements.userId })
-    const row = revoked[0]
-    if (row) {
-      // Anything that existed because of THIS purchase comes down with it —
-      // but only on a full reversal, and only for this ref. Keying the cascade
-      // on the purchase rather than on the buyer is what stops a refund of
-      // somebody's second pass from clawing back the reward their first one
-      // earned. See isFullReversal and revokeDerivedEntitlements.
-      const derived = full ? await revokeDerivedEntitlements(db, ref, now) : []
-      return { outcome: 'revoked', userId: row.userId, paddleRef: ref, derived }
-    }
+      .where(
+        reinstatable
+          ? and(
+              eq(tables.entitlements.id, row.id),
+              inArray(tables.entitlements.status, ACTIVE_STATUSES),
+            )
+          : eq(tables.entitlements.id, row.id),
+      )
+
+    // Anything that existed because of THIS purchase comes down with it, and
+    // only for this ref. Keying the cascade on the purchase rather than on the
+    // buyer is what stops a refund of somebody's second pass from clawing back
+    // the reward their first one earned.
+    const derived = await revokeDerivedEntitlements(db, ref, now)
+    return { outcome: 'revoked', userId: row.userId, paddleRef: ref, derived }
   }
   return { outcome: 'no_matching_entitlement' }
 }
