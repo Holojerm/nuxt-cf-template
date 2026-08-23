@@ -111,6 +111,8 @@ export type ReferralGrantOutcome =
 export interface ReferralGrantPlan {
   ref: string
   days: number
+  /** When the window opens — the stacking base, stored so the clawback can measure it. */
+  startsAt: Date
   /** Truncated to whole seconds, because that is D1's resolution for a timestamp. */
   endsAt: Date
   /** The expiry these days were laid on top of, or null if access starts today. */
@@ -182,6 +184,7 @@ async function planReferralGrant(
   return {
     ref: params.ref,
     days: params.days,
+    startsAt: toSeconds(base),
     endsAt: toSeconds(new Date(base.getTime() + params.days * DAY_MS)),
     stackedOn,
     productKey,
@@ -224,6 +227,9 @@ async function writeReferralGrant(
       paddleSubscriptionId: plan.ref,
       productKey: plan.productKey,
       status: 'active',
+      // Both ends of the window. The start is what the clawback measures the
+      // unspent remainder from — see `period_start` in server/db/schema.ts.
+      periodStart: plan.startsAt,
       currentPeriodEnd: plan.endsAt,
       // The purchase this row exists because of, or null for a welcome grant
       // (nobody bought anything). This is what lets a refund find the reward it

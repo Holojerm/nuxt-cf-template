@@ -162,8 +162,9 @@ and does not care who wrote it:
    a nicety, it is the entire idempotency mechanism for webhook redelivery.
 2. **Reimplement `applyPaddleEvent`** with the same return shape. Read its tests
    (`test/paddle.test.ts`) first and port them — they encode the rules that cost money
-   when wrong, particularly that a **partial** refund is not a reversal and that a
-   chargeback the merchant later *wins* restores access from `restore_period_end`.
+   when wrong, particularly that **any** approved refund ends the buyer's access, and
+   that a chargeback the merchant later *wins* restores access — the buyer's one-off
+   pass and the referral reward it earned — from `restore_period_end`.
 3. **Keep `revokeForAdjustment` and `revokeDerivedEntitlements` untouched.** They live
    in `server/utils/entitlements.ts`, are provider-agnostic, and are what makes a
    refund claw back the referral reward it paid for.

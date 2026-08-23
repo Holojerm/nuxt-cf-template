@@ -24,10 +24,20 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
   1. **The reward is revoked when the PURCHASE behind it reverses.** Keyed on
      `entitlements.earned_from_ref` — the transaction, never the person, or a
      refund of somebody's second pass claws back the reward their first earned.
-     Only a **full** refund or a chargeback counts; a partial refund is a
-     goodwill gesture, not a reversed sale. A chargeback the merchant later
-     **wins** RESTORES the reward from `restore_period_end`. The cascade lives
-     inside `revokeForAdjustment` (`server/utils/entitlements.ts` ›
+     The cascade follows the **buyer's own row**, never the adjustment's
+     `full`/`partial` label: that field is nullish in the schema and Paddle
+     labels an item-level 100% refund `partial`, so keying on it failed open.
+     Whenever the buyer's row is actually revoked, the reward goes with it.
+     **Revoking the reward row alone takes nothing away** — rewards stack, so
+     the rows above it still cover those days. The clawback measures the
+     revoked window's unspent remainder (from `period_start`) and slides every
+     row stacked on top of it down by that much; a chargeback the merchant
+     later **wins** restores the row from `restore_period_end` and slides the
+     stack back up. A reversal restores only when the buyer's own row is being
+     reinstated (a `txn_` row still reading `chargeback`; a `sub_` row not
+     reading `refunded`), and it restores the buyer's `txn_` pass too, since no
+     Paddle lifecycle event ever will. The cascade lives inside
+     `revokeForAdjustment` (`server/utils/entitlements.ts` ›
      `revokeDerivedEntitlements`), not in the webhook route, so every caller
      gets it; the route only writes the audit rows.
   2. **The cap counts revoked rows.** Refund-churn burns budget instead of

@@ -46,6 +46,7 @@ import {
   getBillingOverview,
   passEndDates,
   stackingBase,
+  toSeconds,
 } from './entitlements'
 import type { EntitlementDb } from './entitlements'
 import { COMP_REF_PREFIX, compRef, isCompRef } from './paddle-refs'
@@ -225,6 +226,11 @@ export async function grantCompPasses(
   // arithmetic is passEndDates() in entitlements.ts — the same function
   // grantPass uses for its single pass, so the stacking rule still exists once.
   const ends = passEndDates(stackedOn ?? now, passes)
+  // Each pass opens where the one below it closes, and the first opens at the
+  // stacking base — the same arithmetic `ends` is built from, read one step
+  // earlier. Stored per row because the clawback measures a window from it; see
+  // `period_start` in server/db/schema.ts.
+  const starts = [toSeconds(stackedOn ?? now), ...ends.slice(0, -1)]
 
   const statements = refs.map((ref, index) =>
     db
@@ -234,6 +240,7 @@ export async function grantCompPasses(
         paddleSubscriptionId: ref,
         productKey,
         status: 'active',
+        periodStart: starts[index]!,
         currentPeriodEnd: ends[index]!,
       })
       // Same idempotency as a purchased pass: the unique ref means a replay
