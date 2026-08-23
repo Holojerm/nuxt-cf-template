@@ -82,10 +82,16 @@ queue that doesn't exist yet, unlike the dead-letter queue, which is created for
 
 ```bash
 wrangler d1 create my-app-db          # copy the database_id it prints
-wrangler kv namespace create KV       # copy the id it prints
+wrangler kv namespace create my-app-kv   # copy the id it prints
 wrangler r2 bucket create my-app-blob
 wrangler queues create my-app-email
 ```
+
+The KV namespace is named after the app on purpose. Namespace *titles* are unique per
+account and the binding name in `wrangler.toml` (`binding = "KV"`) is a separate thing, so a
+namespace titled plain `KV` can only ever be created once — the second fork to try gets
+`A KV namespace with the title "KV" already exists`. Same rule for every title below: name the
+resource, keep the binding.
 
 Then paste the two ids into `wrangler.toml`:
 
@@ -376,7 +382,7 @@ half-finished migration and destructive query lands in your live database.
 
 ```bash
 wrangler d1 create my-app-db-preview            # copy the database_id
-wrangler kv namespace create KV-preview         # copy the id
+wrangler kv namespace create my-app-kv-preview  # copy the id
 wrangler r2 bucket create my-app-blob-preview
 wrangler queues create my-app-email-preview
 ```

@@ -44,7 +44,6 @@ describe('FleetManifestSchema', () => {
     expect(parsed.bindings.d1[0]?.name).toBe(`${parsed.slug}-db`)
   })
 
-
   it('accepts a fully populated manifest and fills the optional lists', () => {
     const parsed = FleetManifestSchema.parse(valid)
     expect(parsed.links).toEqual({})
