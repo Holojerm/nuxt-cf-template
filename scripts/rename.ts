@@ -143,11 +143,13 @@ console.info(`
 Still yours to do — these need values only you have:
 
   1. wrangler.toml    paste the real D1 database_id and KV namespace id — for
-                      BOTH the top-level block and [env.preview]
+                      BOTH the top-level block and [env.preview]. Ids ONLY:
+                      keep the binding names (DB, KV, BLOB, EMAIL_QUEUE) that
+                      wrangler's own snippet would rename
   2. wrangler.toml    set NUXT_PUBLIC_APP_URL to your deployed origin
   3. Cloudflare       create the D1 database, KV namespace, R2 bucket and queue:
                         wrangler d1 create ${name}-db
-                        wrangler kv namespace create KV
+                        wrangler kv namespace create ${name}-kv
                         wrangler r2 bucket create ${name}-blob
                         wrangler queues create ${name}-email
                       The queue must exist before the first deploy; the
