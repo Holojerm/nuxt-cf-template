@@ -467,12 +467,41 @@ export default defineNuxtConfig({
     typeCheck: process.env.NUXT_TYPECHECK !== 'false',
   },
 
-  // Icons — DESIGN.md › Identity › Iconography. `scan` inlines only the
-  // i-lucide-* icons actually used in source into the client bundle, so the
-  // Worker never round-trips to the Iconify API to render them. The collection
-  // itself comes from the @iconify-json/lucide devDependency.
+  // Icons — DESIGN.md › Identity › Iconography. Every setting here exists so
+  // that rendering an icon never leaves this origin. The collection itself is
+  // the @iconify-json/lucide devDependency.
+  //
+  // clientBundle: each i-lucide-* literal the scanner finds is inlined into
+  // the client bundle, which SSR consults first. The scanner skips .ts by
+  // default (a performance default, not a limit), but some icon names are
+  // data — app/utils/admin.ts, server/utils/auth-providers.ts — rendered by
+  // `:icon` / `<UIcon :name>`. Unbundled, each of those costs one server-side
+  // `[Icon] failed to load icon lucide:*` per render and one browser round
+  // trip to /api/_nuxt_icon/lucide.json. Scanning the source trees' .ts too
+  // means there is no hand-kept list to drift. Prose that happens to look
+  // like `ci-browser` is matched, unresolvable, and silently skipped — only
+  // a hand-listed `clientBundle.icons` entry can fail the build.
+  //
+  // serverBundle: `auto` resolves to `remote` on the cloudflare_module preset,
+  // so the Worker answered /api/_nuxt_icon by fetching whole collections from
+  // cdn.jsdelivr.net at request time. Bundling lucide (+81 kB gzip) makes
+  // the endpoint self-contained. Not `'local'`: that takes every installed
+  // @iconify-json/* package, and a fork with @iconify-json/logos measured
+  // 3.38 MB gzip — over the 3 MB Worker limit on the free plan.
+  //
+  // fallbackToApi off: with lucide bundled, a miss means a collection that is
+  // not installed. The default answers that with a fetch to api.iconify.design
+  // — from the Worker, and from the browser too — which hides the mistake
+  // behind a third-party request. A warning is the better failure.
   icon: {
-    clientBundle: { scan: true },
+    clientBundle: {
+      scan: {
+        // The module's own defaults, plus the source trees' .ts files.
+        globInclude: ['**/*.{vue,jsx,tsx,md,mdc,mdx,yml,yaml}', '{app,server,shared}/**/*.ts'],
+      },
+    },
+    serverBundle: { collections: ['lucide'] },
+    fallbackToApi: false,
   },
 
   // DevTools. Disabled when NUXT_DEVTOOLS=false, which the a11y suite sets:
