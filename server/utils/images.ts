@@ -37,13 +37,7 @@ import { z } from 'zod'
  * inline (see dispositionForMimeType in server/utils/files.ts), and handing an
  * SVG to a transform pipeline is a second way to be wrong about that.
  */
-const TRANSFORMABLE = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/avif',
-  'image/gif',
-])
+const TRANSFORMABLE = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif'])
 
 /**
  * The only widths this endpoint will produce.

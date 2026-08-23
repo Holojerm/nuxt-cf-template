@@ -216,7 +216,7 @@ bun run brand:generate # Rebuild favicon, app icon, and og.png from the brand ma
 bun run brand:check   # Fail if those files no longer match the mark (part of ci)
 bun run fleet:check   # Fail if fleet.json no longer matches wrangler.toml (part of ci)
 bun run crons:check   # Fail if [triggers] crons and nitro.scheduledTasks disagree (part of ci)
-bun run ci            # Lint + design/brand/seo/fleet/crons gates + typecheck + test + build — Workers Builds runs this
+bun run ci            # Lint + format:check + design/brand/seo/fleet/crons gates + typecheck + test + build — Workers Builds runs this
 bun run ci:browser    # playwright:install + test:a11y (a11y + CSP + E2E) — GitHub Actions runs this,
                       # because Workers Builds has no Chromium libraries. See CLAUDE.md › Gotchas.
 bun db:generate       # Generate Drizzle migration after schema changes

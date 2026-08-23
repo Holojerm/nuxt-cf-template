@@ -59,10 +59,24 @@ export interface Reference {
 const SOURCE_DIRS = ['app', 'server', 'shared', 'scripts', 'test']
 const DOC_DIRS = ['.claude/docs', '.claude/commands', '.claude/routines']
 const DOC_FILES = ['CLAUDE.md', 'AGENTS.md', 'TEARDOWN.md', 'DESIGN.md', 'README.md']
-const CORPUS_EXTRA = ['nuxt.config.ts', 'wrangler.toml', '.env.example', 'package.json', 'content.config.ts']
+const CORPUS_EXTRA = [
+  'nuxt.config.ts',
+  'wrangler.toml',
+  '.env.example',
+  'package.json',
+  'content.config.ts',
+]
 
 /** Paths that only exist after a build, an install, or a dev run. */
-const EPHEMERAL = ['.nuxt/', '.output/', '.data/', '.wrangler/', 'node_modules/', 'dist/', 'coverage/']
+const EPHEMERAL = [
+  '.nuxt/',
+  '.output/',
+  '.data/',
+  '.wrangler/',
+  'node_modules/',
+  'dist/',
+  'coverage/',
+]
 
 // Files whose PATH references are templates, not pointers. Slash commands
 // print the files they are about to generate (`app/pages/[feature]/index.vue`) refs-check-ignore
@@ -319,7 +333,6 @@ function existsQuiet(path: string): boolean {
     return false
   }
 }
-
 
 /**
  * Last resort before failing a symbol: is it exported by something installed?
