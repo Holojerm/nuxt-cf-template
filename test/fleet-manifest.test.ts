@@ -82,6 +82,25 @@ describe('FleetManifestSchema', () => {
     expect(FleetManifestSchema.safeParse({ ...valid, crons: ['every day'] }).success).toBe(false)
   })
 
+  it('defaults the health and status paths to the contract routes, and takes others', () => {
+    expect(FleetManifestSchema.parse(valid).urls).toEqual({
+      prod: 'https://sinew.coach',
+      health: '/api/health',
+      status: '/api/status',
+    })
+    const hono = FleetManifestSchema.parse({
+      ...valid,
+      urls: { prod: 'https://api.example', health: '/health' },
+    })
+    expect(hono.urls.health).toBe('/health')
+    expect(
+      FleetManifestSchema.safeParse({
+        ...valid,
+        urls: { prod: 'https://x.example', health: 'health' },
+      }).success,
+    ).toBe(false)
+  })
+
   it('rejects an unknown stage or deploy mechanism', () => {
     expect(FleetManifestSchema.safeParse({ ...valid, stage: 'prod' }).success).toBe(false)
     expect(FleetManifestSchema.safeParse({ ...valid, deploy: 'vercel' }).success).toBe(false)
