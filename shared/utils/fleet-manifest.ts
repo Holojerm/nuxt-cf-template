@@ -98,6 +98,13 @@ export const FleetManifestSchema = z.strictObject({
      * NUXT_PUBLIC_APP_URL in wrangler.toml, which check-fleet verifies.
      */
     prod: z.url(),
+    /**
+     * Where liveness and status answer, as paths on `prod`. Defaults are the
+     * contract's own routes; an app that is not a template fork (a Hono API
+     * with `/health`) says so here instead of being reported as down.
+     */
+    health: z.string().regex(/^\//, 'a path, e.g. /api/health').default('/api/health'),
+    status: z.string().regex(/^\//, 'a path, e.g. /api/status').default('/api/status'),
   }),
 
   /**
