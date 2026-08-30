@@ -1,5 +1,12 @@
 // Reference resolution — does the thing this comment names still exist?
 //
+// This header is exempt from its own rule (`refs-check-ignore`, which covers
+// the whole comment block): the names below are worked examples and quoted
+// history, not claims about the repo the file happens to sit in. They resolve
+// here and several do not in a fork — `isSameMailbox()` and referral.ts exist
+// in no fork without billing — so checking them would mean every fork editing
+// this narrative on arrival, which is the opposite of a file a template owns.
+//
 // This repo's comments are 39% of its source lines, and that density is the
 // point: an agent reading a file cold gets the *why*, not just the *what*. It
 // is also the failure mode. A comment that says "see server/utils/foo.ts" or
