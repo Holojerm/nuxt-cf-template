@@ -35,10 +35,7 @@ test.describe('cancel → lose access', () => {
   }) => {
     const email = uniqueEmail('cancel-subscription')
     const { userId, page, context } = await signInAs(email, 'Canceling Subscriber')
-    // One gated redirect below (dashboard -> pricing, post-cancellation)
-    // through app/middleware/subscription.ts's known SSR bug — see
-    // KNOWN_HYDRATION_MISMATCH in ./fixtures.ts. Goes to 0 once that's fixed.
-    const violations = watchForViolations(page, { expectedHydrationMismatches: 1 })
+    const violations = watchForViolations(page)
 
     const subscriptionId = uniquePaddleRef('sub_', 'cancel-subscription')
     await expectWebhookAccepted(
@@ -94,9 +91,7 @@ test.describe('cancel → lose access', () => {
   }) => {
     const email = uniqueEmail('past-due-subscription')
     const { userId, page, context } = await signInAs(email, 'Dunning Subscriber')
-    // One gated redirect below (dashboard -> account, past_due) through the
-    // same known SSR bug — see KNOWN_HYDRATION_MISMATCH in ./fixtures.ts.
-    const violations = watchForViolations(page, { expectedHydrationMismatches: 1 })
+    const violations = watchForViolations(page)
 
     const subscriptionId = uniquePaddleRef('sub_', 'past-due-subscription')
     await expectWebhookAccepted(
