@@ -7,8 +7,8 @@ treat placeholder values as "not configured" and skip the dependent work (journa
 | --- | --- |
 | Product name | `<PRODUCT_NAME>` |
 | Production URL | `<https://product.example>` |
-| Owner name | Jeremy Ettlinger |
-| Owner email (daily digest recipient) | jeremy.ettlinger@gmail.com |
+| Owner name | `<your name>` |
+| Owner email (daily digest recipient) | `<you@example.com>` |
 | GitHub repo | `<org/repo — routines can also infer this from the git remote>` |
 | Support inbox search query | `<Gmail query for support mail, e.g. to:support@product.example is:unread>` |
 | Support reply signature | `<PRODUCT_NAME> support` |
