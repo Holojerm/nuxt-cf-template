@@ -34,8 +34,8 @@ Then, for each fork **and for the template itself**:
 
 Facts that will be stale by the time you read this, and must be re-derived:
 
-- Local directory names do not match repo names. `~/code/sysdesign-cloud` is
-  `Holojerm/drawthesystem-cloud`; `~/code/sysdesign-prep` is `Holojerm/drawthesystem`.
+- Local directory names do not always match repo names, and repos get renamed. Derive the
+  mapping from each checkout's `git remote -v`, never from the directory name.
 - Not every Nuxt app in `~/code` is a fork. Check for a template lineage before including one.
 - The owner has unpushed local commits and dirty working trees. Never build on local `HEAD`.
 
