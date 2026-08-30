@@ -1,5 +1,12 @@
 // Reference resolution — does the thing this comment names still exist?
 //
+// This header is exempt from its own rule (`refs-check-ignore`, which covers
+// the whole comment block): the names below are worked examples and quoted
+// history, not claims about the repo the file happens to sit in. They resolve
+// here and several do not in a fork — `isSameMailbox()` and referral.ts exist
+// in no fork without billing — so checking them would mean every fork editing
+// this narrative on arrival, which is the opposite of a file a template owns.
+//
 // This repo's comments are 39% of its source lines, and that density is the
 // point: an agent reading a file cold gets the *why*, not just the *what*. It
 // is also the failure mode. A comment that says "see server/utils/foo.ts" or
@@ -65,6 +72,12 @@ const CORPUS_EXTRA = [
   '.env.example',
   'package.json',
   'content.config.ts',
+  // Root config files are source too, and docs legitimately name what they
+  // set. `NUXT_PORT` is only ever written in playwright.config.ts, so without
+  // these a true statement about the browser suites read as a dead variable.
+  'playwright.config.ts',
+  'vitest.config.ts',
+  'drizzle.config.ts',
 ]
 
 /** Paths that only exist after a build, an install, or a dev run. */
@@ -203,6 +216,12 @@ function classify(token: string): Reference['kind'] | null {
   // URL this repo constructs — `/cdn-cgi/image/w=640,f=auto/og.png` ends in
   // `.png` and would otherwise read as a file that is not there.
   if (token.includes('=') || token.includes(',')) return null
+  // A protocol-relative URL or a backslash-bearing string is never a path in
+  // this repo. Both show up as fixtures in open-redirect tests
+  // (`//evil.example`, `/\evil.example`), and `.example` is in PATH_EXT for
+  // `.env.example`'s sake, so without this they read as missing files. A gate
+  // that flags a security test's attack strings is a gate people switch off.
+  if (token.startsWith('//') || token.includes('\\')) return null
   if (token.includes('/') && PATH_EXT.test(token)) return 'path'
   if (/^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/.test(token)) return 'env'
   if (/^[a-zA-Z_$][\w$]*\(\)$/.test(token)) return 'symbol'
@@ -289,9 +308,98 @@ export interface DeadReference extends Reference {
   why: string
 }
 
+/**
+ * Every `NUXT_*` name Nuxt derives from `runtimeConfig` in nuxt.config.ts.
+ *
+ * These are real, settable environment variables that appear nowhere in the
+ * source as literal strings — Nuxt builds the name from the key path, so
+ * `runtimeConfig.resend.apiKey` is `NUXT_RESEND_API_KEY` and refs-check-ignore
+ * `runtimeConfig.public.appName` is `NUXT_PUBLIC_APP_NAME`. (Both are examples;
+ * a fork without Resend has no such variable.) A doc naming one is making a
+ * true claim the corpus cannot confirm, so without this every env var a fork
+ * documents reads as dead.
+ *
+ * A brace-depth walk rather than a parse: the block is object literal syntax,
+ * the only thing needed from it is the key path, and a wrong answer here can
+ * only make a reference resolve, never fail.
+ */
+function nuxtRuntimeConfigEnvNames(root: string): Set<string> {
+  const names = new Set<string>()
+  let source: string
+  try {
+    source = readFileSync(join(root, 'nuxt.config.ts'), 'utf8')
+  } catch {
+    return names
+  }
+  const start = source.indexOf('runtimeConfig:')
+  if (start === -1) return names
+  const open = source.indexOf('{', start)
+  if (open === -1) return names
+
+  const snake = (key: string) => key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()
+  const path: string[] = []
+  let depth = 0
+
+  for (let i = open; i < source.length; i++) {
+    const char = source[i]
+    // Skip comments and string literals before looking for a `key:`. Without
+    // this, every `https://` in the block's prose and every default like
+    // `'http://localhost:3000'` reads as a key and yields NUXT_PUBLIC_HTTPS,
+    // NUXT_ONLY, NUXT_PAGES and friends. Those are harmless in the sense that
+    // an over-broad allowlist can only make a reference resolve — but a name
+    // like NUXT_ONLY sitting in it could mask a genuinely dead one, which is
+    // the whole thing this file exists to prevent.
+    if (char === '/' && source[i + 1] === '/') {
+      const nl = source.indexOf('\n', i)
+      i = nl === -1 ? source.length : nl
+      continue
+    }
+    if (char === '/' && source[i + 1] === '*') {
+      const close = source.indexOf('*/', i + 2)
+      i = close === -1 ? source.length : close + 1
+      continue
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      let j = i + 1
+      while (j < source.length && source[j] !== char) j += source[j] === '\\' ? 2 : 1
+      i = j
+      continue
+    }
+    if (char === '{') {
+      depth++
+      continue
+    }
+    if (char === '}') {
+      depth--
+      if (depth <= 0) break
+      path.pop()
+      continue
+    }
+    if (char !== ':') continue
+    // Walk back over the key that precedes this colon.
+    let end = i - 1
+    while (end >= 0 && /\s/.test(source[end] ?? '')) end--
+    let begin = end
+    while (begin >= 0 && /[\w$]/.test(source[begin] ?? '')) begin--
+    const key = source.slice(begin + 1, end + 1)
+    if (!key || !/^[a-zA-Z_$][\w$]*$/.test(key)) continue
+    // Look ahead: an object value opens a new level, anything else is a leaf.
+    let next = i + 1
+    while (next < source.length && /\s/.test(source[next] ?? '')) next++
+    if (source[next] === '{') {
+      path.push(key)
+      names.add(`NUXT_${[...path].map(snake).join('_')}`)
+    } else {
+      names.add(`NUXT_${[...path, key].map(snake).join('_')}`)
+    }
+  }
+  return names
+}
+
 export function findDeadReferences(root: string): DeadReference[] {
   const refs = collectReferences(root)
   const corpus = buildCorpus(root)
+  const nuxtEnv = nuxtRuntimeConfigEnvNames(root)
   const dead: DeadReference[] = []
 
   for (const ref of refs) {
@@ -305,6 +413,13 @@ export function findDeadReferences(root: string): DeadReference[] {
         resolve(root, ref.token.replace(/^\.\//, '').replace(/^\//, '')),
       ]
       if (candidates.some((path) => existsQuiet(path))) continue
+      // A leading-slash token is usually a URL this app SERVES, not a file it
+      // contains: `/sitemap.xml` lives at server/routes/sitemap.xml.get.ts, and refs-check-ignore
+      // `/api/onboarding` at server/api/onboarding.get.ts. Resolving those the
+      // same way as a file path reports a route that demonstrably works as a
+      // dead reference, which teaches everyone to ignore the gate. Nitro's
+      // filename convention makes the mapping mechanical, so check it.
+      if (ref.token.startsWith('/') && servedRouteExists(root, ref.token)) continue
       dead.push({ ...ref, why: 'no such file or directory' })
       continue
     }
@@ -312,6 +427,7 @@ export function findDeadReferences(root: string): DeadReference[] {
     const bare = ref.token.endsWith('()') ? ref.token.slice(0, -2) : ref.token
     if (bare.length < 4) continue
     if (corpus.includes(bare)) continue
+    if (ref.kind === 'env' && nuxtEnv.has(bare)) continue
     if (declaredByADependency(root, bare)) continue
     dead.push({
       ...ref,
@@ -323,6 +439,32 @@ export function findDeadReferences(root: string): DeadReference[] {
   }
 
   return dead
+}
+
+/**
+ * Does this app serve `route`, by Nitro's file-naming convention?
+ *
+ * `/api/x` → server/api/x.<method>.ts, `/sitemap.xml` → refs-check-ignore
+ * server/routes/sitemap.xml.<method>.ts, with the method suffix optional
+ * (a bare `x.ts` handles every verb) and an `index` form for a directory
+ * route. Dynamic segments are not resolved — a token containing `[` never
+ * reaches here, because classify() rejects it as a placeholder.
+ */
+const ROUTE_METHODS = ['get', 'post', 'put', 'patch', 'delete', '']
+function servedRouteExists(root: string, route: string): boolean {
+  const path = route.replace(/^\//, '').replace(/\/$/, '')
+  if (!path) return false
+  const bases = path.startsWith('api/')
+    ? [join(root, 'server', path), join(root, 'server', 'routes', path)]
+    : [join(root, 'server', 'routes', path)]
+  for (const base of bases) {
+    for (const method of ROUTE_METHODS) {
+      const suffix = method ? `.${method}.ts` : '.ts'
+      if (existsQuiet(base + suffix)) return true
+      if (existsQuiet(join(base, `index${suffix}`))) return true
+    }
+  }
+  return false
 }
 
 function existsQuiet(path: string): boolean {
