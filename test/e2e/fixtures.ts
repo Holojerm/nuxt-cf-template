@@ -189,65 +189,23 @@ export async function expectWebhookAccepted(response: APIResponse): Promise<void
 // ─── Console / CSP violation watcher ─────────────────────────────────────────
 // Built on the shared recorder in test/lib/console.ts (also used by
 // test/csp/csp.spec.ts, which only ever looks at signed-out routes) — this
-// file owns the signed-in policy: every console error is fatal, with one
-// narrow, counted, documented exception below.
-
-/**
- * A pre-existing bug this suite surfaced, not a fixture artifact.
- *
- * Every gated redirect this suite drives (no-entitlement → /pricing,
- * canceled → /pricing, past_due → /account) logs exactly this warning once.
- * Root cause: `app/middleware/subscription.ts` calls plain
- * `$fetch('/api/billing/entitlement')` from route middleware. Nuxt does NOT
- * forward the incoming request's cookies to a bare `$fetch` call made during
- * SSR — `useRequestFetch()` / `useRequestHeaders(['cookie'])` exist
- * specifically to opt into that, and nothing in this codebase calls either.
- * So on SSR the entitlement check sees no session, the middleware's `catch`
- * swallows the failure ("don't strand a paying customer"), and Nitro renders
- * /dashboard's shell; the CLIENT then re-runs the same middleware WITH the
- * cookie, correctly decides there's no access, and navigates away before
- * hydration of that shell finishes — which is what Vue reports as a
- * mismatch. The FINAL rendered page is always correct (every assertion in
- * these specs about the landed URL and its content passes); only the
- * mid-flight console line is wrong.
- *
- * Confirmed non-flaky: it reproduces on every run of every spec that drives
- * a gated redirect, and never on a spec where access is actually granted.
- *
- * This suite's boundary is test/e2e/**, not app/**, so the fix (forward the
- * request's cookie in subscription.ts — a separate session is on it) belongs
- * in a follow-up, not here.
- *
- * The tolerance is PER SPEC and EXACT, not a blanket "ignore this string
- * everywhere": only the call sites that genuinely drive a gated redirect
- * pass `expectedHydrationMismatches`, asserted as an exact count, so a NEW
- * mismatch — on /dashboard, on /account, or one extra on a call site that
- * already expects some — still fails. Once the subscription.ts fix lands,
- * every call site's expected count goes to 0 and this constant, the option,
- * and this comment can all come out.
- */
-const KNOWN_HYDRATION_MISMATCH = 'Hydration completed but contains mismatches.'
+// file owns the signed-in policy: every console error is fatal, no exceptions.
+//
+// There used to be one. This suite's first run found every gated redirect
+// logging "Hydration completed but contains mismatches.", because
+// app/middleware/subscription.ts fetched the entitlement during SSR with a
+// bare `$fetch`, which sends no cookies — so the server rendered a gated
+// shell the client then had to navigate away from mid-hydration. That is
+// fixed (it uses `useRequestFetch()` now), the counted tolerance is gone, and
+// the server issues the redirect itself.
 
 export interface ViolationWatcher {
-  /** Fails if any CSP violation, unexpected console error, or uncaught page error was recorded so far. */
+  /** Fails if any CSP violation, console error, or uncaught page error was recorded so far. */
   assertClean(): Promise<void>
 }
 
-export interface WatchForViolationsOptions {
-  /**
-   * How many KNOWN_HYDRATION_MISMATCH lines this test's flow is expected to
-   * log. Defaults to 0 — leave it unset unless this specific test drives a
-   * gated redirect through the bug documented above.
-   */
-  expectedHydrationMismatches?: number
-}
-
 /** Call once per page, before the first navigation. */
-export function watchForViolations(
-  page: Page,
-  options: WatchForViolationsOptions = {},
-): ViolationWatcher {
-  const expectedHydrationMismatches = options.expectedHydrationMismatches ?? 0
+export function watchForViolations(page: Page): ViolationWatcher {
   const recorder = recordConsole(page)
 
   return {
@@ -261,23 +219,8 @@ export function watchForViolations(
       const consoleErrors = recorder.messages
         .filter((message) => message.type() === 'error')
         .map((message) => message.text())
-      const hydrationMismatchCount = consoleErrors.filter(
-        (text) => text === KNOWN_HYDRATION_MISMATCH,
-      ).length
-      const unexpectedConsoleErrors = consoleErrors.filter(
-        (text) => text !== KNOWN_HYDRATION_MISMATCH,
-      )
 
-      // Exact, not "at most" — a call site that stops redirecting (the fix
-      // landed) or starts redirecting twice is exactly as informative as a
-      // brand-new console error, and both deserve the same red build.
-      expect(
-        hydrationMismatchCount,
-        `expected exactly ${expectedHydrationMismatches} known hydration mismatch(es) ` +
-          `(app/middleware/subscription.ts's SSR cookie bug — see KNOWN_HYDRATION_MISMATCH ` +
-          `in test/e2e/fixtures.ts), got ${hydrationMismatchCount}`,
-      ).toBe(expectedHydrationMismatches)
-      expect(unexpectedConsoleErrors, 'console errors on a signed-in page').toEqual([])
+      expect(consoleErrors, 'console errors on a signed-in page').toEqual([])
       expect(recorder.pageErrors.map(String), 'uncaught page errors on a signed-in page').toEqual(
         [],
       )

@@ -15,9 +15,28 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (!loggedIn.value) return
 
   // Not useFetch: middleware runs outside a component's setup, so there's no
-  // scope to own the request. $fetch on both server and client is correct here.
+  // scope to own the request. A plain fetch on both server and client is
+  // correct here — but it has to be `useRequestFetch()`, not bare `$fetch`.
+  //
+  // A bare `$fetch` during SSR sends no cookies. Nitro's internal fetch starts
+  // from an empty request, and forwarding the incoming one's headers is an
+  // explicit opt-in — that's the entire reason `useRequestFetch()` exists. So
+  // the server-side entitlement check saw an anonymous caller, /api/billing/
+  // entitlement 401'd, the catch below swallowed it, and Nitro rendered the
+  // gated page's shell for someone who has no access. The client then re-ran
+  // this middleware WITH the cookie, decided correctly, and navigated away
+  // mid-hydration — which Vue reports as "Hydration completed but contains
+  // mismatches." The landed page was always right; the SSR pass was wasted
+  // work and a console error. test/e2e/ caught it by watching the console on
+  // a signed-in route, which nothing did before.
+  //
+  // Call it before the first `await`: it reads the request event off the Nuxt
+  // context, and that context is only guaranteed synchronously. On the client
+  // it returns the global `$fetch` unchanged.
+  const requestFetch = useRequestFetch()
+
   try {
-    const entitlement = await $fetch('/api/billing/entitlement')
+    const entitlement = await requestFetch('/api/billing/entitlement')
     if (entitlement.active) return
 
     // Blocked either way — but not for the same reason, so not to the same
