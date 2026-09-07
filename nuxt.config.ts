@@ -574,6 +574,15 @@ export default defineNuxtConfig({
     // Server-only secrets (access via useRuntimeConfig().mySecret)
     // Set via NUXT_SESSION_PASSWORD env var — Nuxt reads it automatically
     sessionPassword: '',
+    // Absolute cookie lifetime, in seconds. Without it nuxt-auth-utils seals
+    // with no TTL and a leaked cookie stays valid until the account is deleted —
+    // `sessions_invalid_before` is the per-user revocation lever, this is the
+    // ceiling on how long any session can live at all. 30 days: a consumer
+    // re-signs in monthly via the magic link, which is the whole cost.
+    // `password` is the same NUXT_SESSION_PASSWORD env var as above — the
+    // module's own default is this empty string; it is spelled out because the
+    // config type requires it next to `maxAge`.
+    session: { password: '', maxAge: 60 * 60 * 24 * 30 },
     // Filled by the `pages:resolved` hook above from
     // `definePageMeta({ publicPage })`. Server-only: sitemap.xml and llms.txt
     // are the only readers, so it stays out of the client bundle.
