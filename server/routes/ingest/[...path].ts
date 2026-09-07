@@ -7,8 +7,16 @@
 //   /ingest/<anything else> → https://us.i.posthog.com/<anything else>
 //
 // posthog-js issues GETs (decide, array.js) and POSTs (events, replay) so the
-// proxy must preserve the method, headers, query string, and body. h3's
-// `proxyRequest` handles all of that.
+// proxy must preserve the method, query string, and body. It must NOT preserve
+// every header: because the proxy is same-origin, the browser attaches the
+// sealed `nuxt-session` cookie to every analytics request, and h3's
+// `proxyRequest` forwards `Cookie` verbatim — its ignore-list stops at
+// hop-by-hop headers. That is the bearer credential for the account, sent to a
+// third party on every page view. So the header set is built here, with the
+// two headers that can carry a credential removed or reduced, and handed to
+// `sendProxy` rather than merged over `proxyRequest`'s own copy of the request.
+
+const PAYLOAD_METHODS = new Set(['PATCH', 'POST', 'PUT', 'DELETE'])
 
 export default defineEventHandler(async (event) => {
   const path = (getRouterParam(event, 'path') ?? '').replace(/^\/+/, '')
@@ -18,37 +26,36 @@ export default defineEventHandler(async (event) => {
     ? `https://us-assets.i.posthog.com/${path}${search}`
     : `https://us.i.posthog.com/${path}${search}`
 
-  return proxyRequest(event, upstream, {
-    headers: {
-      // Don't leak our origin host upstream — let fetch use the upstream host.
-      host: '',
-      // Strip the query string and fragment off the Referer before it leaves.
-      //
-      // Because the proxy is same-origin, the browser sends a FULL-path Referer
-      // on every analytics request — including the one fired from
-      // /auth/verify?token=… while a live sign-in token is in the URL. That
-      // header is a credential going to a third party in a field nobody thinks
-      // to look at, and PostHog records it as `$referrer`. Sending only the
-      // origin+path keeps whatever value the header has for debugging while
-      // making it structurally incapable of carrying a secret.
-      //
-      // `undefined`, not `''`, when there is nothing safe to send: h3's
-      // mergeHeaders sets any value that is not undefined, so returning an
-      // empty string transmitted a literal `Referer:` header rather than
-      // omitting one. Harmless in effect, but the comment claimed otherwise —
-      // and `host: ''` above is a genuinely different case, where h3's proxy
-      // treats the empty string as "drop this and let fetch set it".
-      referer: refererWithoutQuery(getRequestHeader(event, 'referer')),
-    },
-    fetchOptions: { redirect: 'manual' },
+  // `host` false: the upstream URL is absolute, so fetch sets its own Host.
+  const headers = new Headers(getProxyRequestHeaders(event, { host: false }))
+  headers.delete('cookie')
+
+  // Strip the query string and fragment off the Referer before it leaves.
+  //
+  // The browser sends a FULL-path Referer on every analytics request —
+  // including the one fired from /auth/verify?token=… while a live sign-in
+  // token is in the URL — and PostHog records it as `$referrer`. Sending only
+  // the origin+path keeps whatever value the header has for debugging while
+  // making it structurally incapable of carrying a secret. A Referer we cannot
+  // parse is one we cannot promise is clean, so it is dropped outright.
+  const referer = refererWithoutQuery(getRequestHeader(event, 'referer'))
+  if (referer) headers.set('referer', referer)
+  else headers.delete('referer')
+
+  const method = event.method
+  // `readRawBody` hands back a Node Buffer, which the Workers `fetch` type does
+  // not accept as a body; a Uint8Array view over the same bytes is.
+  const raw = PAYLOAD_METHODS.has(method)
+    ? await readRawBody(event, false).catch(() => undefined)
+    : undefined
+  const body = raw ? new Uint8Array(raw) : undefined
+
+  return sendProxy(event, upstream, {
+    fetchOptions: { method, body, headers, redirect: 'manual' },
   })
 })
 
-/**
- * Origin and path only. Returns `undefined` — which h3's mergeHeaders skips, so
- * no header is sent at all — for a missing or unparseable value, because a
- * Referer we cannot parse is one we cannot promise is clean.
- */
+/** Origin and path only; `undefined` for a missing or unparseable value. */
 function refererWithoutQuery(referer: string | undefined): string | undefined {
   if (!referer) return undefined
   try {

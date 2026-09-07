@@ -1,0 +1,53 @@
+# Weekly run of the full merge gate against main, on a schedule rather than a push.
+#
+# Workers Builds runs `bun run ci` only when something is pushed, so a test that
+# goes red on its own — a wall-clock comparison against a literal date, a
+# dependency that publishes a breaking patch, a Cloudflare compat change — is
+# discovered by whoever opens the next unrelated PR. That happened on
+# 2026-08-31: `test/entitlements.test.ts` compared a pass billed on a fixed date
+# against `now` and main sat red for a week with nobody the wiser.
+#
+# This runs both halves — `bun run ci` and the browser suites — because the
+# GitHub runner can launch Chromium and Workers Builds cannot.
+
+name: Scheduled CI
+
+on:
+  schedule:
+    # Mondays 06:00 UTC. Once a week is enough to bound the "red for a week"
+    # window; more often just burns minutes on a repo that mostly sits still.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  full-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - run: bun install --frozen-lockfile
+
+      - name: Merge gate
+        run: bun run ci
+
+      - name: Browser suites
+        run: |
+          export NUXT_SESSION_PASSWORD="$(openssl rand -base64 32)"
+          bun run ci:browser
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report-scheduled
+          path: playwright-report/
+          retention-days: 7

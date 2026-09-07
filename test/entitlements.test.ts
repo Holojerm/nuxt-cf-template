@@ -81,7 +81,10 @@ beforeEach(async () => {
 
 describe('one-time pass', () => {
   it('grants 30 days from the billing date', async () => {
-    const billedAt = new Date('2026-08-01T12:00:00Z')
+    // Relative, not a literal date: `findActiveEntitlement` compares the window
+    // against the wall clock, so a fixed `billedAt` turns into a failing test
+    // thirty days after it was written.
+    const billedAt = new Date(Date.now() - 2 * DAY_MS)
     const outcome = await applyPaddleEvent(db, passPurchase('txn_1', billedAt))
 
     expect(outcome).toMatchObject({ kind: 'pass', granted: true, stackedOn: null })

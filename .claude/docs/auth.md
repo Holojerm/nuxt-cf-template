@@ -77,6 +77,9 @@ explains why a cache would reintroduce the bug). Deletion sets the watermark;
 that is what makes "delete my account" end the session on the user's other
 devices instead of only the one they clicked from. Anything else that must
 invalidate sessions sets the same column — do not add a second mechanism.
+The watermark is the per-user lever; `runtimeConfig.session.maxAge` in
+`nuxt.config.ts` (30 days) is the ceiling on every session regardless, so a
+leaked cookie cannot outlive it.
 
 **Identity is the verified email address.** Signing in with a magic link today
 and Google tomorrow on the same address lands on the same account by design.

@@ -46,7 +46,7 @@ restart. The rest are in [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).
 | KV Store     | **Cloudflare KV**          | For caching, sessions, config                                    |
 | File Storage | **Cloudflare R2**          | For uploads (images, videos, docs)                               |
 | Auth         | **nuxt-auth-utils**        | Sealed cookie sessions, OAuth                                    |
-| Deployment   | **Wrangler**               | `bun deploy` → `wrangler deploy` (NuxtHub Admin sunset Feb 2026) |
+| Deployment   | **Wrangler**               | `bun run deploy` → `wrangler deploy` (NuxtHub Admin sunset Feb 2026) |
 | CI/CD        | **Workers Builds**         | Cloudflare-native CI: `bun run ci` + deploy on push (see README) |
 | Linting      | **oxlint**                 | Fast Rust-based linter, config in `.oxlintrc.json`               |
 | Formatting   | **oxfmt**                  | Fast Rust-based formatter, config in `.oxfmtrc.json`             |
@@ -219,7 +219,8 @@ Each of these has a full contract in its own doc — this is the one-line versio
 bun dev               # Dev server at https://<portless-name>.localhost (via portless). In a linked
                       # worktree the host is <worktree-dir>.<portless-name>.localhost — printed on start.
 bun dev:app           # Bypass portless and run nuxt dev directly on http://localhost:3000
-bun build             # Build for Cloudflare
+bun run build         # Build for Cloudflare (always `bun run` — bare `bun build`,
+                      # `bun test` and `bun deploy` are Bun built-ins, not these scripts)
 bun lint              # Run oxlint
 bun lint:fix          # Auto-fix lint issues
 bun format            # Format with oxfmt

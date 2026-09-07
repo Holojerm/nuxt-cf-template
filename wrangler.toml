@@ -203,14 +203,14 @@ NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
 # authorises nothing). Empty = no widget renders and no challenge script loads.
 # Its partner, NUXT_TURNSTILE_SECRET_KEY, is a secret — see the list below.
 #
-# This is Cloudflare's documented always-passes TEST site key. Its partner test
-# secret is 1x0000000000000000000000000000000AA — set that with
-# `wrangler secret put NUXT_TURNSTILE_SECRET_KEY` so the pair stays complete.
-# Swap BOTH for a real widget before production: a site key whose secret is
-# unset is the one bad state the template warns about — the widget renders,
-# nothing verifies it, and server/utils/turnstile.ts logs
-# `turnstile_half_configured`.
-NUXT_PUBLIC_TURNSTILE_SITE_KEY = "1x00000000000000000000AA"
+# Ships EMPTY on purpose. Set it together with the secret, never alone: a site
+# key whose secret is unset is the one bad state the template warns about —
+# the widget renders, nothing verifies it, and server/utils/turnstile.ts logs
+# `turnstile_half_configured`. Shipping a site key here meant every fork went
+# to production in exactly that state until someone noticed the log line.
+# To try it locally, Cloudflare's always-passes test pair is site key
+# 1x00000000000000000000AA and secret 1x0000000000000000000000000000000AA.
+NUXT_PUBLIC_TURNSTILE_SITE_KEY = ""
 # PostHog project token — public by design; it ships in the client bundle and
 # authorises nothing but ingestion. Events travel through the app's own
 # /ingest reverse proxy, so no *.posthog.com origin is added to the CSP.
@@ -342,11 +342,11 @@ NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
 # A public preview URL indexed alongside production splits your ranking between
 # two copies of the same site.
 NUXT_PUBLIC_INDEXABLE = "false"
-# Same widget as production. `vars` are non-inheritable, so this repetition is
-# required, not redundant. The same warning applies: set the partner secret with
-# `wrangler secret put NUXT_TURNSTILE_SECRET_KEY --env preview` before this
-# reaches the preview Worker, and swap both for a real widget in production.
-NUXT_PUBLIC_TURNSTILE_SITE_KEY = "1x00000000000000000000AA"
+# Empty here for the same reason as production. `vars` are non-inheritable, so
+# this repetition is required, not redundant. When you enable Turnstile on
+# preview, set the partner secret with
+# `wrangler secret put NUXT_TURNSTILE_SECRET_KEY --env preview` in the same change.
+NUXT_PUBLIC_TURNSTILE_SITE_KEY = ""
 
 # Secrets — set via `wrangler secret put <NAME>`, never in this file.
 # Secrets are per-environment too: add `--env preview` to set them on the
