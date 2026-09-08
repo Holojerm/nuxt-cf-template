@@ -29,7 +29,6 @@ import {
   MAGIC_LINK_TOKEN_PATTERN,
   MAGIC_LINK_TTL_SECONDS,
 } from '../server/utils/magic-link'
-import { consumeRateLimit, type RateLimitStore } from '../server/utils/rate-limit'
 
 const db = drizzle(env.DB, { schema })
 
@@ -377,46 +376,73 @@ describe('MAGIC_LINK_EVENT_TYPE', () => {
   })
 })
 
-// ── The per-address limit ───────────────────────────────────────────────────
+// ── The per-mailbox budget ─────────────────────────────────────────────────
 // The IP limit in server/middleware/auth.ts does not cover the abuse this
 // endpoint enables: it sends mail, from a trusted domain, to an address an
-// anonymous caller picked. Without a per-address bucket a botnet spread over
-// many IPs is a mail cannon aimed at one inbox.
+// anonymous caller picked. Without a per-mailbox bucket a botnet spread over
+// many IPs is a mail cannon aimed at one inbox. The budget is charged in the
+// same D1 batch as the insert, which is what makes the parallel case exact.
 
 describe('MAGIC_LINK_RATE_LIMIT', () => {
-  function makeStore(): RateLimitStore {
-    const data = new Map<string, unknown>()
-    return {
-      get: async (key) => data.get(key),
-      set: async (key, value) => data.set(key, value),
-    }
-  }
-
-  const now = 1_000_000_000_000
+  const now = new Date('2026-01-01T12:00:00Z')
 
   it('allows a handful of retries and then stops', async () => {
-    const store = makeStore()
-    const opts = { ...MAGIC_LINK_RATE_LIMIT, key: `${MAGIC_LINK_RATE_LIMIT.name}:ada-hash` }
-
     for (let i = 0; i < MAGIC_LINK_RATE_LIMIT.limit; i++) {
-      expect((await consumeRateLimit(store, opts, now)).allowed).toBe(true)
+      expect((await createMagicLinkToken(db, { email: 'ada@example.com' }, now)).withinBudget).toBe(
+        true,
+      )
     }
-    expect((await consumeRateLimit(store, opts, now)).allowed).toBe(false)
+    const sixth = await createMagicLinkToken(db, { email: 'ada@example.com' }, now)
+    expect(sixth.withinBudget).toBe(false)
+    // Still minted — the row IS the charge — but the caller must not send it.
+    expect((await inspectMagicLinkToken(db, sixth.token, now)).ok).toBe(true)
   })
 
-  it('gives each address its own bucket', async () => {
+  it('N parallel mints for one mailbox send exactly `limit` mails', async () => {
+    // The KV counter this replaced read 0 on every parallel request and let all
+    // N through. D1 serialises the batches, so the k-th insert counts k.
+    const spellings = Array.from({ length: 12 }, (_, i) => `victim+${i}@gmail.com`)
+    const results = await Promise.all(
+      spellings.map((email) => createMagicLinkToken(db, { email }, now)),
+    )
+
+    expect(results.filter((r) => r.withinBudget)).toHaveLength(MAGIC_LINK_RATE_LIMIT.limit)
+  })
+
+  it('counts every spelling of a mailbox as one bucket', async () => {
+    // `victim+1@gmail.com` … `+9999` all land in one inbox, and Gmail ignores
+    // dots; keyed on the exact address this limiter is one an attacker walks
+    // around by incrementing a counter.
+    for (let i = 0; i < MAGIC_LINK_RATE_LIMIT.limit; i++) {
+      await createMagicLinkToken(db, { email: `vic.tim+${i}@gmail.com` }, now)
+    }
+    expect(
+      (await createMagicLinkToken(db, { email: 'victim@googlemail.com' }, now)).withinBudget,
+    ).toBe(false)
+  })
+
+  it('gives each mailbox its own bucket', async () => {
     // Otherwise one person retrying locks everyone else out of email sign-in —
     // the failure mode that makes people delete the rate limit entirely.
-    const store = makeStore()
-    const ada = { ...MAGIC_LINK_RATE_LIMIT, key: `${MAGIC_LINK_RATE_LIMIT.name}:ada-hash` }
-    const grace = { ...MAGIC_LINK_RATE_LIMIT, key: `${MAGIC_LINK_RATE_LIMIT.name}:grace-hash` }
-
     for (let i = 0; i < MAGIC_LINK_RATE_LIMIT.limit + 2; i++) {
-      await consumeRateLimit(store, ada, now)
+      await createMagicLinkToken(db, { email: 'ada@example.com' }, now)
     }
+    expect((await createMagicLinkToken(db, { email: 'ada@example.com' }, now)).withinBudget).toBe(
+      false,
+    )
+    expect((await createMagicLinkToken(db, { email: 'grace@example.com' }, now)).withinBudget).toBe(
+      true,
+    )
+  })
 
-    expect((await consumeRateLimit(store, ada, now)).allowed).toBe(false)
-    expect((await consumeRateLimit(store, grace, now)).allowed).toBe(true)
+  it('recovers once the window has passed', async () => {
+    for (let i = 0; i <= MAGIC_LINK_RATE_LIMIT.limit; i++) {
+      await createMagicLinkToken(db, { email: 'ada@example.com' }, now)
+    }
+    const later = new Date(now.getTime() + (MAGIC_LINK_RATE_LIMIT.windowSeconds + 1) * 1000)
+    expect((await createMagicLinkToken(db, { email: 'ada@example.com' }, later)).withinBudget).toBe(
+      true,
+    )
   })
 
   it('recovers within the same order of magnitude as the link TTL', async () => {

@@ -36,11 +36,20 @@ Three rules the magic-link flow depends on, each of which is a real bug if broke
   never transmitted, so it reaches no access log, no `Referer`, and no proxy —
   which matters because PostHog autocapture attaches `location.href` to every
   event. `app/utils/analytics-privacy.ts` scrubs whatever gets past that.
-- **Nothing about the address is observable from outside.** The per-address rate
-  limit calls the pure `consumeRateLimit()` rather than `rateLimit()`, because
-  the wrapper's `X-RateLimit-Remaining` header and 429 would each answer "is this
-  stranger mid-sign-in?" to anyone who POSTs their address. Exhaustion, a
+- **Nothing about the address is observable from outside.** The per-mailbox
+  budget is charged inside `createMagicLinkToken()` rather than by `rateLimit()`,
+  because the wrapper's `X-RateLimit-Remaining` header and 429 would each answer
+  "is this stranger mid-sign-in?" to anyone who POSTs their address. Exhaustion, a
   reserved address, and a provider-rejected send all return the same `{ ok: true }`.
+- **The per-mailbox budget is counted in D1, in the same batch as the token
+  insert.** `MAGIC_LINK_RATE_LIMIT` is 5 per 15 minutes per canonical mailbox
+  (`magic_link_tokens.mailbox`, from `canonicalizeEmailForLimiting()`, so
+  `victim+1@gmail.com` … `+9999` are one bucket). D1 serialises the batches, so N
+  parallel requests for one mailbox get exactly five mails — the KV fixed window
+  it replaced was get-then-set and let every parallel request through, and the
+  native binding cannot express a 15-minute window and counts per colo. The row
+  is the charge: an over-budget request still writes its token row (nobody holds
+  the token; it expires with the rest) and skips the mail.
 
 GitHub ships **unconfigured on purpose** — it is a developer credential, and a
 consumer sign-in page that leads with it tells most visitors the product isn't for
@@ -112,8 +121,8 @@ than database access, which is exactly why nothing secret may travel there.
 prefers Cloudflare's **native Rate Limiting binding** (`[[ratelimits]]` in
 `wrangler.toml`, resolved off `event.context.cloudflare.env`) and otherwise uses
 the original **KV fixed window**. Applied to the whole `/api/auth/` surface in
-`server/middleware/auth.ts`, per-address on magic-link requests (keyed by a salted
-hash, never the raw address), and per-user on connect-code minting.
+`server/middleware/auth.ts` and per-user on connect-code minting. The magic-link
+per-mailbox budget is **not** one of its call sites — it is counted in D1 (above).
 
 The binding's `(limit, period)` is fixed at deploy — `limit({ key })` takes only a
 key — so `chooseBackend` delegates to it **only when both numbers match**
@@ -126,7 +135,10 @@ goes out on the response, and nothing fails. `period` may only be **10 or 60**.
 - Both backends **fail open** (an outage in the abuse-control layer must not take
   sign-in down). A throwing binding does not cascade to KV — one policy, logged.
 - The binding counts **per colo**; KV is eventually consistent. Either way this is
-  abuse control, not metering. Anything you bill on needs a Durable Object.
+  abuse control, not metering. Anything you bill on needs a Durable Object. The
+  residual: the per-IP auth limit is 30/60s *per Cloudflare location*, so a caller
+  spread across colos gets a multiple of it. The per-mailbox budget has no such
+  residual because D1 is single-writer and global.
 - Each call site logs its backend once per isolate (`rate_limit_backend`), with a
   `reason` when it fell back. Read that before assuming the binding is in play.
 

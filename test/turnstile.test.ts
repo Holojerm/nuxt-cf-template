@@ -212,7 +212,9 @@ describe('the magic-link mint path', () => {
     // a single email. Put the challenge second and the rate limit becomes the
     // attack it was added to prevent.
     const challenge = handlerBody.indexOf('await requireTurnstile(')
-    const budget = handlerBody.indexOf('await addressBudgetExhausted(')
+    // createMagicLinkToken() is where the budget is charged — the insert and
+    // the count share one D1 batch.
+    const budget = handlerBody.indexOf('await createMagicLinkToken(')
 
     expect(challenge, 'the mint route no longer calls requireTurnstile').toBeGreaterThan(-1)
     expect(budget, 'the mint route no longer charges a per-address budget').toBeGreaterThan(-1)
