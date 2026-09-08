@@ -180,14 +180,6 @@ describe('softwareApplicationSchema', () => {
       recurring: true,
     },
     {
-      name: 'Yearly',
-      description: '',
-      amount: 120,
-      currency: 'USD',
-      unit: { value: 1, code: 'ANN' as const },
-      recurring: true,
-    },
-    {
       name: 'Pass',
       description: '',
       amount: 18,
@@ -201,8 +193,8 @@ describe('softwareApplicationSchema', () => {
     const node = softwareApplicationSchema(SITE, { description: 'd', offers })
     const aggregate = node?.offers as Record<string, unknown>
     expect(aggregate.lowPrice).toBe('12')
-    expect(aggregate.highPrice).toBe('120')
-    expect(aggregate.offerCount).toBe(3)
+    expect(aggregate.highPrice).toBe('18')
+    expect(aggregate.offerCount).toBe(2)
   })
 
   it('omits the offer block entirely when nothing is for sale', () => {

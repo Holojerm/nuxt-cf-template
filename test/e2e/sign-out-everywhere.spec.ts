@@ -22,7 +22,11 @@ test('revoking from one device signs the other out, and only the other', async (
   // click in that gap is silently lost.
   await laptop.page.goto('/account', { waitUntil: 'networkidle' })
   await laptop.page.getByRole('button', { name: 'Sign out everywhere' }).click()
-  await expect(laptop.page.getByText('Signed out everywhere else')).toBeVisible({ timeout: 10_000 })
+  // `.first()`: the toast title is also announced in an aria-live region, so
+  // the text can resolve to two nodes.
+  await expect(laptop.page.getByText('Signed out everywhere else').first()).toBeVisible({
+    timeout: 10_000,
+  })
 
   // The device that clicked keeps its (re-issued) session…
   const mine = await laptop.context.request.get('/api/_auth/session')

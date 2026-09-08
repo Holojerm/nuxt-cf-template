@@ -197,7 +197,6 @@ NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
 # Paddle price IDs for /pricing. Sandbox and production have DIFFERENT ids —
 # override these per environment rather than hardcoding them in app code.
 # NUXT_PUBLIC_PADDLE_PRICE_MONTHLY = "pri_..."
-# NUXT_PUBLIC_PADDLE_PRICE_YEARLY = "pri_..."
 # NUXT_PUBLIC_PADDLE_PRICE_PASS = "pri_..."
 # Cloudflare Turnstile site key (public by design — it names the widget, it
 # authorises nothing). Empty = no widget renders and no challenge script loads.

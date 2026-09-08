@@ -8,9 +8,13 @@
 // The `pass` plan is a one-time 30-day purchase, not a subscription — the
 // entitlement layer tells them apart by the Paddle ref (`txn_` vs `sub_`) and
 // stacks passes rather than resetting them. See server/utils/entitlements.ts.
+//
+// Monthly only — no yearly plan, by rule (~/code/CLAUDE.md › Product rules).
+// Which plan is `featured` is a per-product call; the template leads with the
+// pass because auto-renew defaults off. Flip the flag, don't add a third card.
 
 export interface Plan {
-  id: 'monthly' | 'yearly' | 'pass'
+  id: 'monthly' | 'pass'
   name: string
   /** Display price. Paddle is the source of truth for what's actually charged. */
   price: string
@@ -36,7 +40,7 @@ export interface Plan {
    * MON = month, ANN = year, DAY = day. A $12/month subscription and a $12
    * one-off are the same number and completely different offers.
    */
-  unit: { value: number; code: 'MON' | 'ANN' | 'DAY' }
+  unit: { value: number; code: 'MON' | 'DAY' }
 }
 
 export const PLANS: Plan[] = [
@@ -53,19 +57,6 @@ export const PLANS: Plan[] = [
     unit: { value: 1, code: 'MON' },
   },
   {
-    id: 'yearly',
-    name: 'Yearly',
-    price: '$120',
-    amount: 120,
-    currency: 'USD',
-    cadence: 'per year',
-    description: 'Two months free. Same product, longer commitment.',
-    features: ['Everything in Monthly', 'Two months free', 'Priority support'],
-    featured: true,
-    recurring: true,
-    unit: { value: 1, code: 'ANN' },
-  },
-  {
     id: 'pass',
     name: '30-day pass',
     price: '$18',
@@ -74,6 +65,7 @@ export const PLANS: Plan[] = [
     cadence: 'one time',
     description: 'No subscription, no renewal. Buy another and the days stack.',
     features: ['30 days of full access', 'Never auto-renews', 'Stacks with time you have left'],
+    featured: true,
     recurring: false,
     unit: { value: 30, code: 'DAY' },
   },
@@ -91,7 +83,6 @@ export function usePlans(): ComputedRef<ResolvedPlan[]> {
     PLANS.map((plan) => {
       const priceId = {
         monthly: config.public.paddlePriceMonthly,
-        yearly: config.public.paddlePriceYearly,
         pass: config.public.paddlePricePass,
       }[plan.id]
       return {
