@@ -22,6 +22,7 @@ import type { Entitlement } from '../db/schema'
 // directly and nothing is injected there.
 import { likePrefix } from './sql'
 import { SUBSCRIPTION_REF_PREFIX, isSubscriptionRef } from './paddle-refs'
+import { resolvePaddlePrice, type PaddlePriceCatalogue } from './paddle-prices'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type EntitlementDb = ReturnType<typeof drizzle<typeof tables>>
@@ -924,9 +925,14 @@ export const paddleEventSchema = z.object({
     customer_id: z.string().nullish(),
     subscription_id: z.string().nullish(),
     billed_at: z.string().nullish(),
-    custom_data: z
-      .object({ userId: z.string().optional(), productKey: z.string().optional() })
-      .nullish(),
+    // Set by the browser at checkout (app/composables/usePaddle.ts), so it is
+    // the buyer's claim, not Paddle's. Only `userId` is read, and only to find
+    // the account; what was bought comes from `items[].price.id` below.
+    custom_data: z.object({ userId: z.string().max(128).optional() }).nullish(),
+    // subscription.* and transaction.* carry the priced items. The price ids
+    // are matched against the configured `NUXT_PUBLIC_PADDLE_PRICE_*` values
+    // (server/utils/paddle-prices.ts) before any row is created.
+    items: z.array(z.object({ price: z.object({ id: z.string() }).nullish() })).nullish(),
     current_billing_period: z.object({ ends_at: z.string() }).nullish(),
     // subscription.* only. Present and populated while a cancel/pause/resume is
     // pending, and explicitly `null` once it is applied or withdrawn — which is
@@ -952,20 +958,54 @@ export type PaddleEventOutcome =
   | { kind: 'pass'; userId: string; granted: boolean; endsAt: Date; stackedOn: Date | null }
   | { kind: 'adjustment'; action: string; result: RevokeResult }
   | { kind: 'ignored'; reason: 'no_user' | 'subscription_transaction' | 'unhandled_event' }
+  | {
+      kind: 'ignored'
+      reason: 'unrecognised_price'
+      detail: 'no_items' | 'unknown_price' | 'wrong_kind'
+      priceIds: string[]
+    }
 
-/** Apply one verified Paddle event to the entitlements table. */
+/**
+ * Apply one verified Paddle event to the entitlements table.
+ *
+ * `catalogue` is what decides whether a purchase grants anything: a new row
+ * is only ever created for a price in it, of the kind the event type implies
+ * (a `pass` price on a `subscription.*` event is refused, and vice versa).
+ * Status changes for a subscription row that already exists skip the check —
+ * the price was verified when the row was created, and a price later rotated
+ * out of config must not leave a cancellation unapplied.
+ */
 export async function applyPaddleEvent(
   db: EntitlementDb,
   event: PaddleEvent,
+  catalogue: PaddlePriceCatalogue,
 ): Promise<PaddleEventOutcome> {
   const { event_type: eventType, data } = event
   const userId = data.custom_data?.userId
-  const productKey = data.custom_data?.productKey ?? 'default'
 
   if (eventType.startsWith('subscription.')) {
     // Not fatal: a subscription created outside the app (e.g. a dashboard test)
     // has no userId to map back to.
     if (!userId) return { kind: 'ignored', reason: 'no_user' }
+    const prior = await db.query.entitlements.findFirst({
+      where: eq(tables.entitlements.paddleSubscriptionId, data.id),
+      columns: { productKey: true },
+    })
+    let productKey: string
+    if (prior) {
+      productKey = prior.productKey
+    } else {
+      const price = resolvePaddlePrice(data.items, 'subscription', catalogue)
+      if (!price.ok) {
+        return {
+          kind: 'ignored',
+          reason: 'unrecognised_price',
+          detail: price.reason,
+          priceIds: price.priceIds,
+        }
+      }
+      productKey = price.entry.productKey
+    }
     const status = data.status ?? 'unknown'
     const { previousStatus } = await upsertSubscription(db, {
       userId,
@@ -993,11 +1033,20 @@ export async function applyPaddleEvent(
     // A completed transaction WITH a subscription attached is a renewal — the
     // subscription.* events above own that entitlement.
     if (data.subscription_id) return { kind: 'ignored', reason: 'subscription_transaction' }
+    const price = resolvePaddlePrice(data.items, 'pass', catalogue)
+    if (!price.ok) {
+      return {
+        kind: 'ignored',
+        reason: 'unrecognised_price',
+        detail: price.reason,
+        priceIds: price.priceIds,
+      }
+    }
     const result = await grantPass(db, {
       userId,
       transactionId: data.id,
       customerId: data.customer_id,
-      productKey,
+      productKey: price.entry.productKey,
       billedAt: data.billed_at ? new Date(data.billed_at) : undefined,
     })
     return { kind: 'pass', userId, ...result }

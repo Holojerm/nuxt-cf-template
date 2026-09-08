@@ -151,10 +151,10 @@ export function usePaddle() {
     paddle.Checkout.open({
       items: list.map((i) => ({ priceId: i.priceId, quantity: i.quantity ?? 1 })),
       ...(user.value?.email ? { customer: { email: user.value.email } } : {}),
-      customData: {
-        ...(user.value?.id ? { userId: user.value.id } : {}),
-        productKey,
-      },
+      // Only the account link travels in custom_data. The webhook decides what
+      // was bought from the item's price id (server/utils/paddle-prices.ts), so
+      // a productKey here would be a claim nothing reads.
+      customData: user.value?.id ? { userId: user.value.id } : {},
       settings: { displayMode: 'overlay' },
     })
     return true
