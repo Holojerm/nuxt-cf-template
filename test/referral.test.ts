@@ -1033,10 +1033,10 @@ describe('the refund cascade', () => {
     await revokeForAdjustment(db, { action: 'chargeback', subscriptionId: 'sub_referee' })
     expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
 
-    // Paddle keeps sending subscription.* events while the dispute runs, and
-    // every one of them overwrites the `chargeback` we wrote on that row. A
-    // reversal that demanded to still see it would leave the referrer's reward
-    // revoked forever on precisely the disputes that were WON.
+    // A lifecycle event arriving mid-dispute is refused now (the row is
+    // terminal until an adjustment clears it), but the reversal must not
+    // depend on that: it is the reward's own `restore_period_end` that says
+    // whether there is anything to put back.
     await upsertSubscription(db, {
       userId: 'referee',
       subscriptionId: 'sub_referee',
@@ -1375,5 +1375,120 @@ describe('ensureReferralCode', () => {
 
     expect(await ensureReferralCode(db, 'latecomer', mintCode)).toBe('FRESH456')
     expect(calls).toBe(2)
+  })
+})
+
+// ── Subscriptions: the reward is keyed on the FIRST transaction ─────────────
+// A renewal's refund names the renewal transaction, and the reward was not
+// paid for by that money. Keyed on the `sub_` id (as it was) every later
+// renewal's refund clawed back what the first payment earned.
+
+describe('subscription rewards keyed on the first transaction', () => {
+  async function referredSubscriber(): Promise<void> {
+    await makeUser('referrer', { referralCode: REFERRER_CODE })
+    await makeUser('referee', { referredBy: REFERRER_CODE })
+  }
+
+  /** What the webhook route does on the first-payment transition. */
+  async function firstPayment(firstTransactionId: string | null): Promise<void> {
+    const { firstTransactionId: stored } = await upsertSubscription(db, {
+      userId: 'referee',
+      subscriptionId: 'sub_referee',
+      status: 'active',
+      currentPeriodEnd: new Date(atSecond(NOW.getTime() + 30 * DAY_MS)),
+      firstTransactionId,
+      occurredAt: NOW,
+    })
+    await rewardReferrerForFirstPurchase(db, 'referee', {
+      now: NOW,
+      earnedFromRef: stored ?? 'sub_referee',
+    })
+    expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
+  }
+
+  async function reward() {
+    return await db.query.entitlements.findFirst({
+      where: eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')),
+    })
+  }
+
+  it("stores the first transaction as the reward's provenance", async () => {
+    await referredSubscriber()
+    await firstPayment('txn_first')
+    expect((await reward())?.earnedFromRef).toBe('txn_first')
+  })
+
+  it('a partial refund of a later renewal leaves the reward standing', async () => {
+    await referredSubscriber()
+    await firstPayment('txn_first')
+
+    const result = await revokeForAdjustment(db, {
+      action: 'refund',
+      status: 'approved',
+      type: 'partial',
+      transactionId: 'txn_renewal',
+      subscriptionId: 'sub_referee',
+      occurredAt: new Date(NOW.getTime() + 60_000),
+    })
+
+    // The buyer's own period closes; nothing derived from that money existed.
+    expect(result).toMatchObject({ outcome: 'revoked', paddleRef: 'sub_referee', derived: [] })
+    expect(await findActiveEntitlement(db, 'referee')).toBeNull()
+    expect((await reward())?.status).toBe('active')
+    expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
+  })
+
+  it('a refund of the first transaction claws the reward back', async () => {
+    await referredSubscriber()
+    await firstPayment('txn_first')
+
+    const result = await revokeForAdjustment(db, {
+      action: 'refund',
+      status: 'approved',
+      transactionId: 'txn_first',
+      subscriptionId: 'sub_referee',
+      occurredAt: new Date(NOW.getTime() + 60_000),
+    })
+
+    expect(result.derived).toHaveLength(1)
+    expect((await reward())?.status).toBe(DERIVED_REVOKED_STATUS)
+    expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
+  })
+
+  it('a won chargeback on the first transaction restores the reward', async () => {
+    await referredSubscriber()
+    await firstPayment('txn_first')
+    const at = (seconds: number) => new Date(NOW.getTime() + seconds * 1000)
+
+    await revokeForAdjustment(db, {
+      action: 'chargeback',
+      transactionId: 'txn_first',
+      subscriptionId: 'sub_referee',
+      occurredAt: at(60),
+    })
+    expect((await reward())?.status).toBe(DERIVED_REVOKED_STATUS)
+
+    const reversed = await revokeForAdjustment(db, {
+      action: 'chargeback_reverse',
+      transactionId: 'txn_first',
+      subscriptionId: 'sub_referee',
+      occurredAt: at(120),
+    })
+    expect(reversed.derived).toHaveLength(1)
+    expect((await reward())?.status).toBe('active')
+    expect(await findActiveEntitlement(db, 'referee')).not.toBeNull()
+  })
+
+  it('falls back to the subscription id when Paddle never sent a transaction', async () => {
+    await referredSubscriber()
+    await firstPayment(null)
+    expect((await reward())?.earnedFromRef).toBe('sub_referee')
+
+    await revokeForAdjustment(db, {
+      action: 'refund',
+      status: 'approved',
+      subscriptionId: 'sub_referee',
+    })
+    expect((await reward())?.status).toBe(DERIVED_REVOKED_STATUS)
   })
 })

@@ -559,6 +559,132 @@ describe('event ordering and redelivery', () => {
   })
 })
 
+describe('subscription refunds are per period', () => {
+  const T0 = new Date(Date.now() - 3 * 60 * 60 * 1000)
+  const later = (hours: number) => new Date(T0.getTime() + hours * 60 * 60 * 1000)
+  const PERIOD_1 = later(24 * 30)
+  const PERIOD_2 = later(24 * 60)
+
+  function subscription(
+    eventType: string,
+    status: string,
+    occurredAt: Date,
+    extra: Record<string, unknown> = {},
+  ) {
+    return paddleEvent(
+      eventType,
+      {
+        id: 'sub_1',
+        status,
+        customer_id: 'ctm_1',
+        custom_data: { userId: USER },
+        current_billing_period: { ends_at: PERIOD_1.toISOString() },
+        ...extra,
+      },
+      { occurredAt },
+    )
+  }
+
+  function adjustment(overrides: Record<string, unknown>, occurredAt: Date) {
+    return paddleEvent(
+      'adjustment.created',
+      {
+        id: 'adj_1',
+        action: 'refund',
+        type: 'partial',
+        status: 'approved',
+        subscription_id: 'sub_1',
+        customer_id: 'ctm_1',
+        ...overrides,
+      },
+      { occurredAt },
+    )
+  }
+
+  it('remembers the transaction that created the subscription', async () => {
+    const created = await applyPaddleEvent(
+      db,
+      subscription('subscription.created', 'trialing', later(0), { transaction_id: 'txn_first' }),
+    )
+    expect(created).toMatchObject({ kind: 'subscription', firstTransactionId: 'txn_first' })
+
+    // activated carries no transaction_id; the stored one stands.
+    const activated = await applyPaddleEvent(
+      db,
+      subscription('subscription.activated', 'active', later(1)),
+    )
+    expect(activated).toMatchObject({
+      kind: 'subscription',
+      previousStatus: 'trialing',
+      firstTransactionId: 'txn_first',
+    })
+  })
+
+  it('a refund of a renewal closes that period, and the next paid period reopens access', async () => {
+    await applyPaddleEvent(
+      db,
+      subscription('subscription.created', 'active', later(0), { transaction_id: 'txn_first' }),
+    )
+    const refunded = await applyPaddleEvent(
+      db,
+      adjustment({ transaction_id: 'txn_renewal' }, later(1)),
+    )
+    expect(refunded).toMatchObject({ kind: 'adjustment', result: { outcome: 'revoked' } })
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+
+    // A card edit re-sending the refunded period: still refused.
+    const sameperiod = await applyPaddleEvent(
+      db,
+      subscription('subscription.updated', 'active', later(2)),
+    )
+    expect(sameperiod).toEqual({ kind: 'ignored', reason: 'terminal_status' })
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+
+    // Paddle bills the next period: the customer paid again.
+    const renewed = await applyPaddleEvent(
+      db,
+      subscription('subscription.updated', 'active', later(3), {
+        current_billing_period: { ends_at: PERIOD_2.toISOString() },
+      }),
+    )
+    expect(renewed).toMatchObject({ kind: 'subscription', previousStatus: 'refunded' })
+    const row = await findActiveEntitlement(db, USER)
+    expect(row?.currentPeriodEnd?.getTime()).toBe(atSecond(PERIOD_2.getTime()))
+    expect(row?.restorePeriodEnd).toBeNull()
+  })
+
+  it('a won chargeback on a subscription gives the disputed period back', async () => {
+    await applyPaddleEvent(
+      db,
+      subscription('subscription.created', 'active', later(0), { transaction_id: 'txn_first' }),
+    )
+    await applyPaddleEvent(
+      db,
+      adjustment(
+        { action: 'chargeback', status: 'warning', transaction_id: 'txn_first' },
+        later(1),
+      ),
+    )
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+
+    const reversed = await applyPaddleEvent(
+      db,
+      adjustment(
+        {
+          id: 'adj_2',
+          action: 'chargeback_reverse',
+          status: 'approved',
+          transaction_id: 'txn_first',
+        },
+        later(2),
+      ),
+    )
+    expect(reversed).toMatchObject({ kind: 'adjustment', result: { outcome: 'reversed' } })
+    const row = await findActiveEntitlement(db, USER)
+    expect(row?.currentPeriodEnd?.getTime()).toBe(atSecond(PERIOD_1.getTime()))
+  })
+})
+
 describe('billing overview', () => {
   it('reports what can be cancelled and keeps ended rows in history', async () => {
     await applyPaddleEvent(db, passPurchase('txn_old', new Date(Date.now() - 60 * DAY_MS)))
