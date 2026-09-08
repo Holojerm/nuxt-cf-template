@@ -1,9 +1,9 @@
 // Paddle REST API client — the small slice we call server-side.
 //
 // Needs a server-side API key (Paddle → Developer tools → Authentication) in
-// NUXT_PADDLE_API_KEY. Without it every call here throws a 503-shaped error,
-// and the UI falls back to "manage billing from your Paddle receipt email" —
-// the product still works, cancellation just costs the user an extra click.
+// NUXT_PADDLE_API_KEY. It is required once billing is on: the cancel button on
+// /account calls this, and without the key every call 503s and the toast
+// names the support address. No "reply to your receipt" fallback, by design.
 //
 // Docs: developer.paddle.com/build/customers/integrate-customer-portal
 

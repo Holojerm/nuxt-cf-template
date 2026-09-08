@@ -75,9 +75,7 @@ export default defineEventHandler(async (event) => {
     async () => {
       // The identical function GET /api/billing/entitlement runs for the
       // customer — see server/utils/entitlement-view.ts for why it is shared.
-      const entitlement = await buildEntitlementView(db, user.id, {
-        portalConfigured: Boolean(useRuntimeConfig(event).paddle.apiKey),
-      })
+      const entitlement = await buildEntitlementView(db, user.id)
 
       return {
         /** Never omitted, never false. The UI banners the whole panel on it. */

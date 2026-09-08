@@ -37,13 +37,14 @@
 // this component exists to get right. Rationale goes here, not up there.
 
 interface Props {
-  /** False when NUXT_PADDLE_API_KEY is unset — show the fallback, not a dead button. */
+  /** False only when there is no Paddle customer to open a portal for. */
   portalAvailable: boolean
 }
 
 defineProps<Props>()
 
 const toast = useToast()
+const config = useRuntimeConfig()
 const pending = ref(false)
 
 /**
@@ -72,8 +73,8 @@ async function updatePaymentMethod(): Promise<void> {
       title: 'Could not open the billing portal',
       description:
         code === 'portal_unconfigured'
-          ? 'NUXT_PADDLE_API_KEY is not set on the server.'
-          : 'Reply to your Paddle receipt email and we can update the card with you.',
+          ? `The billing portal isn't configured on this deployment yet. Email ${config.public.supportEmail} and we'll update the card or cancel with you.`
+          : `Paddle didn't answer. Try again in a minute, or email ${config.public.supportEmail} and we'll update the card or cancel with you.`,
       color: 'error',
     })
   } finally {
@@ -99,19 +100,12 @@ async function updatePaymentMethod(): Promise<void> {
         <!-- Longer explanation on /account, where there's room for it. -->
         <slot />
 
-        <!-- Both ways out, not just the one that keeps us paid.
-             With NUXT_PADDLE_API_KEY unset there is no button on this alert at
-             all, so this paragraph IS the entire set of available actions — and
-             it used to name only "update the card". Someone who wanted to stop
-             paying was left with no route at all on the one screen that exists
-             because their payment failed, which is precisely the dark pattern
-             the header of app/pages/account.vue commits against. Naming the
-             cancellation path costs nothing and is the difference between a
-             fallback and a trap. -->
+        <!-- Both ways out, not just the one that keeps us paid: the portal
+             button below updates the card, and the same portal cancels. With
+             no Paddle customer at all (never the case for past_due, kept for
+             the type) there is nothing to link, so name a human instead. -->
         <p v-if="!portalAvailable" class="text-sm">
-          The self-serve billing portal isn't configured on this deployment. Reply to your Paddle
-          receipt email and we'll do it with you — either update the card to restore access, or
-          cancel the subscription. Whichever you ask for, we action it the same day.
+          Email {{ config.public.supportEmail }} and we'll update the card or cancel with you.
         </p>
       </div>
     </template>

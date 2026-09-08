@@ -37,9 +37,7 @@ export default defineEventHandler(async (event) => {
     },
     async () => {
       const [billing, feedbackRows, auditRows] = await Promise.all([
-        buildEntitlementView(db, user.id, {
-          portalConfigured: Boolean(useRuntimeConfig(event).paddle.apiKey),
-        }),
+        buildEntitlementView(db, user.id),
         db
           .select()
           .from(schema.feedback)

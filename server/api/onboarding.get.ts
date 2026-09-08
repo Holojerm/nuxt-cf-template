@@ -28,9 +28,7 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireUserSession(event)
 
   const [inputs, activated] = await Promise.all([
-    computeOnboardingInputs(db, user.id, {
-      portalConfigured: Boolean(useRuntimeConfig(event).paddle.apiKey),
-    }),
+    computeOnboardingInputs(db, user.id),
     hasActivated(db, user.id),
   ])
 

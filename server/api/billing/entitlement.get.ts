@@ -10,7 +10,5 @@
 
 export default defineEventHandler(async (event) => {
   const { user } = await requireUserSession(event)
-  return buildEntitlementView(db, user.id, {
-    portalConfigured: Boolean(useRuntimeConfig(event).paddle.apiKey),
-  })
+  return buildEntitlementView(db, user.id)
 })

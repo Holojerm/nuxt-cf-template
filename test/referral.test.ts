@@ -577,7 +577,7 @@ describe('rewardReferrerForFirstPurchase', () => {
     })
     await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW })
 
-    const view = await buildEntitlementView(db, 'referrer', { portalConfigured: false })
+    const view = await buildEntitlementView(db, 'referrer')
     expect(view.kind).toBe('subscription')
     expect(view.active).toBe(true)
     expect(view.cancellable).toBe(1)
@@ -603,7 +603,7 @@ describe('buildEntitlementView on referral access', () => {
   it('calls a welcome grant what it is', async () => {
     await grantRefereeWelcome(db, REFEREE, { sessionPassword: LEGACY_SALT })
 
-    const view = await buildEntitlementView(db, 'referee', { portalConfigured: false })
+    const view = await buildEntitlementView(db, 'referee')
     expect(view.active).toBe(true)
     expect(view.kind).toBe('pass')
     expect(view.referralKind).toBe('welcome')
@@ -616,13 +616,13 @@ describe('buildEntitlementView on referral access', () => {
     await grantPass(db, { userId: 'referee', transactionId: 'txn_paid', billedAt: NOW })
     await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW, earnedFromRef: 'txn_paid' })
 
-    const view = await buildEntitlementView(db, 'referrer', { portalConfigured: false })
+    const view = await buildEntitlementView(db, 'referrer')
     expect(view.referralKind).toBe('reward')
   })
 
   it('says nothing about referrals for ordinary paid access', async () => {
     await grantPass(db, { userId: 'referee', transactionId: 'txn_paid', billedAt: NOW })
-    const view = await buildEntitlementView(db, 'referee', { portalConfigured: false })
+    const view = await buildEntitlementView(db, 'referee')
     expect(view.kind).toBe('pass')
     expect(view.referralKind).toBeNull()
   })

@@ -22,13 +22,6 @@ import { captureServerEvent } from './posthog'
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type OnboardingDb = ReturnType<typeof drizzle<typeof tables>>
 
-export interface ComputeOnboardingInputsOptions {
-  /** Passed straight through to buildEntitlementView — see its own comment
-   * on why this must be an explicit argument rather than a default. Unused
-   * by this function beyond that: the checklist only reads `.active`. */
-  portalConfigured: boolean
-}
-
 /**
  * Gather the four signals the checklist is built from, in one `Promise.all`:
  * the entitlement view (already its own small, bounded number of reads — see
@@ -38,10 +31,9 @@ export interface ComputeOnboardingInputsOptions {
 export async function computeOnboardingInputs(
   db: OnboardingDb,
   userId: string,
-  options: ComputeOnboardingInputsOptions,
 ): Promise<OnboardingInputs> {
   const [entitlement, notificationRow, connectedCodeRow, feedbackRow] = await Promise.all([
-    buildEntitlementView(db, userId, options),
+    buildEntitlementView(db, userId),
     db.query.notificationPreferences.findFirst({
       where: eq(tables.notificationPreferences.userId, userId),
       columns: { id: true },
@@ -208,11 +200,10 @@ export async function activateIfComplete(
   db: OnboardingDb,
   userId: string,
   variant: OnboardingLayoutVariant,
-  options: ComputeOnboardingInputsOptions,
 ): Promise<ActivateIfCompleteResult> {
   if (await hasActivated(db, userId)) return { activated: false }
 
-  const inputs = await computeOnboardingInputs(db, userId, options)
+  const inputs = await computeOnboardingInputs(db, userId)
   const progress = deriveOnboardingSteps(inputs)
 
   if (!progress.complete) return { activated: false }

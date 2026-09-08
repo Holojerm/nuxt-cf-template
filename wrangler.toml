@@ -363,7 +363,8 @@ NUXT_PUBLIC_TURNSTILE_SITE_KEY = ""
 #   NUXT_OAUTH_GITHUB_CLIENT_ID / _SECRET    GitHub sign-in
 #   NUXT_OAUTH_GOOGLE_CLIENT_ID / _SECRET    Google sign-in
 #   NUXT_PADDLE_WEBHOOK_SECRET   Paddle → Developer tools → Notifications
-#   NUXT_PADDLE_API_KEY          only needed for the customer-portal link
+#   NUXT_PADDLE_API_KEY          REQUIRED once billing is on: the cancel button on
+#                                /account mints portal links with it; unset = 503
 #   NUXT_RESEND_API_KEY          transactional email; unset = emails no-op
 #   NUXT_RESEND_FROM             e.g. "My App <hello@myapp.com>" (verified domain)
 #   NUXT_TURNSTILE_SECRET_KEY    bot check on the public forms; unset = skipped.
