@@ -10,6 +10,7 @@
 // Pure and side-effect free, so test/fleet-auth.test.ts can enumerate the
 // verdicts without a request.
 
+import { createError, getRequestHeader, setResponseHeader, type H3Event } from 'h3'
 import { sha256Hex, timingSafeEqual } from './hash'
 
 export type FleetTokenVerdict = 'ok' | 'unauthorized' | 'unconfigured'
@@ -65,4 +66,19 @@ export async function verifyFleetToken(
 export function bearerToken(authorization: string | null | undefined): string | null {
   const match = /^\s*Bearer\s+(\S+)\s*$/i.exec(authorization ?? '')
   return match?.[1] ?? null
+}
+
+/**
+ * The bearer check both dashboard routes run: 404 with no token configured (an
+ * app that has not opted in advertises nothing), 401 on a bad one.
+ */
+export async function requireFleetToken(event: H3Event, tokens: FleetTokens): Promise<void> {
+  const verdict = await verifyFleetToken(getRequestHeader(event, 'authorization'), tokens)
+  if (verdict === 'unconfigured') {
+    throw createError({ statusCode: 404, message: 'Not found' })
+  }
+  if (verdict === 'unauthorized') {
+    setResponseHeader(event, 'WWW-Authenticate', 'Bearer')
+    throw createError({ statusCode: 401, message: 'Unauthorized' })
+  }
 }

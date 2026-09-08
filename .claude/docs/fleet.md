@@ -11,13 +11,15 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   Shape: `shared/utils/fleet-manifest.ts`. `bun run fleet:check` fails the build
   when it stops matching `wrangler.toml`, so it can be trusted; edit both in the
   same commit. `bun run rename` rewrites it with everything else.
-- **`GET /api/status`** is public and carries no secrets: build sha, the
-  migrations the repo has vs the ones production applied (`migrations.pending`
-  non-empty = the deploy-before-migrate outage, live), the cron map Nitro runs.
-  `GET /api/fleet` is counters only (users, entitlements by status, ops spool,
-  feedback queue) behind `NUXT_FLEET_TOKEN`; 404 when unset. Both are allowlisted
-  in `server/middleware/auth.ts` because the session guard must not 401 them
-  first. Add a fork-specific counter to `collectFleetCounters()`'s `extra`, not
+- **`GET /api/status`** reports build sha, the migrations the repo has vs the
+  ones production applied (`migrations.pending` non-empty = the
+  deploy-before-migrate outage, live), and the cron map Nitro runs. That is a
+  fingerprint of the deployment, so it sits behind `NUXT_FLEET_TOKEN` like
+  `GET /api/fleet` (counters only: users, entitlements by status, ops spool,
+  feedback queue): `Authorization: Bearer …`, 404 when the token is unset, 401
+  on a bad one (`requireFleetToken()`). `/api/health` stays public for dumb
+  uptime checks. Both are allowlisted in `server/middleware/auth.ts` because
+  the session guard must not 401 them first. Add a fork-specific counter to `collectFleetCounters()`'s `extra`, not
   a second endpoint.
 - **Ops alerting.** Anything worth waking the owner up for calls
   `recordOpsEvent(db, { kind, detail, path })` — the error plugin already does

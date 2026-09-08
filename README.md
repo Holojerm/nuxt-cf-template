@@ -460,7 +460,7 @@ registering anything at all.
 | Provisioning | [`server/utils/users.ts`](./server/utils/users.ts) | Find-or-create by verified email. Covered by [`test/users.test.ts`](./test/users.test.ts). |
 | Which buttons to show | `GET /api/auth/providers` | Reports which providers are configured (and whether email can be sent at all), so nothing renders a button that dead-ends. |
 | Dev sign-in | [`server/api/auth/dev.post.ts`](./server/api/auth/dev.post.ts) | Email, no password. `import.meta.dev` is a build-time constant, so the handler is dead code in production and the route 404s. `bun seed` writes one account per billing state you can sign in as this way — see below. |
-| Server guard | [`server/middleware/auth.ts`](./server/middleware/auth.ts) | 401s every `/api/*` route except `/api/health`, `/api/auth/`, `/api/_auth/`. Also rate-limits the auth surface. |
+| Server guard | [`server/middleware/auth.ts`](./server/middleware/auth.ts) | 401s every `/api/*` route except the allowlist in [`.claude/docs/auth.md › Public API surface`](./.claude/docs/auth.md): `/api/health`, `/api/auth/`, `/api/_auth/`, the token-guarded `/api/status` and `/api/fleet`, `POST /api/feedback`, `GET /api/blog*`, and `/api/email/unsubscribe`. Also rate-limits the auth surface. |
 | Client guards | [`app/middleware/auth.ts`](./app/middleware/auth.ts), [`subscription.ts`](./app/middleware/subscription.ts) | `definePageMeta({ middleware: ['auth', 'subscription'] })`. UX only — see below. |
 
 **Seed accounts (`bun seed`, [`scripts/seed.ts`](./scripts/seed.ts)):** sign in as any of these via
@@ -777,7 +777,9 @@ commit as the wrangler change it describes.
 
 ### `GET /api/status` and `GET /api/fleet`
 
-[`/api/status`](./server/api/status.get.ts) is public, unauthenticated, and carries no secrets:
+[`/api/status`](./server/api/status.get.ts) sits behind `Authorization: Bearer $NUXT_FLEET_TOKEN`
+(404 with the token unset, 401 on a bad one) because build sha, migration tags and cron schedules
+fingerprint the deployment. It carries no secrets:
 
 ```json
 {
@@ -1304,7 +1306,7 @@ This section is the other half: what users **said**.
 
 `<FeedbackWidget />` is mounted once in [`app/layouts/default.vue`](./app/layouts/default.vue), so every page has a floating trigger. Drop `<FeedbackWidget position="inline" />` into a page instead (end of onboarding, account page, cancellation flow) if a floating button doesn't suit the product.
 
-It's open to **signed-out visitors on purpose** — requiring a login before someone can tell you something is the fastest way to hear nothing. `POST /api/feedback` is the one method+path the global auth middleware allowlists; reading and triaging stay gated.
+It's open to **signed-out visitors on purpose** — requiring a login before someone can tell you something is the fastest way to hear nothing. `POST /api/feedback` is allowlisted by the global auth middleware (the full allowlist is in [`.claude/docs/auth.md`](./.claude/docs/auth.md)); reading and triaging stay gated. The PostHog event carries the feedback id, kind, rating, path and replay link — never the message text; the D1 row is the system of record.
 
 ### What one submission produces
 

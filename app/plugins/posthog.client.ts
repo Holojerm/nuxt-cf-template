@@ -108,11 +108,9 @@ export default defineNuxtPlugin((nuxtApp) => {
     () => user.value,
     (u) => {
       if (u && 'id' in u && u.id != null) {
-        posthog.identify(String(u.id), {
-          email: 'email' in u ? u.email : undefined,
-          name: 'name' in u ? u.name : undefined,
-          role: 'role' in u ? u.role : undefined,
-        })
+        // Id and role only. Analytics access is handed out more freely than DB
+        // access, so no email or name — join on the id in D1 when you need them.
+        posthog.identify(String(u.id), { role: 'role' in u ? u.role : undefined })
       } else {
         posthog.reset()
       }

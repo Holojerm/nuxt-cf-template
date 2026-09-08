@@ -17,7 +17,7 @@
 
 import { db } from '@nuxthub/db'
 
-import { verifyFleetToken } from '../utils/fleet-auth'
+import { requireFleetToken } from '../utils/fleet-auth'
 import { collectFleetCounters } from '../utils/fleet-status'
 
 export default defineEventHandler(async (event) => {
@@ -25,18 +25,10 @@ export default defineEventHandler(async (event) => {
   setResponseHeader(event, 'Cache-Control', 'no-store')
 
   const config = useRuntimeConfig(event)
-  const verdict = await verifyFleetToken(getRequestHeader(event, 'authorization'), {
+  await requireFleetToken(event, {
     current: config.fleetToken,
     previous: config.fleetTokenPrevious,
   })
-
-  if (verdict === 'unconfigured') {
-    throw createError({ statusCode: 404, message: 'Not found' })
-  }
-  if (verdict === 'unauthorized') {
-    setResponseHeader(event, 'WWW-Authenticate', 'Bearer')
-    throw createError({ statusCode: 401, message: 'Unauthorized' })
-  }
 
   return {
     schema: 1,

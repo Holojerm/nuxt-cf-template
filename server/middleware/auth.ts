@@ -15,10 +15,11 @@ export default defineEventHandler(async (event) => {
   //   The session doesn't exist yet on these, so the guard below must not run.
   // - /api/_auth/: session endpoint nuxt-auth-utils calls from useUserSession()
   //   (fetch + clear); blocking this 401s sign-out and breaks session refresh
-  // - /api/status: deployment status for the portfolio dashboard and external
-  //   heartbeats — public by design, carries no secrets (see the route)
-  // - /api/fleet: counters for the dashboard; does its own bearer check, and
-  //   404s when no token is configured, so the session guard must not 401 first
+  // - /api/status, /api/fleet: for the portfolio dashboard; both do their own
+  //   bearer check (requireFleetToken) and 404 when no token is configured, so
+  //   the session guard must not 401 first. The full allowlist — these plus
+  //   POST /api/feedback, GET /api/blog*, GET|POST /api/email/unsubscribe below
+  //   — is documented in .claude/docs/auth.md › Public API surface.
   const publicRoutes = ['/api/health', '/api/status', '/api/fleet', '/api/auth/', '/api/_auth/']
 
   // Throttle the whole auth surface from one place. Doing it here rather than

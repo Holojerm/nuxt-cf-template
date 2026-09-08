@@ -119,7 +119,8 @@ PR must leave the fork with all of them working — see CLAUDE.md › Fleet cont
    values (Worker names including `mcp/` if present, D1 `database_name` + `database_id`, KV
    ids, R2 buckets, `[triggers] crons`), and set `stage` honestly — `live` only if the app has
    users it would be bad to lose. Set `features` to what the fork actually kept: a fork with no
-   `users` table is `auth: false` and gets `/api/status` but not `/api/fleet`.
+   `users` table is `auth: false` and gets `/api/status` but not `/api/fleet` (both need
+   `NUXT_FLEET_TOKEN` since the template put `/api/status` behind it).
 2. **`template.syncedSha`** — the template `main` SHA this PR syncs to. This is how "how far
    behind the template is this fork" is computed, so it must be the SHA you actually based the
    sync on, not `HEAD` of whatever you had checked out.

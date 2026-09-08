@@ -49,16 +49,15 @@ export default defineEventHandler(async (event) => {
     userAgent: getHeader(event, 'user-agent') ?? null,
   })
 
-  // The message text is included so feedback is readable in PostHog without a
-  // DB round-trip. Drop this property if your privacy posture says analytics
-  // must never hold user-authored text — the D1 row is the system of record.
+  // No message text: it is user-authored and analytics access is handed out
+  // more freely than DB access. The D1 row is the system of record; the event
+  // carries the id to find it and the replay link to watch it.
   void captureServerEvent({
     distinctId: body.posthogDistinctId || userId || `feedback-${row.id}`,
     event: 'feedback_submitted',
     properties: {
       feedback_id: row.id,
       feedback_kind: row.kind,
-      feedback_message: row.message.slice(0, 500),
       feedback_rating: row.rating,
       feedback_path: row.path,
       authenticated: Boolean(userId),

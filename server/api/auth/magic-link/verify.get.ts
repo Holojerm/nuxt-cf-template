@@ -54,10 +54,9 @@ const tokenSchema = z.string().regex(MAGIC_LINK_TOKEN_PATTERN)
  * hand. Those should still work rather than read as "invalid"; they are simply
  * no longer what this app produces.
  */
-function readToken(event: Parameters<typeof getQuery>[0]): string | null {
-  const header = getRequestHeader(event, 'x-magic-link-token')
-  const candidate = header ?? (getQuery(event).token as unknown)
-  const parsed = tokenSchema.safeParse(candidate)
+// Header only — no `?token=` fallback, so a token can never reach a request log.
+function readToken(event: Parameters<typeof getRequestHeader>[0]): string | null {
+  const parsed = tokenSchema.safeParse(getRequestHeader(event, 'x-magic-link-token'))
   return parsed.success ? parsed.data : null
 }
 

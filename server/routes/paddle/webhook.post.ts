@@ -167,6 +167,10 @@ export default defineEventHandler(async (event) => {
         },
       })
     }
+  } else if (outcome.reason === 'unknown_user') {
+    console.warn(
+      JSON.stringify({ kind: 'paddle_webhook_unknown_user', eventType, id: paddleEvent.data.id }),
+    )
   } else if (outcome.reason === 'no_user') {
     console.warn(
       JSON.stringify({ kind: 'paddle_webhook_no_user', eventType, id: paddleEvent.data.id }),
