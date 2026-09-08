@@ -61,8 +61,11 @@ bucket_name = "my-app-blob"
 #     NATIVE_LIMITER in server/utils/rate-limit.ts, which must MATCH the two
 #     numbers below. test/rate-limit.test.ts probes the real binding and fails
 #     if they ever drift.
-#   * `namespace_id` is any positive integer, unique per Cloudflare account —
+#   * `namespace_id` is any positive integer, unique per Cloudflare ACCOUNT —
 #     not an id Cloudflare issues you, and nothing to create in the dashboard.
+#     Two apps on one account sharing a number share one set of counters, so
+#     `bun run rename` rewrites this one and preview's from a hash of the new
+#     name (scripts/ratelimit-namespace.ts, range 1100–9999, preview = +1).
 #     Adding a second limiter means picking a different number here.
 #
 # Sized for the auth surface: server/middleware/auth.ts throttles all of
