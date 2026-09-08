@@ -710,7 +710,6 @@ export default defineNuxtConfig({
       // different prices without a code change. Empty = that plan's button is
       // disabled instead of opening a checkout that 400s.
       paddlePriceMonthly: '',
-      paddlePriceYearly: '',
       paddlePricePass: '',
       // The app's canonical public origin, no trailing slash. Absolute links in
       // emails, sitemap.xml, robots.txt, and og: tags are built from this —

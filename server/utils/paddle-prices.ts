@@ -18,15 +18,14 @@ export interface PaddlePriceEntry {
 
 export type PaddlePriceCatalogue = Readonly<Record<string, PaddlePriceEntry>>
 
-/** The `NUXT_PUBLIC_PADDLE_PRICE_*` ids — the same three app/utils/plans.ts renders. */
+/** The `NUXT_PUBLIC_PADDLE_PRICE_*` ids — the same two app/utils/plans.ts renders. */
 export interface PaddlePriceConfig {
   paddlePriceMonthly?: string
-  paddlePriceYearly?: string
   paddlePricePass?: string
 }
 
 /**
- * Monthly and yearly are subscriptions, the pass is a one-time charge; that
+ * Monthly is a subscription, the pass is a one-time charge; that
  * split mirrors `recurring` on the plans in app/utils/plans.ts. Every price
  * unlocks the one `productKey` — a fork selling a second product adds a
  * config key and a row here, not a branch on `custom_data`.
@@ -37,7 +36,6 @@ export function paddlePriceCatalogue(
 ): PaddlePriceCatalogue {
   const configured: [string | undefined, PaddlePriceKind][] = [
     [config.paddlePriceMonthly, 'subscription'],
-    [config.paddlePriceYearly, 'subscription'],
     [config.paddlePricePass, 'pass'],
   ]
   const catalogue: Record<string, PaddlePriceEntry> = {}

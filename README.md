@@ -999,7 +999,7 @@ Full contract in [`.claude/docs/images.md`](.claude/docs/images.md).
 | Route | Access | Notes |
 | --- | --- | --- |
 | `/` | Public | Landing page — hero, features, CTA. Indexed. |
-| `/pricing` | Public | Three plans from `app/utils/plans.ts` + price IDs in runtime config. Indexed. |
+| `/pricing` | Public | Two plans from `app/utils/plans.ts` (monthly subscription, 30-day pass — monthly only, no yearly, by rule) + price IDs in runtime config. Indexed. |
 | `/blog` | Public | Post index, newest first. Indexed. |
 | `/blog/:slug` | Public | One post, from `content/blog/<slug>.md`. Indexed, with `BlogPosting` JSON-LD. |
 | `/login` | Public | Magic-link form, then buttons for configured OAuth providers, then dev sign-in. `noindex`. |

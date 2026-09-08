@@ -97,7 +97,7 @@ export interface OfferInput {
   amount: number
   currency: string
   /** How much access the amount buys, as a schema.org unit code. */
-  unit: { value: number; code: 'MON' | 'ANN' | 'DAY' }
+  unit: { value: number; code: 'MON' | 'DAY' }
   recurring: boolean
 }
 
