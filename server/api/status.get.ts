@@ -28,6 +28,7 @@ import { FleetManifestSchema } from '#shared/utils/fleet-manifest'
 
 import rawManifest from '../../fleet.json'
 import pkg from '../../package.json'
+import { requireFleetToken } from '../utils/fleet-auth'
 import { compareMigrations, readAppliedMigrations, repoMigrations } from '../utils/fleet-status'
 
 /** Bump when the shape of this payload changes incompatibly. */
@@ -44,6 +45,12 @@ export default defineEventHandler(async (event) => {
   setResponseHeader(event, 'Cache-Control', 'no-store')
 
   const config = useRuntimeConfig(event)
+  // Build sha, migration tags and cron schedules are a fingerprint of the
+  // deployment — for the dashboard, not the internet. /api/health stays public.
+  await requireFleetToken(event, {
+    current: config.fleetToken,
+    previous: config.fleetTokenPrevious,
+  })
 
   let database: 'connected' | 'unavailable' = 'connected'
   try {

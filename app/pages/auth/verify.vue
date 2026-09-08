@@ -41,7 +41,6 @@
 
 definePageMeta({ layout: 'default' })
 
-const route = useRoute()
 const { fetch: refreshSession } = useUserSession()
 const config = useRuntimeConfig()
 
@@ -95,11 +94,11 @@ async function inspect(value: string) {
  */
 const { params: fragment, resolved } = useFragmentParams()
 
+// Fragment only. A `?token=` fallback would put the live credential back into
+// access logs and Referer headers — the exact leak the fragment exists to stop.
 const token = computed(() => {
   if (!resolved.value) return ''
-  const fromFragment = fragment.value?.get('token')
-  if (fromFragment) return fromFragment
-  return typeof route.query.token === 'string' ? route.query.token : ''
+  return fragment.value?.get('token') ?? ''
 })
 
 // One watcher, not a mount hook plus a hash watcher, so the lookup runs exactly

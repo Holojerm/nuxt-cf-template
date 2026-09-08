@@ -120,6 +120,28 @@ Put the token in the **fragment** where possible, and scrub the rest through
 `app/utils/analytics-privacy.ts`. Analytics access is handed out far more freely
 than database access, which is exactly why nothing secret may travel there.
 
+## Public API surface
+
+`server/middleware/auth.ts` 401s every `/api/*` request without a valid session
+except this allowlist — the real one, not the three-item summary that used to
+appear in the README:
+
+- `/api/health` — liveness, public.
+- `/api/auth/*`, `/api/_auth/*` — sign-in start, OAuth callbacks, the session
+  endpoint `useUserSession()` reads. No session exists yet on these.
+- `/api/status`, `/api/fleet` — for the portfolio dashboard. Both run
+  `requireFleetToken()`: **404** when `NUXT_FLEET_TOKEN` is unset, **401** on a
+  bad bearer. `/api/status` carries the build sha, migration tags and cron
+  schedules — a deployment fingerprint, hence the token.
+- `POST /api/feedback` — signed-out visitors may leave feedback; the handler
+  rate-limits by IP hash.
+- `GET /api/blog`, `GET /api/blog/*` — the blog is public content.
+- `GET|POST /api/email/unsubscribe` — reached from a mail footer on a device
+  that may not be signed in.
+
+Everything else, including every paid route, is behind the session guard and
+then its own `requireSubscription()` / `requireAdmin()`.
+
 ## Rate Limiting
 
 `rateLimit(event, { name, limit, windowSeconds })` — one call, two backends. It

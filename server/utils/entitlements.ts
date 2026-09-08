@@ -1026,6 +1026,8 @@ export type PaddleEventOutcome =
   | { kind: 'ignored'; reason: 'no_user' | 'subscription_transaction' | 'unhandled_event' }
   /** Same event_id already applied, an older event than the row has seen, or a refunded row a routine update tried to revive. */
   | { kind: 'ignored'; reason: 'duplicate_event' | 'stale_event' | 'terminal_status' }
+  /** custom_data.userId names no account. Acknowledged, not retried: Paddle would redeliver forever. */
+  | { kind: 'ignored'; reason: 'unknown_user' }
   | {
       kind: 'ignored'
       reason: 'unrecognised_price'
@@ -1058,7 +1060,16 @@ export async function applyPaddleEvent(
   })
   if (seen) return { kind: 'ignored', reason: 'duplicate_event' }
 
-  const outcome = await dispatchPaddleEvent(db, event, catalogue)
+  let outcome: PaddleEventOutcome
+  try {
+    outcome = await dispatchPaddleEvent(db, event, catalogue)
+  } catch (error) {
+    // `entitlements.user_id` is a real foreign key, so a signed event whose
+    // custom_data names a user that does not exist fails here — and a 500
+    // would have Paddle retry it forever.
+    if (isForeignKeyFailure(error)) return { kind: 'ignored', reason: 'unknown_user' }
+    throw error
+  }
   if (outcome.kind !== 'ignored') {
     await db
       .insert(tables.paddleEvents)
@@ -1070,6 +1081,14 @@ export async function applyPaddleEvent(
       .onConflictDoNothing()
   }
   return outcome
+}
+
+function isForeignKeyFailure(error: unknown): boolean {
+  // Drizzle wraps the D1 error; the constraint text is on the cause chain.
+  for (let e = error, depth = 0; e && depth < 5; e = (e as { cause?: unknown }).cause, depth++) {
+    if (/FOREIGN KEY constraint failed/i.test(String(e))) return true
+  }
+  return false
 }
 
 async function dispatchPaddleEvent(

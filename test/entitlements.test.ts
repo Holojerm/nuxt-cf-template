@@ -127,6 +127,14 @@ describe('one-time pass', () => {
     expect(active?.periodStart?.getTime()).toBe(atSecond(billedAt.getTime()))
   })
 
+  it('acknowledges a purchase whose custom_data names no account', async () => {
+    // A 500 here would have Paddle retry forever; the FK failure is the signal.
+    const outcome = await applyPaddleEvent(db, passPurchase('txn_1', new Date(), 'nobody'))
+    expect(outcome).toEqual({ kind: 'ignored', reason: 'unknown_user' })
+    expect(await db.query.entitlements.findMany()).toHaveLength(0)
+    expect(await db.query.paddleEvents.findMany()).toHaveLength(0)
+  })
+
   it('is idempotent across webhook redelivery', async () => {
     const billedAt = new Date(Date.now() - DAY_MS)
     const first = await applyPaddleEvent(db, passPurchase('txn_1', billedAt))
