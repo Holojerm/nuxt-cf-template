@@ -114,11 +114,8 @@ const DOT_INSENSITIVE_DOMAINS = new Map([
  * most of them, and which is why this function only special-cases the two
  * domains that document otherwise. Collapsing identities on a guess would merge
  * two strangers' accounts. Accounts stay keyed on normalizeEmail(); this is
- * only ever a KV bucket name, where a false merge costs one person a slower
- * retry and nothing else.
- *
- * Callers limit on BOTH this and the exact address, so sub-addressing cannot
- * widen a budget and a shared canonical form cannot narrow someone else's.
+ * only ever the budget's bucket key (`magic_link_tokens.mailbox`), where a
+ * false merge costs one person a slower retry and nothing else.
  */
 export function canonicalizeEmailForLimiting(email: string): string {
   const normalized = normalizeEmail(email)

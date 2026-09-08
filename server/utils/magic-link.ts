@@ -30,14 +30,14 @@
 // against. Adding a salt would only make the digest depend on a config value the
 // verify path would then have to keep in sync forever.
 
-import { and, eq, gt, isNull, lt } from 'drizzle-orm'
+import { and, count, eq, gt, isNull, lt } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
 
 import type { Attribution } from '#shared/utils/attribution'
 import * as tables from '../db/schema'
 import type { MagicLinkToken } from '../db/schema'
 import { base64url, sha256Hex } from './hash'
-import { isUndeliverableAddress, normalizeEmail } from './users'
+import { canonicalizeEmailForLimiting, isUndeliverableAddress, normalizeEmail } from './users'
 
 export type MagicLinkDb = ReturnType<typeof drizzle<typeof tables>>
 
@@ -107,8 +107,20 @@ export interface CreateMagicLinkTokenInput {
   attribution?: Attribution | null
 }
 
+export interface CreateMagicLinkTokenResult {
+  token: string
+  record: MagicLinkToken
+  /**
+   * false when this mailbox already minted MAGIC_LINK_RATE_LIMIT.limit links
+   * in the window. The row is still written (it is the charge), but the caller
+   * must not send the mail.
+   */
+  withinBudget: boolean
+}
+
 /**
- * Mint a link for an address, storing only its hash.
+ * Mint a link for an address, storing only its hash, and charge the mailbox's
+ * budget in the same D1 batch.
  *
  * Previously-issued links for the same address are NOT invalidated. That is a
  * decision, not an oversight: people click the first mail they find, and
@@ -121,7 +133,7 @@ export async function createMagicLinkToken(
   db: MagicLinkDb,
   input: CreateMagicLinkTokenInput,
   now: Date = new Date(),
-): Promise<{ token: string; record: MagicLinkToken }> {
+): Promise<CreateMagicLinkTokenResult> {
   const email = normalizeEmail(input.email)
 
   // Re-checked here, one layer closer to the write, rather than trusted to the
@@ -145,31 +157,50 @@ export async function createMagicLinkToken(
     .where(and(eq(tables.magicLinkTokens.email, email), lt(tables.magicLinkTokens.expiresAt, now)))
 
   const token = generateMagicLinkToken()
-  const [record] = await db
-    .insert(tables.magicLinkTokens)
-    .values({
-      email,
-      tokenHash: await hashMagicLinkToken(token),
-      expiresAt: new Date(now.getTime() + MAGIC_LINK_TTL_SECONDS * 1000),
-      redirectTo: input.redirectTo || null,
-      signupSource: input.attribution?.source ?? null,
-      signupMedium: input.attribution?.medium ?? null,
-      signupCampaign: input.attribution?.campaign ?? null,
-      signupReferrer: input.attribution?.referrer ?? null,
-      // Already shape-validated by attributionSchema on the way out of the
-      // cookie, and re-validated at redemption before it can name an account.
-      // This column only has to carry it across the device boundary.
-      referralCode: input.attribution?.referralCode ?? null,
-    })
-    .returning()
+  const mailbox = canonicalizeEmailForLimiting(email)
+  const windowStart = new Date(now.getTime() - MAGIC_LINK_RATE_LIMIT.windowSeconds * 1000)
+  // One batch, so the count sees this insert and D1 serialises it against
+  // every concurrent mint for the same mailbox: the k-th insert counts k.
+  const [inserted, counted] = await db.batch([
+    db
+      .insert(tables.magicLinkTokens)
+      .values({
+        email,
+        mailbox,
+        createdAt: now,
+        tokenHash: await hashMagicLinkToken(token),
+        expiresAt: new Date(now.getTime() + MAGIC_LINK_TTL_SECONDS * 1000),
+        redirectTo: input.redirectTo || null,
+        signupSource: input.attribution?.source ?? null,
+        signupMedium: input.attribution?.medium ?? null,
+        signupCampaign: input.attribution?.campaign ?? null,
+        signupReferrer: input.attribution?.referrer ?? null,
+        // Already shape-validated by attributionSchema on the way out of the
+        // cookie, and re-validated at redemption before it can name an account.
+        // This column only has to carry it across the device boundary.
+        referralCode: input.attribution?.referralCode ?? null,
+      })
+      .returning(),
+    db
+      .select({ minted: count() })
+      .from(tables.magicLinkTokens)
+      .where(
+        and(
+          eq(tables.magicLinkTokens.mailbox, mailbox),
+          gt(tables.magicLinkTokens.createdAt, windowStart),
+        ),
+      ),
+  ])
 
+  const record = inserted[0]
   if (!record) {
     // Practically unreachable — D1 returns the row or throws — but a missing row
     // here would mean emailing a link that can never be redeemed.
     throw new Error('Magic link insert returned no row')
   }
+  const minted = counted[0]?.minted ?? 0
 
-  return { token, record }
+  return { token, record, withinBudget: minted <= MAGIC_LINK_RATE_LIMIT.limit }
 }
 
 /** Why a lookup failed, for a page that can say something useful about it. */

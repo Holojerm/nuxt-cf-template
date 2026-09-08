@@ -20,11 +20,12 @@
 // ── Sending mail on an anonymous caller's say-so ─────────────────────────────
 // This endpoint puts mail from a domain the recipient trusts into an inbox that
 // the sender chose. Three things keep that from being a weapon, and they answer
-// different questions: the per-IP limit in the middleware and the per-address
-// limit below both answer "how fast" (see MAGIC_LINK_RATE_LIMIT for why the
-// second is the load-bearing half), while Turnstile answers "is there a browser
-// here at all". The challenge runs before either limiter is charged — the note
-// in the handler explains why that ordering is not cosmetic.
+// different questions: the per-IP limit in the middleware and the per-mailbox
+// budget charged inside createMagicLinkToken() both answer "how fast" (see
+// MAGIC_LINK_RATE_LIMIT for why the second is the load-bearing half), while
+// Turnstile answers "is there a browser here at all". The challenge runs before
+// either limiter is charged — the note in the handler explains why that
+// ordering is not cosmetic.
 
 import { z } from 'zod'
 
@@ -37,21 +38,13 @@ import { REDIRECT_COOKIE, safeRedirectPath } from '../../utils/auth'
 import { magicLinkEmail } from '../../utils/auth-email-templates'
 import { sendEmail } from '../../utils/email'
 import { emailBranding } from '../../utils/email-templates'
-import { kv } from '@nuxthub/kv'
-import { saltedHash } from '../../utils/hash'
 import {
   createMagicLinkToken,
   discardMagicLinkToken,
-  MAGIC_LINK_RATE_LIMIT,
   MAGIC_LINK_TTL_SECONDS,
 } from '../../utils/magic-link'
-import { consumeRateLimit } from '../../utils/rate-limit'
 import { requireTurnstile, turnstileTokenSchema } from '../../utils/turnstile'
-import {
-  canonicalizeEmailForLimiting,
-  isUndeliverableAddress,
-  normalizeEmail,
-} from '../../utils/users'
+import { isUndeliverableAddress, normalizeEmail } from '../../utils/users'
 
 const bodySchema = z.object({
   // 254 is the RFC 5321 ceiling for a whole address. Capped before the address
@@ -64,77 +57,14 @@ const bodySchema = z.object({
   turnstileToken: turnstileTokenSchema.nullish(),
 })
 
-/**
- * Has this mailbox had its share of links for now?
- *
- * ── Why this does not use rateLimit() ────────────────────────────────────────
- * The H3 wrapper is the right tool for the per-IP limit in the middleware and
- * the wrong one here, for two reasons that both leak information about somebody
- * else's account:
- *
- *   * It sets `X-RateLimit-Remaining` on the response. Keyed by ADDRESS, that
- *     header answers "is this person in the middle of signing in right now?"
- *     for anyone willing to POST their address — an activity oracle on a
- *     stranger, from an unauthenticated endpoint.
- *   * It throws 429. A distinguishable response for a distinguishable address
- *     is the enumeration hole the identical-response rule exists to close, and
- *     it also hands an attacker confirmation that their lockout landed.
- *
- * So the budget is consumed through the pure counter, which sets no headers,
- * and exhaustion is reported to the caller as an ordinary success. The person
- * being targeted still gets no unwanted mail; the attacker learns nothing and
- * cannot tell a locked-out address from a fresh one. It costs the honest user
- * who exhausts their own budget an email that never arrives, which is what a
- * rate limit costs anyway.
- *
- * ── Two buckets, because one address has many spellings ──────────────────────
- * `victim+1@gmail.com` … `+9999` are thousands of distinct strings that all
- * land in one inbox, so a limiter keyed on the exact address is one an attacker
- * walks around by incrementing a counter while every message still arrives.
- * Both the canonical mailbox and the exact address are charged, so
- * sub-addressing cannot widen the budget — and identity stays on the exact
- * address, because collapsing it would merge two strangers' accounts (see
- * canonicalizeEmailForLimiting).
- *
- * Fails OPEN, like rateLimit() itself: a KV outage must not take the front door
- * down with it.
- */
-async function addressBudgetExhausted(email: string, salt: string): Promise<boolean> {
-  const spellings = [...new Set([canonicalizeEmailForLimiting(email), email])]
-
-  try {
-    // In parallel, not in sequence. The two buckets are independent and BOTH
-    // are charged on every request — a short-circuit would only skip the second
-    // charge in the case where the first already refused, which is the case
-    // that returns `true` anyway. Sequential, this was two KV round trips of
-    // latency on the critical path of every sign-in for no behavioural gain.
-    const verdicts = await Promise.all(
-      spellings.map(async (spelling) => {
-        // Hashed, not raw: KV keys are readable in the Cloudflare dashboard and
-        // land in log lines, and "which addresses asked for a sign-in link" is
-        // not something this app needs to publish in order to run.
-        const identifier = (await saltedHash(spelling, salt)) ?? spelling
-        return consumeRateLimit(kv, {
-          key: `${MAGIC_LINK_RATE_LIMIT.name}:${identifier}`,
-          limit: MAGIC_LINK_RATE_LIMIT.limit,
-          windowSeconds: MAGIC_LINK_RATE_LIMIT.windowSeconds,
-        })
-      }),
-    )
-    if (verdicts.some((verdict) => !verdict.allowed)) return true
-  } catch (error) {
-    console.warn(
-      JSON.stringify({
-        kind: 'rate_limit_unavailable',
-        name: MAGIC_LINK_RATE_LIMIT.name,
-        error: String(error),
-      }),
-    )
-    return false
-  }
-
-  return false
-}
+// ── Why the per-mailbox budget is not rateLimit() ────────────────────────────
+// The H3 wrapper sets `X-RateLimit-Remaining` and throws 429. Keyed by ADDRESS,
+// both answer "is this stranger mid-sign-in?" to anyone who POSTs their
+// address — an activity oracle and the enumeration hole the identical-response
+// rule below exists to close. So the budget is charged inside
+// createMagicLinkToken(), in the same D1 batch as the insert (atomic under
+// concurrency, unlike the KV counter this replaced), and exhaustion is
+// reported to the caller as an ordinary success.
 
 export default defineEventHandler(async (event) => {
   const body = await readValidatedBody(event, bodySchema.parse)
@@ -159,7 +89,6 @@ export default defineEventHandler(async (event) => {
   await requireTurnstile(event, body.turnstileToken)
 
   const email = normalizeEmail(body.email)
-  const config = useRuntimeConfig(event)
 
   // ── Everything below answers `{ ok: true }` ────────────────────────────────
   // Three reasons a link is not sent, none of them distinguishable from a link
@@ -173,19 +102,24 @@ export default defineEventHandler(async (event) => {
     return { ok: true }
   }
 
-  // 2. This mailbox has had its five links for the quarter hour.
-  if (await addressBudgetExhausted(email, config.sessionPassword)) {
-    console.warn(JSON.stringify({ kind: 'magic_link_address_budget_exhausted' }))
-    return { ok: true }
-  }
-
   // Both of these live in cookies on THIS browser and are captured now, because
   // the link may well be opened on another device where neither exists. See the
   // note on `magic_link_tokens` in server/db/schema.ts.
   const redirectTo = safeRedirectPath(getCookie(event, REDIRECT_COOKIE), '')
   const attribution = readAttributionCookie(getCookie(event, ATTRIBUTION_COOKIE))
 
-  const { token, record } = await createMagicLinkToken(db, { email, redirectTo, attribution })
+  const { token, record, withinBudget } = await createMagicLinkToken(db, {
+    email,
+    redirectTo,
+    attribution,
+  })
+
+  // 2. This mailbox has had its five links for the quarter hour. The row above
+  //    is the charge; nobody holds its token, and it expires on its own.
+  if (!withinBudget) {
+    console.warn(JSON.stringify({ kind: 'magic_link_address_budget_exhausted' }))
+    return { ok: true }
+  }
 
   const brand = emailBranding()
   // Two deliberate choices in one line.

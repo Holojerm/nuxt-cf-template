@@ -326,6 +326,11 @@ export const magicLinkTokens = sqliteTable(
     // (server/utils/users.ts › findReferrerByCode). A constraint here would let
     // a junk cookie value fail somebody's sign-in.
     referralCode: text('referral_code'),
+    // The canonical mailbox (server/utils/users.ts › canonicalizeEmailForLimiting)
+    // the per-address budget counts on. `victim+1@gmail.com` … `+9999` are one
+    // inbox; counting on `email` alone is a limiter an attacker walks around.
+    // Empty on rows written before the column existed.
+    mailbox: text('mailbox').notNull().default(''),
     ...timestamps,
   },
   (table) => [
@@ -334,6 +339,9 @@ export const magicLinkTokens = sqliteTable(
     // server/utils/magic-link.ts › createMagicLinkToken. This index serves the
     // sweep, and the support question "how many links did this address ask for".
     index('magic_link_tokens_email_created_idx').on(table.email, table.createdAt),
+    // The per-address budget: "how many links did this MAILBOX mint in the last
+    // window", counted in the same D1 transaction as the insert.
+    index('magic_link_tokens_mailbox_created_idx').on(table.mailbox, table.createdAt),
     // ── The retention sweep's indexes ────────────────────────────────────────
     // server/utils/purge.ts selects `expires_at < cutoff OR (used_at IS NOT
     // NULL AND used_at < cutoff)`. Without these it was a full table scan of
