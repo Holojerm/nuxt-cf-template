@@ -79,29 +79,25 @@ export interface EntitlementView {
   cancelsAt: string | null
   /** Live subscriptions the user could cancel (usually 0 or 1). */
   cancellable: number
-  /** Whether a Paddle customer portal link can be minted at all. */
+  /**
+   * Whether there is a Paddle customer to open the portal for. NOT whether
+   * NUXT_PADDLE_API_KEY is set: that key is required, the button always shows
+   * for a paying customer, and a missing key surfaces as a 503 toast rather
+   * than a hidden button and "email us" copy (the dark pattern /account exists
+   * to avoid).
+   */
   portalAvailable: boolean
   history: EntitlementHistoryView[]
 }
 
 export interface BuildEntitlementViewOptions {
   productKey?: string
-  /**
-   * Whether NUXT_PADDLE_API_KEY is set — the caller reads runtime config.
-   *
-   * Required, not optional. Omitting it used to default to `false`, which
-   * silently hid the "Update payment method" button — the single recovery
-   * action on the dunning screen — on any caller that forgot the flag. A
-   * missing argument should be a type error, not an invisible downgrade of the
-   * one path a customer in dunning has.
-   */
-  portalConfigured: boolean
 }
 
 export async function buildEntitlementView(
   db: EntitlementDb,
   userId: string,
-  options: BuildEntitlementViewOptions,
+  options: BuildEntitlementViewOptions = {},
 ): Promise<EntitlementView> {
   const overview = await getBillingOverview(db, userId, options.productKey)
 
@@ -146,7 +142,7 @@ export async function buildEntitlementView(
         ? (describing.scheduledChangeAt?.toISOString() ?? null)
         : null,
     cancellable: overview.cancellableSubscriptionIds.length,
-    portalAvailable: Boolean(overview.paddleCustomerId) && options.portalConfigured,
+    portalAvailable: Boolean(overview.paddleCustomerId),
     history: overview.history.map((entitlement) => ({
       ref: entitlement.paddleSubscriptionId,
       kind: isPass(entitlement.paddleSubscriptionId) ? 'pass' : 'subscription',

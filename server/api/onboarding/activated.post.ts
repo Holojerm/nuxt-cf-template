@@ -39,7 +39,5 @@ export default defineEventHandler(async (event) => {
   // activateIfComplete recomputes the checklist itself rather than trusting
   // that this request only arrives when it's actually done — see
   // server/utils/onboarding.ts for why.
-  return activateIfComplete(db, user.id, variant, {
-    portalConfigured: Boolean(useRuntimeConfig(event).paddle.apiKey),
-  })
+  return activateIfComplete(db, user.id, variant)
 })

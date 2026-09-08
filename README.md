@@ -131,7 +131,9 @@ Everything else — OAuth, Paddle, Resend, PostHog, Turnstile — is optional an
 breaking**: an unset provider means that sign-in button doesn't render, an unset Paddle price
 means that plan's button is disabled, an unset Resend key means emails are logged no-ops, an unset
 Turnstile key means no bot check renders or runs. You can go all the way through the app before
-creating a single third-party account.
+creating a single third-party account. The one exception inside Paddle: once you sell anything,
+`NUXT_PADDLE_API_KEY` is **required** — it is what the cancel button on /account calls, and
+without it every cancel attempt 503s (see Billing, step 4).
 
 The one to revisit before you ship is **Resend**, because magic-link sign-in is the primary way in
 and it is the one email that cannot degrade to a no-op. In dev the link goes to the server console
@@ -926,7 +928,7 @@ Setup (sandbox):
 1. Create a sandbox account at [sandbox-vendors.paddle.com](https://sandbox-vendors.paddle.com), add a product + price.
 2. Client token (Developer tools → Authentication) → `NUXT_PUBLIC_PADDLE_CLIENT_TOKEN`, keep `NUXT_PUBLIC_PADDLE_ENV=sandbox`.
 3. Notification destination (Developer tools → Notifications) pointing at `https://<your-app>/paddle/webhook`, subscribed to `subscription.*`, `transaction.completed`, `adjustment.created`, and `adjustment.updated`; its secret → `NUXT_PADDLE_WEBHOOK_SECRET` (via `wrangler secret put` in prod, `.env` in dev). **Miss the adjustment events and refunded customers keep their access.**
-4. API key (Developer tools → Authentication) → `NUXT_PADDLE_API_KEY`, so `/api/billing/portal` can mint customer-portal links. Without it users can still cancel from their Paddle receipt email, but not from your app.
+4. API key (Developer tools → Authentication) → `NUXT_PADDLE_API_KEY`, so `/api/billing/portal` can mint customer-portal links. **Required once billing is on**: the "Manage or cancel" button on /account always renders for a paying customer and calls this route; with the key unset every click 503s (`paddle_portal_unconfigured` in the logs) and the toast tells the customer to email `NUXT_PUBLIC_SUPPORT_EMAIL`. There is deliberately no "reply to your receipt" fallback — a cancel path that routes through a support inbox is the dark pattern this page exists to avoid.
 5. In a page: `const { openCheckout } = usePaddle()` then `openCheckout('pri_…')`. Gate API routes with `await requireSubscription(event)`.
 
 Test the refund path before launch: Paddle → Developer tools → Notifications → Simulate, pick `adjustment.created`, and watch the entitlement flip.

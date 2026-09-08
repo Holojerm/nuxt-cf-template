@@ -99,12 +99,15 @@ async function openBillingPortal(): Promise<void> {
     return
   } catch (error) {
     const code = (error as { data?: { data?: { code?: string } } }).data?.data?.code
+    // Loud, never a dead end: the portal is the cancel path, so when it fails
+    // the toast says so and names a human. `portal_unconfigured` is the 503 a
+    // fork gets until NUXT_PADDLE_API_KEY is set (README › Billing).
     toast.add({
       title: 'Could not open the billing portal',
       description:
         code === 'portal_unconfigured'
-          ? 'NUXT_PADDLE_API_KEY is not set on the server.'
-          : "Reply to your Paddle receipt email and we'll cancel it for you.",
+          ? `The billing portal isn't configured on this deployment yet. Email ${config.public.supportEmail} and we'll cancel it for you the same day.`
+          : `Paddle didn't answer. Try again in a minute, or email ${config.public.supportEmail} and we'll cancel it for you the same day.`,
       color: 'error',
     })
   } finally {
@@ -412,11 +415,6 @@ useSeo({
           </UButton>
           <UButton to="/pricing" variant="ghost" color="neutral">See all plans</UButton>
         </div>
-
-        <p v-if="!billing.portalAvailable" class="text-sm text-muted">
-          The self-serve billing portal isn't configured on this deployment. To cancel, reply to
-          your Paddle receipt email — we'll action it the same day.
-        </p>
       </div>
 
       <div v-else class="flex flex-col items-start gap-4">

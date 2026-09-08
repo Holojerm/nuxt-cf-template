@@ -168,7 +168,7 @@ describe('hasActivated', () => {
 
 describe('computeOnboardingInputs', () => {
   it('reads false/absent for every signal on a freshly created account', async () => {
-    const inputs = await computeOnboardingInputs(db, USER_ID, { portalConfigured: false })
+    const inputs = await computeOnboardingInputs(db, USER_ID)
     expect(inputs).toEqual({
       entitlementActive: false,
       hasNotificationPreference: false,
@@ -185,7 +185,7 @@ describe('computeOnboardingInputs', () => {
       // usedAt intentionally left null — minted, not redeemed.
     })
 
-    const inputs = await computeOnboardingInputs(db, USER_ID, { portalConfigured: false })
+    const inputs = await computeOnboardingInputs(db, USER_ID)
     expect(inputs.hasConnectedClient).toBe(false)
   })
 
@@ -197,7 +197,7 @@ describe('computeOnboardingInputs', () => {
       usedAt: new Date(),
     })
 
-    const inputs = await computeOnboardingInputs(db, USER_ID, { portalConfigured: false })
+    const inputs = await computeOnboardingInputs(db, USER_ID)
     expect(inputs.hasConnectedClient).toBe(true)
   })
 
@@ -209,7 +209,7 @@ describe('computeOnboardingInputs', () => {
       enabled: false,
     })
 
-    const inputs = await computeOnboardingInputs(db, USER_ID, { portalConfigured: false })
+    const inputs = await computeOnboardingInputs(db, USER_ID)
     expect(inputs.hasNotificationPreference).toBe(true)
   })
 
@@ -218,7 +218,7 @@ describe('computeOnboardingInputs', () => {
       .insert(schema.feedback)
       .values({ userId: USER_ID, kind: 'idea', message: 'Add dark mode' })
 
-    const inputs = await computeOnboardingInputs(db, USER_ID, { portalConfigured: false })
+    const inputs = await computeOnboardingInputs(db, USER_ID)
     expect(inputs.hasSentFeedback).toBe(true)
   })
 
@@ -229,7 +229,7 @@ describe('computeOnboardingInputs', () => {
       status: 'active',
     })
 
-    const inputs = await computeOnboardingInputs(db, USER_ID, { portalConfigured: false })
+    const inputs = await computeOnboardingInputs(db, USER_ID)
     expect(inputs.entitlementActive).toBe(true)
   })
 
@@ -261,7 +261,7 @@ describe('computeOnboardingInputs', () => {
     })
     await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Read-only' })
 
-    const inputs = await computeOnboardingInputs(db, USER_ID, { portalConfigured: false })
+    const inputs = await computeOnboardingInputs(db, USER_ID)
     expect(inputs).toEqual({
       entitlementActive: true,
       hasNotificationPreference: true,
@@ -277,7 +277,7 @@ describe('activateIfComplete', () => {
   it('writes nothing and reports not activated when the checklist is incomplete', async () => {
     const fetchMock = stubPosthog()
 
-    const result = await activateIfComplete(db, USER_ID, 'control', { portalConfigured: false })
+    const result = await activateIfComplete(db, USER_ID, 'control')
 
     expect(result).toEqual({ activated: false })
     expect(fetchMock).not.toHaveBeenCalled()
@@ -305,7 +305,7 @@ describe('activateIfComplete', () => {
     })
     await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Almost' })
 
-    const result = await activateIfComplete(db, USER_ID, 'control', { portalConfigured: false })
+    const result = await activateIfComplete(db, USER_ID, 'control')
 
     expect(result).toEqual({ activated: false })
     expect(await listAudit(db, { targetId: USER_ID })).toHaveLength(0)
@@ -332,7 +332,7 @@ describe('activateIfComplete', () => {
     })
     await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Done' })
 
-    const result = await activateIfComplete(db, USER_ID, 'compact', { portalConfigured: false })
+    const result = await activateIfComplete(db, USER_ID, 'compact')
 
     expect(result).toEqual({ activated: true })
     const [, init] = fetchMock.mock.calls[0]!
@@ -367,11 +367,11 @@ describe('activateIfComplete', () => {
     })
     await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Done' })
 
-    const first = await activateIfComplete(db, USER_ID, 'control', { portalConfigured: false })
+    const first = await activateIfComplete(db, USER_ID, 'control')
     // A second POST — e.g. the client's onMounted trigger and its
     // variant-change watcher both firing — must not double-record, even
     // with a DIFFERENT variant on the second call.
-    const second = await activateIfComplete(db, USER_ID, 'compact', { portalConfigured: false })
+    const second = await activateIfComplete(db, USER_ID, 'compact')
 
     expect(first).toEqual({ activated: true })
     expect(second).toEqual({ activated: false })
@@ -411,7 +411,7 @@ describe('activateIfComplete', () => {
     })
     await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Done' })
 
-    const first = await activateIfComplete(db, USER_ID, 'control', { portalConfigured: false })
+    const first = await activateIfComplete(db, USER_ID, 'control')
     expect(first).toEqual({ activated: true })
     fetchMock.mockClear()
 
@@ -419,7 +419,7 @@ describe('activateIfComplete', () => {
     // this call recomputed, it would have nothing left to activate.
     await db.delete(schema.entitlements).where(eq(schema.entitlements.userId, USER_ID))
 
-    const second = await activateIfComplete(db, USER_ID, 'control', { portalConfigured: false })
+    const second = await activateIfComplete(db, USER_ID, 'control')
 
     expect(second).toEqual({ activated: false })
     // Not "false because incomplete" — false because the guard alone

@@ -111,7 +111,7 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
 
 ## Billing & MCP worker
 
-- **Paddle billing** is pre-wired: webhook at `server/routes/paddle/webhook.post.ts` (HMAC-verified, outside `/api/`), `entitlements` table, `requireSubscription(event, productKey?)` server util (throws 401/402), `usePaddle()` checkout composable, and the UI on top — `/pricing` (plans from `app/utils/plans.ts` + price IDs in runtime config) and `/account` (status, history, self-serve cancel via the Paddle portal). Gate paid API routes with `await requireSubscription(event)` — never trust client state for access control.
+- **Paddle billing** is pre-wired: webhook at `server/routes/paddle/webhook.post.ts` (HMAC-verified, outside `/api/`), `entitlements` table, `requireSubscription(event, productKey?)` server util (throws 401/402), `usePaddle()` checkout composable, and the UI on top — `/pricing` (plans from `app/utils/plans.ts` + price IDs in runtime config) and `/account` (status, history, self-serve cancel via the Paddle portal). `NUXT_PADDLE_API_KEY` is **required** once billing is on: the cancel button always renders for a paying customer and `POST /api/billing/portal` 503s (`portal_unconfigured`) without the key — the toast names `NUXT_PUBLIC_SUPPORT_EMAIL`; there is no "reply to your receipt email" fallback by design. Gate paid API routes with `await requireSubscription(event)` — never trust client state for access control.
 - **Events are ordered and deduplicated before anything is written.** Paddle
   retries every delivery that did not get a 2xx and documents that deliveries
   can overtake each other, so `applyPaddleEvent` reads two keys off every

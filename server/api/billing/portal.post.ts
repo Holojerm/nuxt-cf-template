@@ -13,6 +13,8 @@ export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
   const apiKey = config.paddle.apiKey
   if (!apiKey) {
+    // Required config, not an optional feature: this route IS the cancel path.
+    console.error(JSON.stringify({ kind: 'paddle_portal_unconfigured' }))
     throw createError({
       statusCode: 503,
       message: 'Billing portal not configured',

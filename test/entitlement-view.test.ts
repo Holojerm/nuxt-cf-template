@@ -52,7 +52,7 @@ describe('buildEntitlementView — state reaches the wire', () => {
     // sell the customer the plan they are already paying for.
     await insert('sub_1', 'past_due', -1)
 
-    const view = await buildEntitlementView(db, USER, { portalConfigured: true })
+    const view = await buildEntitlementView(db, USER)
 
     expect(view.active).toBe(false)
     expect(view.state).toBe('past_due')
@@ -66,7 +66,7 @@ describe('buildEntitlementView — state reaches the wire', () => {
     // the status off the wrong row, would still pass the test above.
     await insert('sub_1', 'active', 30)
 
-    const view = await buildEntitlementView(db, USER, { portalConfigured: true })
+    const view = await buildEntitlementView(db, USER)
 
     expect(view.active).toBe(true)
     expect(view.state).toBe('active')
@@ -75,7 +75,7 @@ describe('buildEntitlementView — state reaches the wire', () => {
   it('reports inactive once a subscription is cancelled', async () => {
     await insert('sub_1', 'canceled', -1)
 
-    const view = await buildEntitlementView(db, USER, { portalConfigured: true })
+    const view = await buildEntitlementView(db, USER)
 
     expect(view.state).toBe('inactive')
   })
@@ -86,7 +86,7 @@ describe('buildEntitlementView — state reaches the wire', () => {
     // to fix access that support gave them for free.
     await insert(compRef(), 'past_due', -1)
 
-    const view = await buildEntitlementView(db, USER, { portalConfigured: true })
+    const view = await buildEntitlementView(db, USER)
 
     expect(view.state).toBe('inactive')
   })
@@ -97,7 +97,7 @@ describe('buildEntitlementView — state reaches the wire', () => {
     await insert('sub_1', 'past_due', -1)
     await insert(compRef(), 'active', 14)
 
-    const view = await buildEntitlementView(db, USER, { portalConfigured: true })
+    const view = await buildEntitlementView(db, USER)
 
     expect(view.active).toBe(true)
     expect(view.state).toBe('active')
@@ -120,7 +120,7 @@ describe('buildEntitlementView — a live subscription describes the account', (
     await insert('sub_1', 'active', 20)
     await insert(compRef(), 'active', 400)
 
-    const view = await buildEntitlementView(db, USER, { portalConfigured: true })
+    const view = await buildEntitlementView(db, USER)
 
     expect(view.kind).toBe('subscription')
     expect(view.comped).toBe(false)
@@ -140,7 +140,7 @@ describe('buildEntitlementView — a live subscription describes the account', (
     await insert('sub_1', 'past_due', -1)
     await insert(compRef(), 'active', 14)
 
-    const view = await buildEntitlementView(db, USER, { portalConfigured: true })
+    const view = await buildEntitlementView(db, USER)
 
     expect(view.kind).toBe('pass')
     expect(view.comped).toBe(true)
@@ -149,17 +149,20 @@ describe('buildEntitlementView — a live subscription describes the account', (
   it('describes the comp when there is no subscription at all', async () => {
     await insert(compRef(), 'active', 14)
 
-    const view = await buildEntitlementView(db, USER, { portalConfigured: true })
+    const view = await buildEntitlementView(db, USER)
 
     expect(view.kind).toBe('pass')
     expect(view.comped).toBe(true)
   })
 
-  it('hides the portal when the API key is unset, whatever the customer holds', async () => {
+  it('offers the portal to every paying customer — the API key is required, not a gate', async () => {
+    // The cancel button never hides behind config: with NUXT_PADDLE_API_KEY
+    // unset the portal route 503s and the toast names support, which is loud
+    // in the right direction. Only "no Paddle customer at all" hides it.
     await insert('sub_1', 'active', 20)
 
-    const view = await buildEntitlementView(db, USER, { portalConfigured: false })
+    const view = await buildEntitlementView(db, USER)
 
-    expect(view.portalAvailable).toBe(false)
+    expect(view.portalAvailable).toBe(true)
   })
 })
