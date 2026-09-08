@@ -29,9 +29,15 @@
 
 name: Browser suites
 
+# `push` is limited to main rather than '**' because a pull-request branch
+# already gets a `pull_request` run. Matching on both fired this workflow twice
+# for every push to an open PR, under two different concurrency groups
+# (refs/heads/… and refs/pull/N/merge), so neither cancelled the other — two
+# full browser suites per push, and the stale one ran to completion.
 on:
   push:
-    branches: ['**']
+    branches:
+      - main
   pull_request:
 
 # A second push to the same branch makes the first run irrelevant.
