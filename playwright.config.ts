@@ -28,6 +28,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 import { playwrightPort } from './scripts/worktree-port'
+import { E2E_PADDLE_PRICES } from './test/e2e/paddle-prices'
 import { PADDLE_TEST_WEBHOOK_SECRET } from './test/e2e/webhook-secret'
 
 // Derived from the checkout path rather than fixed at 3000, so parallel git
@@ -120,6 +121,12 @@ export default defineConfig({
       NUXT_TYPECHECK: 'false',
       NUXT_PORT: String(PORT),
       NUXT_PADDLE_WEBHOOK_SECRET: PADDLE_TEST_WEBHOOK_SECRET,
+      // The webhook grants only for a configured price, so the ids the
+      // fixtures stamp on their events must be the ones this server knows.
+      // No client token is set, so /pricing stays disabled — a11y and csp see
+      // the same page they always did.
+      NUXT_PUBLIC_PADDLE_PRICE_MONTHLY: E2E_PADDLE_PRICES.monthly,
+      NUXT_PUBLIC_PADDLE_PRICE_PASS: E2E_PADDLE_PRICES.pass,
     },
   },
 })

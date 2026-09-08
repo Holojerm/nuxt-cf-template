@@ -10,8 +10,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
 import { eq } from 'drizzle-orm'
+import { paddlePriceCatalogue } from '../server/utils/paddle-prices'
 import {
-  applyPaddleEvent,
+  applyPaddleEvent as applyPaddleEventWith,
   findActiveEntitlement,
   getBillingOverview,
   isBillingLive,
@@ -23,6 +24,20 @@ const db = drizzle(env.DB, { schema })
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const USER = 'user-1'
+
+/** The prices this "deployment" sells — what the webhook checks every purchase against. */
+const PRICES = { monthly: 'pri_monthly', pass: 'pri_pass' } as const
+const CATALOGUE = paddlePriceCatalogue({
+  paddlePriceMonthly: PRICES.monthly,
+  paddlePricePass: PRICES.pass,
+})
+const SUBSCRIPTION_ITEMS = [{ price: { id: PRICES.monthly } }]
+const PASS_ITEMS = [{ price: { id: PRICES.pass } }]
+
+/** Every existing case buys something this deployment sells; the catalogue cases below pass their own. */
+function applyPaddleEvent(d: typeof db, event: PaddleEvent, catalogue = CATALOGUE) {
+  return applyPaddleEventWith(d, event, catalogue)
+}
 
 /** D1 timestamp columns are epoch seconds — expectations round the same way. */
 function atSecond(ms: number): number {
@@ -38,10 +53,13 @@ async function makeUser(id = USER) {
 
 /** Build + validate an event exactly as the webhook route would parse it. */
 function paddleEvent(eventType: string, data: Record<string, unknown>): PaddleEvent {
+  // Items default to the kind the event type implies, so a case about
+  // stacking or refunds does not have to restate what was bought.
+  const items = eventType.startsWith('subscription.') ? SUBSCRIPTION_ITEMS : PASS_ITEMS
   return paddleEventSchema.parse({
     event_id: `evt_${Math.random().toString(36).slice(2)}`,
     event_type: eventType,
-    data,
+    data: { items, ...data },
   })
 }
 
@@ -423,6 +441,7 @@ function subscriptionEvent(overrides: Record<string, unknown> = {}) {
       status: 'active',
       customer_id: 'ctm_1',
       custom_data: { userId: USER },
+      items: SUBSCRIPTION_ITEMS,
       current_billing_period: { ends_at: '2026-09-01T00:00:00Z' },
       ...overrides,
     },
@@ -534,5 +553,145 @@ describe('scheduled_change', () => {
     expect(row?.scheduledChangeAction).toBe('cancel')
     expect(row?.scheduledChangeAt).toBeNull()
     expect(isBillingLive(row!)).toBe(false)
+  })
+})
+
+// ─── What was bought is the price, not the buyer's claim ────────────────────
+// `custom_data` is written by the browser, so a genuine signed event can carry
+// any productKey the buyer typed. The webhook grants only for a price it was
+// configured with, of the kind the event implies.
+
+describe('price catalogue', () => {
+  it('grants nothing for a price this deployment does not sell', async () => {
+    const outcome = await applyPaddleEvent(
+      db,
+      paddleEvent('transaction.completed', {
+        id: 'txn_stranger',
+        customer_id: 'ctm_1',
+        custom_data: { userId: USER },
+        items: [{ price: { id: 'pri_somebody_elses' } }],
+      }),
+    )
+
+    expect(outcome).toMatchObject({
+      kind: 'ignored',
+      reason: 'unrecognised_price',
+      detail: 'unknown_price',
+      priceIds: ['pri_somebody_elses'],
+    })
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+  })
+
+  it('refuses a basket that mixes a known price with an unknown one', async () => {
+    const outcome = await applyPaddleEvent(
+      db,
+      paddleEvent('transaction.completed', {
+        id: 'txn_mixed',
+        custom_data: { userId: USER },
+        items: [{ price: { id: PRICES.pass } }, { price: { id: 'pri_addon' } }],
+      }),
+    )
+
+    expect(outcome).toMatchObject({ kind: 'ignored', detail: 'unknown_price' })
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+  })
+
+  it('refuses a one-time transaction for a subscription price, and vice versa', async () => {
+    const passOnSubscription = await applyPaddleEvent(
+      db,
+      paddleEvent('subscription.created', {
+        id: 'sub_wrong',
+        status: 'active',
+        custom_data: { userId: USER },
+        items: PASS_ITEMS,
+        current_billing_period: { ends_at: new Date(Date.now() + 20 * DAY_MS).toISOString() },
+      }),
+    )
+    const subscriptionOnPass = await applyPaddleEvent(
+      db,
+      paddleEvent('transaction.completed', {
+        id: 'txn_wrong',
+        custom_data: { userId: USER },
+        items: SUBSCRIPTION_ITEMS,
+      }),
+    )
+
+    expect(passOnSubscription).toMatchObject({ kind: 'ignored', detail: 'wrong_kind' })
+    expect(subscriptionOnPass).toMatchObject({ kind: 'ignored', detail: 'wrong_kind' })
+    expect(await db.query.entitlements.findMany()).toHaveLength(0)
+  })
+
+  it('ignores an event with no items at all', async () => {
+    const outcome = await applyPaddleEvent(
+      db,
+      paddleEvent('transaction.completed', {
+        id: 'txn_bare',
+        custom_data: { userId: USER },
+        items: null,
+      }),
+    )
+
+    expect(outcome).toMatchObject({ kind: 'ignored', detail: 'no_items' })
+  })
+
+  it('takes the product from the price, whatever custom_data claims', async () => {
+    const premium = paddlePriceCatalogue({ paddlePricePass: 'pri_premium' }, 'premium')
+    const outcome = await applyPaddleEvent(
+      db,
+      paddleEvent('transaction.completed', {
+        id: 'txn_claim',
+        // A productKey here is the buyer's claim; the schema drops it and the
+        // grant follows the price's product regardless.
+        custom_data: { userId: USER, productKey: 'enterprise' },
+        items: [{ price: { id: 'pri_premium' } }],
+      }),
+      premium,
+    )
+
+    expect(outcome).toMatchObject({ kind: 'pass', granted: true })
+    expect(await findActiveEntitlement(db, USER, 'enterprise')).toBeNull()
+    expect((await findActiveEntitlement(db, USER, 'premium'))?.status).toBe('active')
+  })
+
+  it('grants nothing when no prices are configured', async () => {
+    const outcome = await applyPaddleEvent(
+      db,
+      passPurchase('txn_unconfigured', new Date()),
+      paddlePriceCatalogue({}),
+    )
+
+    expect(outcome).toMatchObject({ kind: 'ignored', reason: 'unrecognised_price' })
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+  })
+
+  it('still applies a cancellation to a row whose price was rotated out of config', async () => {
+    const endsAt = new Date(Date.now() + 20 * DAY_MS)
+    await applyPaddleEvent(
+      db,
+      paddleEvent('subscription.created', {
+        id: 'sub_rotated',
+        status: 'active',
+        custom_data: { userId: USER },
+        current_billing_period: { ends_at: endsAt.toISOString() },
+      }),
+    )
+    expect((await findActiveEntitlement(db, USER))?.status).toBe('active')
+
+    // The operator replaced the monthly price; the old subscription keeps
+    // reporting the old price id. Its status must still follow Paddle.
+    const rotated = paddlePriceCatalogue({ paddlePriceMonthly: 'pri_monthly_v2' })
+    const outcome = await applyPaddleEvent(
+      db,
+      paddleEvent('subscription.canceled', {
+        id: 'sub_rotated',
+        status: 'canceled',
+        custom_data: { userId: USER },
+        current_billing_period: { ends_at: endsAt.toISOString() },
+      }),
+      rotated,
+    )
+
+    expect(outcome).toMatchObject({ kind: 'subscription', status: 'canceled' })
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
   })
 })

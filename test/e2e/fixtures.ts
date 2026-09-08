@@ -35,6 +35,7 @@ import type { APIRequestContext, APIResponse, BrowserContext, Page } from '@play
 import { playwrightPort } from '../../scripts/worktree-port'
 import { toHex } from '../../server/utils/hash'
 import { recordConsole } from '../lib/console'
+import { E2E_PADDLE_PRICES } from './paddle-prices'
 import { PADDLE_TEST_WEBHOOK_SECRET } from './webhook-secret'
 
 export const DAY_MS = 24 * 60 * 60 * 1000
@@ -120,7 +121,8 @@ export interface PaddleEventData {
   customer_id?: string | null
   subscription_id?: string | null
   billed_at?: string | null
-  custom_data?: { userId?: string; productKey?: string } | null
+  custom_data?: { userId?: string } | null
+  items?: { price: { id: string } }[] | null
   current_billing_period?: { ends_at: string } | null
   scheduled_change?: { action: string; effective_at?: string | null } | null
   action?: string | null
@@ -148,7 +150,8 @@ export function transactionCompletedEvent(params: {
     id: params.transactionId,
     status: 'completed',
     customer_id: `ctm_${params.transactionId}`,
-    custom_data: { userId: params.userId, productKey: 'default' },
+    custom_data: { userId: params.userId },
+    items: [{ price: { id: E2E_PADDLE_PRICES.pass } }],
     billed_at: (params.billedAt ?? new Date()).toISOString(),
   })
 }
@@ -166,7 +169,8 @@ export function subscriptionEvent(params: {
     id: params.subscriptionId,
     status: params.status,
     customer_id: `ctm_${params.subscriptionId}`,
-    custom_data: { userId: params.userId, productKey: 'default' },
+    custom_data: { userId: params.userId },
+    items: [{ price: { id: E2E_PADDLE_PRICES.monthly } }],
     current_billing_period: params.currentPeriodEndsAt
       ? { ends_at: params.currentPeriodEndsAt.toISOString() }
       : null,

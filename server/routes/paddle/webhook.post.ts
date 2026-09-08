@@ -39,7 +39,7 @@ export default defineEventHandler(async (event) => {
   const paddleEvent = parsed.data
   const eventType = paddleEvent.event_type
 
-  const outcome = await applyPaddleEvent(db, paddleEvent)
+  const outcome = await applyPaddleEvent(db, paddleEvent, paddlePriceCatalogue(config.public))
 
   // At most one email, only on a real transition — see
   // server/utils/billing-notifications.ts for the decision table. Awaited so it
@@ -167,6 +167,19 @@ export default defineEventHandler(async (event) => {
   } else if (outcome.reason === 'no_user') {
     console.warn(
       JSON.stringify({ kind: 'paddle_webhook_no_user', eventType, id: paddleEvent.data.id }),
+    )
+  } else if (outcome.reason === 'unrecognised_price') {
+    // Acknowledged (200) so Paddle stops retrying, but loud: either a price
+    // was added in the dashboard without a NUXT_PUBLIC_PADDLE_PRICE_* entry, or
+    // someone opened a checkout for something the app does not sell.
+    console.warn(
+      JSON.stringify({
+        kind: 'paddle_webhook_unrecognised_price',
+        eventType,
+        id: paddleEvent.data.id,
+        detail: outcome.detail,
+        priceIds: outcome.priceIds,
+      }),
     )
   }
   // Unhandled event types are acknowledged so Paddle doesn't retry them.
