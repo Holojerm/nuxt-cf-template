@@ -52,25 +52,38 @@ async function makeUser(id = USER) {
 }
 
 /** Build + validate an event exactly as the webhook route would parse it. */
-function paddleEvent(eventType: string, data: Record<string, unknown>): PaddleEvent {
+function paddleEvent(
+  eventType: string,
+  data: Record<string, unknown>,
+  meta: { eventId?: string; occurredAt?: Date } = {},
+): PaddleEvent {
   // Items default to the kind the event type implies, so a case about
   // stacking or refunds does not have to restate what was bought.
   const items = eventType.startsWith('subscription.') ? SUBSCRIPTION_ITEMS : PASS_ITEMS
   return paddleEventSchema.parse({
-    event_id: `evt_${Math.random().toString(36).slice(2)}`,
+    event_id: meta.eventId ?? `evt_${Math.random().toString(36).slice(2)}`,
     event_type: eventType,
+    // Defaults to "now" so a sequence built in order is delivered in order.
+    occurred_at: (meta.occurredAt ?? new Date()).toISOString(),
     data: { items, ...data },
   })
 }
 
+/** Pass purchases report the same occurred_at, so a case can build an adjustment that predates it. */
+const passPurchaseOccurredAt = new Date(Date.now() - 60 * 60 * 1000)
+
 function passPurchase(transactionId: string, billedAt: Date, userId = USER) {
-  return paddleEvent('transaction.completed', {
-    id: transactionId,
-    status: 'completed',
-    customer_id: 'ctm_1',
-    billed_at: billedAt.toISOString(),
-    custom_data: { userId, productKey: 'default' },
-  })
+  return paddleEvent(
+    'transaction.completed',
+    {
+      id: transactionId,
+      status: 'completed',
+      customer_id: 'ctm_1',
+      billed_at: billedAt.toISOString(),
+      custom_data: { userId, productKey: 'default' },
+    },
+    { occurredAt: passPurchaseOccurredAt },
+  )
 }
 
 function refund(opts: {
@@ -94,6 +107,7 @@ function refund(opts: {
 
 beforeEach(async () => {
   await db.delete(schema.entitlements)
+  await db.delete(schema.paddleEvents)
   await makeUser()
 })
 
@@ -393,6 +407,158 @@ describe('refunds and chargebacks', () => {
   })
 })
 
+describe('event ordering and redelivery', () => {
+  // Paddle documents out-of-order delivery. `occurred_at` is the ordering key,
+  // `event_id` the dedup key, and adjustments alone may set or clear a
+  // refunded/chargeback status.
+  const T0 = new Date(Date.now() - 3 * 60 * 60 * 1000)
+  const later = (hours: number) => new Date(T0.getTime() + hours * 60 * 60 * 1000)
+
+  function subscription(eventType: string, status: string, occurredAt: Date, eventId?: string) {
+    return paddleEvent(
+      eventType,
+      {
+        id: 'sub_1',
+        status,
+        customer_id: 'ctm_1',
+        custom_data: { userId: USER },
+        current_billing_period: { ends_at: later(24 * 30).toISOString() },
+      },
+      { occurredAt, eventId },
+    )
+  }
+
+  it('refuses a delayed active that arrives after the cancel it predates', async () => {
+    await applyPaddleEvent(db, subscription('subscription.created', 'active', later(0)))
+    await applyPaddleEvent(db, subscription('subscription.canceled', 'canceled', later(2)))
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+
+    const stale = await applyPaddleEvent(
+      db,
+      subscription('subscription.updated', 'active', later(1)),
+    )
+
+    expect(stale).toEqual({ kind: 'ignored', reason: 'stale_event' })
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+    const row = await db.query.entitlements.findFirst()
+    expect(row?.status).toBe('canceled')
+    expect(row?.lastEventAt?.getTime()).toBe(atSecond(later(2).getTime()))
+  })
+
+  it('refuses a delayed past_due that arrives after the recovery it predates', async () => {
+    await applyPaddleEvent(db, subscription('subscription.created', 'active', later(0)))
+    await applyPaddleEvent(db, subscription('subscription.updated', 'active', later(2)))
+
+    const stale = await applyPaddleEvent(
+      db,
+      subscription('subscription.past_due', 'past_due', later(1)),
+    )
+
+    expect(stale).toEqual({ kind: 'ignored', reason: 'stale_event' })
+    expect(await findActiveEntitlement(db, USER)).not.toBeNull()
+  })
+
+  it('never lets a routine update move a refunded subscription back to active', async () => {
+    await applyPaddleEvent(db, subscription('subscription.created', 'active', later(0)))
+    const refunded = await applyPaddleEvent(
+      db,
+      paddleEvent(
+        'adjustment.created',
+        {
+          id: 'adj_1',
+          action: 'refund',
+          type: 'full',
+          status: 'approved',
+          subscription_id: 'sub_1',
+          customer_id: 'ctm_1',
+        },
+        { occurredAt: later(1) },
+      ),
+    )
+    expect(refunded).toMatchObject({ kind: 'adjustment', result: { outcome: 'revoked' } })
+
+    // A card edit an hour later: Paddle sends the full entity, status active.
+    const revived = await applyPaddleEvent(
+      db,
+      subscription('subscription.updated', 'active', later(2)),
+    )
+
+    expect(revived).toEqual({ kind: 'ignored', reason: 'terminal_status' })
+    expect(await findActiveEntitlement(db, USER)).toBeNull()
+    expect((await db.query.entitlements.findFirst())?.status).toBe('refunded')
+  })
+
+  it('refuses an adjustment older than the row', async () => {
+    await applyPaddleEvent(db, passPurchase('txn_1', later(0)))
+    const row = await db.query.entitlements.findFirst()
+    expect(row?.lastEventAt?.getTime()).toBe(atSecond(passPurchaseOccurredAt.getTime()))
+
+    const stale = await applyPaddleEvent(
+      db,
+      paddleEvent(
+        'adjustment.created',
+        {
+          id: 'adj_1',
+          action: 'refund',
+          type: 'full',
+          status: 'approved',
+          transaction_id: 'txn_1',
+          customer_id: 'ctm_1',
+        },
+        { occurredAt: new Date(passPurchaseOccurredAt.getTime() - 60_000) },
+      ),
+    )
+
+    expect(stale).toEqual({ kind: 'ignored', reason: 'stale_event' })
+    expect(await findActiveEntitlement(db, USER)).not.toBeNull()
+  })
+
+  it('treats an exact redelivery (same event_id) as a no-op before any write', async () => {
+    const created = subscription('subscription.created', 'active', later(0), 'evt_created')
+    expect(await applyPaddleEvent(db, created)).toMatchObject({ kind: 'subscription' })
+    await applyPaddleEvent(db, subscription('subscription.canceled', 'canceled', later(1)))
+
+    // Same id, redelivered after the cancel: a naive "newer wins" would still
+    // refuse it, but the point is that it never reaches the ordering guard.
+    const redelivered = await applyPaddleEvent(db, created)
+
+    expect(redelivered).toEqual({ kind: 'ignored', reason: 'duplicate_event' })
+    expect((await db.query.entitlements.findFirst())?.status).toBe('canceled')
+    expect(await db.query.paddleEvents.findMany()).toHaveLength(2)
+  })
+
+  it('records only events that wrote, so a replay of an ignored one still applies', async () => {
+    const unknown = paddleEvent(
+      'transaction.completed',
+      {
+        id: 'txn_1',
+        status: 'completed',
+        customer_id: 'ctm_1',
+        custom_data: { userId: USER },
+        items: [{ price: { id: 'pri_not_configured' } }],
+      },
+      { eventId: 'evt_replay' },
+    )
+    expect(await applyPaddleEvent(db, unknown)).toMatchObject({ reason: 'unrecognised_price' })
+    expect(await db.query.paddleEvents.findMany()).toHaveLength(0)
+
+    const replayed = await applyPaddleEvent(
+      db,
+      unknown,
+      paddlePriceCatalogue({ paddlePricePass: 'pri_not_configured' }),
+    )
+    expect(replayed).toMatchObject({ kind: 'pass', granted: true })
+  })
+
+  it('a redelivered pass purchase with a fresh event_id is still one pass', async () => {
+    const billedAt = later(0)
+    await applyPaddleEvent(db, passPurchase('txn_1', billedAt))
+    const again = await applyPaddleEvent(db, passPurchase('txn_1', billedAt))
+    expect(again).toMatchObject({ kind: 'pass', granted: false })
+    expect(await db.query.entitlements.findMany()).toHaveLength(1)
+  })
+})
+
 describe('billing overview', () => {
   it('reports what can be cancelled and keeps ended rows in history', async () => {
     await applyPaddleEvent(db, passPurchase('txn_old', new Date(Date.now() - 60 * DAY_MS)))
@@ -434,8 +600,11 @@ describe('billing overview', () => {
 
 function subscriptionEvent(overrides: Record<string, unknown> = {}) {
   return {
-    event_id: 'evt_1',
+    // Fresh id and timestamp per delivery: several cases send two updates in
+    // a row, and a repeated event_id is now a deduplicated no-op.
+    event_id: `evt_${Math.random().toString(36).slice(2)}`,
     event_type: 'subscription.updated',
+    occurred_at: new Date().toISOString(),
     data: {
       id: 'sub_sched',
       status: 'active',

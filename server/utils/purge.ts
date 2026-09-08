@@ -64,6 +64,8 @@ export const PURGE_GRACE_SECONDS = 24 * 60 * 60
  * tick and only a first run after a long gap ever hits the cap.
  */
 export const PURGE_BATCH_LIMIT = 5000
+/** How long an applied Paddle event_id stays deduplicated. Paddle retries for ~3 days; 30 covers a manual replay. */
+export const PADDLE_EVENT_RETENTION_SECONDS = 30 * 24 * 60 * 60
 
 export interface PurgeOptions {
   /** Unix milliseconds. Injected so tests don't depend on the wall clock. */
@@ -75,6 +77,7 @@ export interface PurgeOptions {
 export interface PurgeCounts {
   mcpConnectCodes: number
   magicLinkTokens: number
+  paddleEvents: number
 }
 
 export interface PurgeResult extends PurgeCounts {
@@ -148,11 +151,26 @@ export async function purgeExpiredTokens(
     .where(inArray(tables.magicLinkTokens.id, deadMagicLinks))
     .returning({ id: tables.magicLinkTokens.id })
 
+  // Its own window, not `graceSeconds`: the dedup row has to outlive Paddle's
+  // retry schedule, and a 24h grace would let a day-old redelivery re-apply.
+  const eventCutoff = new Date(now - PADDLE_EVENT_RETENTION_SECONDS * 1000)
+  const deadEvents = db
+    .select({ eventId: tables.paddleEvents.eventId })
+    .from(tables.paddleEvents)
+    .where(lt(tables.paddleEvents.receivedAt, eventCutoff))
+    .limit(limit)
+  const paddleEvents = await db
+    .delete(tables.paddleEvents)
+    .where(inArray(tables.paddleEvents.eventId, deadEvents))
+    .returning({ eventId: tables.paddleEvents.eventId })
+
   return {
     mcpConnectCodes: connectCodes.length,
     magicLinkTokens: magicLinks.length,
+    paddleEvents: paddleEvents.length,
     cutoff: cutoff.getTime(),
-    truncated: connectCodes.length >= limit || magicLinks.length >= limit,
+    truncated:
+      connectCodes.length >= limit || magicLinks.length >= limit || paddleEvents.length >= limit,
   }
 }
 

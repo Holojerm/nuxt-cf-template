@@ -68,7 +68,8 @@ const PayloadSchema = z.object({
 export default defineTask({
   meta: {
     name: 'purge-expired-tokens',
-    description: 'Delete spent and expired magic-link tokens and MCP connect codes',
+    description:
+      'Delete spent and expired magic-link tokens, MCP connect codes and applied Paddle event ids',
   },
   async run({ payload }) {
     // Never throw out of here on bad input: a cron task that errors is retried

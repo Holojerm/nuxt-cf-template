@@ -168,6 +168,20 @@ export default defineEventHandler(async (event) => {
     console.warn(
       JSON.stringify({ kind: 'paddle_webhook_no_user', eventType, id: paddleEvent.data.id }),
     )
+  } else if (
+    outcome.reason === 'duplicate_event' ||
+    outcome.reason === 'stale_event' ||
+    outcome.reason === 'terminal_status'
+  ) {
+    console.warn(
+      JSON.stringify({
+        kind: 'paddle_webhook_not_applied',
+        reason: outcome.reason,
+        eventType,
+        eventId: paddleEvent.event_id,
+        id: paddleEvent.data.id,
+      }),
+    )
   } else if (outcome.reason === 'unrecognised_price') {
     // Acknowledged (200) so Paddle stops retrying, but loud: either a price
     // was added in the dashboard without a NUXT_PUBLIC_PADDLE_PRICE_* entry, or

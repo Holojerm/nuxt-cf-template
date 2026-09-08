@@ -103,6 +103,25 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
 ## Billing & MCP worker
 
 - **Paddle billing** is pre-wired: webhook at `server/routes/paddle/webhook.post.ts` (HMAC-verified, outside `/api/`), `entitlements` table, `requireSubscription(event, productKey?)` server util (throws 401/402), `usePaddle()` checkout composable, and the UI on top — `/pricing` (plans from `app/utils/plans.ts` + price IDs in runtime config) and `/account` (status, history, self-serve cancel via the Paddle portal). Gate paid API routes with `await requireSubscription(event)` — never trust client state for access control.
+- **Events are ordered and deduplicated before anything is written.** Paddle
+  retries every delivery that did not get a 2xx and documents that deliveries
+  can overtake each other, so `applyPaddleEvent` reads two keys off every
+  event: `event_id` and `occurred_at`. An `event_id` already in `paddle_events`
+  is a `duplicate_event` no-op before any write; only events that reached a
+  write path are recorded there, so a replay of one that was ignored (a price
+  added to config since) still applies. Every write stamps the row's
+  `last_event_at`, and a subscription or adjustment event older than that is
+  refused as `stale_event` — a delayed `subscription.updated{active}` cannot
+  undo a cancel, and a delayed `past_due` cannot lock out a recovered payer.
+  Separately, `refunded` and `chargeback` are **terminal for lifecycle
+  events**: only an adjustment sets them and only an adjustment (a reversal)
+  clears them, so the routine `subscription.updated` Paddle sends for a card
+  edit is refused as `terminal_status`. A `sub_` row whose chargeback is
+  reversed is unlocked to `canceled`, not revived — Paddle cancels a
+  subscription it charged back, and whatever it sends next is the truth. The
+  `paddle_events` rows are swept by `purgeExpiredTokens` after
+  `PADDLE_EVENT_RETENTION_SECONDS` (30 days), long after Paddle stops retrying.
+  All three refusals are logged as `paddle_webhook_not_applied` with the reason.
 - **The webhook trusts the price, not `custom_data`.** Checkout `custom_data` is written by the browser, so only `userId` is read from it, and only to find the account. What was bought comes from the event's `items[].price.id`, matched against the configured `NUXT_PUBLIC_PADDLE_PRICE_*` values by `paddlePriceCatalogue()` in `server/utils/paddle-prices.ts`: a new row is created only for a configured price of the kind the event implies, and an unknown price is acknowledged, logged as `paddle_webhook_unrecognised_price`, and grants nothing. Status changes on an existing subscription row skip the check so a price rotated out of config cannot leave a cancellation unapplied. Selling a second product means a new config key and a catalogue entry — not a `productKey` branch on `custom_data`.
 - **Feedback loop** is pre-wired: `<FeedbackWidget />` (mounted in the default layout) → `POST /api/feedback` (public — the auth middleware allowlists that exact method + path; the handler rate-limits by `ip_hash` in D1) → a `feedback` row in D1 **and** a server-side PostHog `feedback_submitted` event carrying the session-replay link. Never capture the same event from the client too. Read the queue with `GET /api/feedback` (admin-only via `requireAdmin()`); the `feedback-triage` routine turns it into GitHub issues.
 - **MCP worker** (`mcp/`) is an optional second Worker: OAuth 2.1 (workers-oauth-provider + `OAUTH_KV`), stateless `createMcpHandler` tools at `/mcp`, sharing the app's D1 by `database_id`. The app owns all migrations; the worker reads with raw SQL. Users bridge identity with single-use connect codes (`POST /api/mcp/connect-code` ↔ the worker's `/authorize` page). Its wrangler scripts pass `-c wrangler.jsonc` — required, because the app build's `.wrangler/deploy/config.json` redirect confuses wrangler otherwise. Do not use `McpAgent` for new tools — it's deprecated in the agents SDK; `createMcpHandler` is the current path.
