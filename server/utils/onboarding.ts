@@ -10,7 +10,7 @@
 // can drive this against a real D1 binding inside workerd without booting
 // Nitro.
 
-import { and, eq, isNotNull } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
 import { deriveOnboardingSteps } from '#shared/utils/onboarding'
@@ -23,7 +23,7 @@ import { captureServerEvent } from './posthog'
 export type OnboardingDb = ReturnType<typeof drizzle<typeof tables>>
 
 /**
- * Gather the four signals the checklist is built from, in one `Promise.all`:
+ * Gather the signals the checklist is built from, in one `Promise.all`:
  * the entitlement view (already its own small, bounded number of reads — see
  * server/utils/entitlement-view.ts) plus one indexed exists-style query per
  * remaining step. Nothing here is a table scan.
@@ -32,21 +32,10 @@ export async function computeOnboardingInputs(
   db: OnboardingDb,
   userId: string,
 ): Promise<OnboardingInputs> {
-  const [entitlement, notificationRow, connectedCodeRow, feedbackRow] = await Promise.all([
+  const [entitlement, notificationRow, feedbackRow] = await Promise.all([
     buildEntitlementView(db, userId),
     db.query.notificationPreferences.findFirst({
       where: eq(tables.notificationPreferences.userId, userId),
-      columns: { id: true },
-    }),
-    // `usedAt` is written by the MCP worker on redemption (mcp/src/authorize.ts
-    // — same D1 database, shared by `database_id`), not by minting the code.
-    // Minting only proves someone clicked "Generate code" on /account;
-    // redemption is the fact that a client is actually connected.
-    db.query.mcpConnectCodes.findFirst({
-      where: and(
-        eq(tables.mcpConnectCodes.userId, userId),
-        isNotNull(tables.mcpConnectCodes.usedAt),
-      ),
       columns: { id: true },
     }),
     db.query.feedback.findFirst({
@@ -58,7 +47,6 @@ export async function computeOnboardingInputs(
   return {
     entitlementActive: entitlement.active,
     hasNotificationPreference: Boolean(notificationRow),
-    hasConnectedClient: Boolean(connectedCodeRow),
     hasSentFeedback: Boolean(feedbackRow),
   }
 }

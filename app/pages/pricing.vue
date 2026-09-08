@@ -74,6 +74,17 @@ async function choose(plan: (typeof plans.value)[number]) {
   }
 }
 
+// Why a plan cannot be bought. The operator hints (which env var to set) are
+// dev-only: `import.meta.dev` is a build-time literal, so production renders a
+// plain sentence and never an instruction to a visitor.
+const unavailableHint = computed(() =>
+  import.meta.dev
+    ? paddleReady.value
+      ? 'No price ID configured for this plan yet.'
+      : 'Set NUXT_PUBLIC_PADDLE_CLIENT_TOKEN to enable checkout.'
+    : 'Checkout isn’t available yet.',
+)
+
 // Set by the `subscription` route middleware when it turns someone away.
 const gatedFrom = computed(() => (typeof route.query.from === 'string' ? route.query.from : null))
 
@@ -175,11 +186,7 @@ useSeo({
               {{ loggedIn ? `Get ${plan.name}` : 'Sign in to continue' }}
             </UButton>
             <p v-if="!plan.purchasable" class="text-xs text-muted">
-              {{
-                paddleReady
-                  ? 'No price ID configured for this plan yet.'
-                  : 'Set NUXT_PUBLIC_PADDLE_CLIENT_TOKEN to enable checkout.'
-              }}
+              {{ unavailableHint }}
             </p>
             <p v-else-if="!plan.recurring" class="text-xs text-muted">
               One-time charge. Never renews.

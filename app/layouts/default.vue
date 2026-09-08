@@ -3,11 +3,14 @@
 //
 // One shell rather than a marketing/app split: at this size a second layout
 // costs more than it saves, and the nav already adapts (public links always,
-// Dashboard only when signed in, avatar menu instead of a Sign in button).
+// Dashboard only with an active plan, Admin only for admins, avatar menu
+// instead of a Sign in button).
 // Split it the day the product needs a sidebar.
 
 const config = useRuntimeConfig()
-const { loggedIn } = useUserSession()
+const { loggedIn, user } = useUserSession()
+const { data: entitlement } = useEntitlement()
+const isAdmin = computed(() => user.value?.role === 'admin')
 
 const appName = config.public.appName
 const supportEmail = config.public.supportEmail
@@ -20,17 +23,20 @@ const navLinks = computed(() => [
   // view. It is also the internal link that tells a crawler /blog exists
   // without waiting for the sitemap.
   { label: 'Blog', to: '/blog' },
-  // Files is paying-only (middleware: ['auth', 'subscription']), but gated
-  // on `loggedIn` here, same as Dashboard just above — a signed-in visitor
-  // without a subscription clicking either link lands on /pricing via that
-  // page's own middleware, rather than this nav trying to duplicate the
-  // subscription check just to decide whether to show a link.
-  ...(loggedIn.value
+  // Dashboard and Files are paying-only (middleware: ['auth', 'subscription']),
+  // so they show only while the entitlement is active. Signed in without a
+  // plan, both links bounced to /pricing with "that page needs an active plan"
+  // — a nav that offers things you cannot use. The state arrives a beat after
+  // hydration (useEntitlement); until then a paying customer sees the public
+  // links, which is the honest default for a shell that cannot know yet.
+  ...(loggedIn.value && entitlement.value?.active
     ? [
         { label: 'Dashboard', to: '/dashboard' },
         { label: 'Files', to: '/files' },
       ]
     : []),
+  // Admins never had a way to /admin except typing it.
+  ...(isAdmin.value ? [{ label: 'Admin', to: '/admin' }] : []),
 ])
 
 // Mobile nav drawer. Two links don't need one — five do, and this is the seam a

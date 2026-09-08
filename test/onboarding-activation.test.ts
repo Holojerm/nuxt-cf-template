@@ -30,7 +30,6 @@ const USER_ID = 'user-onboarding-1'
 beforeEach(async () => {
   await db.delete(schema.auditLog)
   await db.delete(schema.feedback)
-  await db.delete(schema.mcpConnectCodes)
   await db.delete(schema.notificationPreferences)
   await db.delete(schema.entitlements)
   await db.delete(schema.users)
@@ -172,33 +171,8 @@ describe('computeOnboardingInputs', () => {
     expect(inputs).toEqual({
       entitlementActive: false,
       hasNotificationPreference: false,
-      hasConnectedClient: false,
       hasSentFeedback: false,
     })
-  })
-
-  it('counts a minted-but-unredeemed MCP connect code as NOT connected', async () => {
-    await db.insert(schema.mcpConnectCodes).values({
-      userId: USER_ID,
-      codeHash: 'a'.repeat(64),
-      expiresAt: new Date(Date.now() + 60_000),
-      // usedAt intentionally left null — minted, not redeemed.
-    })
-
-    const inputs = await computeOnboardingInputs(db, USER_ID)
-    expect(inputs.hasConnectedClient).toBe(false)
-  })
-
-  it('counts a redeemed MCP connect code as connected', async () => {
-    await db.insert(schema.mcpConnectCodes).values({
-      userId: USER_ID,
-      codeHash: 'b'.repeat(64),
-      expiresAt: new Date(Date.now() + 60_000),
-      usedAt: new Date(),
-    })
-
-    const inputs = await computeOnboardingInputs(db, USER_ID)
-    expect(inputs.hasConnectedClient).toBe(true)
   })
 
   it('counts any saved notification preference row, whatever its value', async () => {
@@ -253,19 +227,12 @@ describe('computeOnboardingInputs', () => {
       eventType: 'product_updates',
       enabled: true,
     })
-    await db.insert(schema.mcpConnectCodes).values({
-      userId: USER_ID,
-      codeHash: 'd'.repeat(64),
-      expiresAt: new Date(Date.now() + 60_000),
-      usedAt: new Date(),
-    })
     await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Read-only' })
 
     const inputs = await computeOnboardingInputs(db, USER_ID)
     expect(inputs).toEqual({
       entitlementActive: true,
       hasNotificationPreference: true,
-      hasConnectedClient: true,
       hasSentFeedback: true,
     })
 
@@ -297,12 +264,6 @@ describe('activateIfComplete', () => {
       eventType: 'product_updates',
       enabled: true,
     })
-    await db.insert(schema.mcpConnectCodes).values({
-      userId: USER_ID,
-      codeHash: 'e'.repeat(64),
-      expiresAt: new Date(Date.now() + 60_000),
-      usedAt: new Date(),
-    })
     await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Almost' })
 
     const result = await activateIfComplete(db, USER_ID, 'control')
@@ -323,12 +284,6 @@ describe('activateIfComplete', () => {
       channel: 'email',
       eventType: 'product_updates',
       enabled: true,
-    })
-    await db.insert(schema.mcpConnectCodes).values({
-      userId: USER_ID,
-      codeHash: 'f'.repeat(64),
-      expiresAt: new Date(Date.now() + 60_000),
-      usedAt: new Date(),
     })
     await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Done' })
 
@@ -358,12 +313,6 @@ describe('activateIfComplete', () => {
       channel: 'email',
       eventType: 'product_updates',
       enabled: true,
-    })
-    await db.insert(schema.mcpConnectCodes).values({
-      userId: USER_ID,
-      codeHash: 'a1'.repeat(32),
-      expiresAt: new Date(Date.now() + 60_000),
-      usedAt: new Date(),
     })
     await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Done' })
 
@@ -402,12 +351,6 @@ describe('activateIfComplete', () => {
       channel: 'email',
       eventType: 'product_updates',
       enabled: true,
-    })
-    await db.insert(schema.mcpConnectCodes).values({
-      userId: USER_ID,
-      codeHash: 'b2'.repeat(32),
-      expiresAt: new Date(Date.now() + 60_000),
-      usedAt: new Date(),
     })
     await db.insert(schema.feedback).values({ userId: USER_ID, kind: 'idea', message: 'Done' })
 

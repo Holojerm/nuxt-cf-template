@@ -19,17 +19,19 @@ import { z } from 'zod'
  * Doing a later step before an earlier one (e.g. sending feedback before
  * connecting a client) still leaves the right thing highlighted as "next".
  */
-export const ONBOARDING_STEP_IDS = ['plan', 'connect', 'notifications', 'feedback'] as const
+import {
+  ONBOARDING_STEP_IDS,
+  ONBOARDING_STEPS,
+  type OnboardingStepDefinition,
+} from './onboarding-steps'
+
+export { ONBOARDING_STEP_IDS, ONBOARDING_STEPS } from './onboarding-steps'
+export type { OnboardingStepDefinition, OnboardingStepId } from './onboarding-steps'
 
 export const onboardingStepIdSchema = z.enum(ONBOARDING_STEP_IDS)
-export type OnboardingStepId = z.infer<typeof onboardingStepIdSchema>
 
 export const onboardingStepActionSchema = z.object({
   label: z.string(),
-  /** A route to navigate to. The 'feedback' step's action is not a plain
-   * link — the UI embeds <FeedbackWidget position="inline"> for that step
-   * instead (see Checklist.vue) — so this is a same-page fallback for that
-   * one, never actually followed. */
   to: z.string(),
 })
 export type OnboardingStepAction = z.infer<typeof onboardingStepActionSchema>
@@ -134,14 +136,6 @@ export interface OnboardingInputs {
    */
   hasNotificationPreference: boolean
   /**
-   * Whether a minted MCP connect code for this user has actually been
-   * redeemed (`used_at` set) — not just requested. Minting one only proves
-   * intent (someone clicked "Generate code"); redemption, written by the
-   * MCP worker into the same D1 table (mcp/src/authorize.ts), is the fact
-   * that a client is actually connected.
-   */
-  hasConnectedClient: boolean
-  /**
    * Whether this user has ever submitted feedback (any row in `feedback`
    * for their id). Optional because a caller may not always compute it —
    * treated as `false` when omitted, the same "unknown degrades to
@@ -151,35 +145,20 @@ export interface OnboardingInputs {
 }
 
 /**
- * Turn the four raw signals into the ordered, renderable checklist.
+ * Turn the raw signals into the ordered, renderable checklist. The step list
+ * is data (shared/utils/onboarding-steps.ts) so a fork changes the checklist
+ * without touching this.
  */
-export function deriveOnboardingSteps(inputs: OnboardingInputs): OnboardingProgress {
-  const steps: OnboardingStep[] = [
-    {
-      id: 'plan',
-      label: 'Pick a plan',
-      done: inputs.entitlementActive,
-      action: { label: 'View plans', to: '/pricing' },
-    },
-    {
-      id: 'connect',
-      label: 'Connect an AI client',
-      done: inputs.hasConnectedClient,
-      action: { label: 'Connect a client', to: '/account' },
-    },
-    {
-      id: 'notifications',
-      label: 'Set your email preferences',
-      done: inputs.hasNotificationPreference,
-      action: { label: 'Set preferences', to: '/account' },
-    },
-    {
-      id: 'feedback',
-      label: 'Send us feedback',
-      done: Boolean(inputs.hasSentFeedback),
-      action: { label: 'Send feedback', to: '/dashboard' },
-    },
-  ]
+export function deriveOnboardingSteps(
+  inputs: OnboardingInputs,
+  definitions: readonly OnboardingStepDefinition[] = ONBOARDING_STEPS,
+): OnboardingProgress {
+  const steps: OnboardingStep[] = definitions.map((step) => ({
+    id: step.id,
+    label: step.label,
+    done: step.done(inputs),
+    action: step.action,
+  }))
 
   const completed = steps.filter((step) => step.done).length
 

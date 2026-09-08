@@ -15,22 +15,20 @@ import type { ActivationAttemptState, OnboardingInputs } from '../shared/utils/o
 const NONE_DONE: OnboardingInputs = {
   entitlementActive: false,
   hasNotificationPreference: false,
-  hasConnectedClient: false,
   hasSentFeedback: false,
 }
 
 const ALL_DONE: OnboardingInputs = {
   entitlementActive: true,
   hasNotificationPreference: true,
-  hasConnectedClient: true,
   hasSentFeedback: true,
 }
 
 describe('deriveOnboardingSteps — shape', () => {
-  it('returns all four steps in ONBOARDING_STEP_IDS order, every time', () => {
+  it('returns every step in ONBOARDING_STEP_IDS order, every time', () => {
     const progress = deriveOnboardingSteps(NONE_DONE)
     expect(progress.steps.map((step) => step.id)).toEqual([...ONBOARDING_STEP_IDS])
-    expect(progress.total).toBe(4)
+    expect(progress.total).toBe(ONBOARDING_STEP_IDS.length)
   })
 
   it('every step carries a non-empty label and a real action', () => {
@@ -62,7 +60,7 @@ describe('deriveOnboardingSteps — everything done', () => {
 
   it('marks every step done and the whole checklist complete', () => {
     expect(progress.steps.every((step) => step.done === true)).toBe(true)
-    expect(progress.completed).toBe(4)
+    expect(progress.completed).toBe(ONBOARDING_STEP_IDS.length)
     expect(progress.complete).toBe(true)
   })
 
@@ -74,7 +72,6 @@ describe('deriveOnboardingSteps — everything done', () => {
 describe('deriveOnboardingSteps — one signal at a time', () => {
   it.each([
     ['entitlementActive', 'plan'],
-    ['hasConnectedClient', 'connect'],
     ['hasNotificationPreference', 'notifications'],
     ['hasSentFeedback', 'feedback'],
   ] as const)('turning on %s completes only the %s step', (key, stepId) => {
@@ -87,14 +84,13 @@ describe('deriveOnboardingSteps — one signal at a time', () => {
 })
 
 describe('deriveOnboardingSteps — next follows step order, not completion order', () => {
-  it('finishing feedback and connect first still points next at plan', () => {
+  it('finishing feedback first still points next at plan', () => {
     const progress = deriveOnboardingSteps({
       entitlementActive: false,
       hasNotificationPreference: false,
-      hasConnectedClient: true,
       hasSentFeedback: true,
     })
-    expect(progress.completed).toBe(2)
+    expect(progress.completed).toBe(1)
     expect(progress.next?.id).toBe('plan')
   })
 
@@ -102,21 +98,18 @@ describe('deriveOnboardingSteps — next follows step order, not completion orde
     const progress = deriveOnboardingSteps({
       entitlementActive: true,
       hasNotificationPreference: true,
-      hasConnectedClient: true,
       hasSentFeedback: false,
     })
-    expect(progress.completed).toBe(3)
+    expect(progress.completed).toBe(ONBOARDING_STEP_IDS.length - 1)
     expect(progress.next?.id).toBe('feedback')
   })
 })
 
 describe('deriveOnboardingSteps — omitted optional input', () => {
   it('treats a missing hasSentFeedback as not done, not as an error', () => {
-    const { entitlementActive, hasNotificationPreference, hasConnectedClient } = ALL_DONE
     const progress = deriveOnboardingSteps({
-      entitlementActive,
-      hasNotificationPreference,
-      hasConnectedClient,
+      entitlementActive: true,
+      hasNotificationPreference: true,
     })
     expect(progress.steps.find((step) => step.id === 'feedback')?.done).toBe(false)
     expect(progress.complete).toBe(false)

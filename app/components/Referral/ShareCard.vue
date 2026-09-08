@@ -56,13 +56,12 @@ onScopeDispose(() => clearTimeout(resetTimer))
       <p class="text-muted">
         They get {{ REFERRAL_WELCOME_DAYS }} days free when they sign up through your link. You get
         {{ REFERRAL_REWARD_DAYS }} days the first time one of them pays — up to
-        {{ REFERRAL_MAX_REWARDS }} times. Days stack on whatever you already have.
+        {{ REFERRAL_MAX_REWARDS }} times.
       </p>
 
-      <!-- The sentence a subscriber needs, and the one the card used to leave
-           out while quietly not paying them at all. Shared with the billing
-           history on /account so the promise made here is the exact string
-           shown later beside the date (#shared/utils/referral). -->
+      <!-- The stacking rule, once. Shared with the billing history on /account
+           so the promise made here is the exact string shown later beside the
+           date (#shared/utils/referral). -->
       <p class="text-sm text-muted">{{ REFERRAL_STACKING_NOTE }}</p>
 
       <div v-if="status === 'pending'" class="flex flex-col gap-3">

@@ -11,35 +11,17 @@
 // unmissable.
 //
 // ── How the layout learns the state, and what it costs ──────────────────────
-// The default layout renders on every page, marketing pages included, so the
-// cost of asking has to be near zero:
-//
-//   - Signed out: the layout never mounts this (`v-if="loggedIn"`). No request,
-//     no server work, no bundle path taken.
-//   - Signed in: `server: false` keeps the lookup off the server render
-//     entirely, so first paint pays nothing for it. One GET after hydration —
-//     once per full page load, not once per navigation, because the default
-//     layout persists across client-side routing and this component is never
-//     remounted.
-//
-// The trade is that the banner arrives a beat after the page does, and that an
-// SPA session running when a payment fails won't notice until the next load.
-// Both are the right side of the trade: this state is rare, the customer
-// already has the email, and nobody should pay a D1 round-trip on every
-// marketing page render for a banner almost no one will ever see.
+// useEntitlement(): client-only, one GET after hydration per full page load,
+// shared with the nav and the avatar menu under one key. The trade is that the
+// banner arrives a beat after the page does, and an SPA session running when a
+// payment fails won't notice until the next load — the right side of it, since
+// the customer already has the email and nobody should pay a D1 round-trip on
+// every marketing page render for a banner almost no one will ever see.
 
 const { loggedIn } = useUserSession()
 const route = useRoute()
 
-const { data: billing } = useFetch('/api/billing/entitlement', {
-  key: 'billing-past-due-banner',
-  // Client-only and non-blocking. Deliberately its own key rather than sharing
-  // /account's — two useFetch calls on one key are one shared request, and the
-  // layout's setup runs first, so sharing would hand the page this call's
-  // (empty) server-side result and break its SSR data.
-  server: false,
-  lazy: true,
-})
+const { data: billing } = useEntitlement()
 
 // Not on /account: that page says all of this louder, with the billing history
 // under it. The same alert twice, a scroll apart, reads as a rendering bug
