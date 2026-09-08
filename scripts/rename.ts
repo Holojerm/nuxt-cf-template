@@ -33,6 +33,8 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+import { deriveNamespaceIds, rewriteNamespaceIds } from './ratelimit-namespace'
+
 const ROOT = resolve(import.meta.dir, '..')
 
 const PLACEHOLDER = 'my-app'
@@ -122,6 +124,22 @@ for (const target of TARGETS) {
   changes.push({ file: target.file, count })
 }
 
+// The rate-limit namespace is account-scoped, so every fork needs its own pair
+// (scripts/ratelimit-namespace.ts). Derived from the name rather than asked
+// for: a number nobody has to remember is a number nobody forgets to change.
+const namespaceIds = deriveNamespaceIds(name)
+{
+  const path = resolve(ROOT, 'wrangler.toml')
+  if (existsSync(path)) {
+    const before = readFileSync(path, 'utf8')
+    const { toml, replaced } = rewriteNamespaceIds(before, namespaceIds)
+    if (toml !== before) {
+      writeFileSync(path, toml)
+      changes.push({ file: 'wrangler.toml (ratelimits)', count: replaced })
+    }
+  }
+}
+
 if (missing.length) {
   console.error(`Missing expected files: ${missing.join(', ')}`)
   console.error('Are you running this from the project root?')
@@ -138,6 +156,10 @@ console.info(`Renamed ${PLACEHOLDER} → ${name} ("${PLACEHOLDER_DISPLAY}" → "
 for (const change of changes) {
   console.info(`  ${change.file}  (${change.count} replacement${change.count === 1 ? '' : 's'})`)
 }
+console.info(
+  `\nRate-limit namespace_id: ${namespaceIds.production} (production), ${namespaceIds.preview} (preview) — ` +
+    'account-scoped, derived from the name; distinct from every other fork on the account.',
+)
 
 console.info(`
 Still yours to do — these need values only you have:

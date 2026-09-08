@@ -39,8 +39,10 @@ bun run rename acme-widgets --display "Acme Widgets"
 ```
 
 That rewrites every occurrence of `my-app` across `wrangler.toml`, `package.json`
-(scripts + `portless.name`), `.mcp.json`, `fleet.json`, and `mcp/`, then prints what's left for you to do
-by hand. Missing one of these is not obvious later: Workers Builds refuses every build when
+(scripts + `portless.name`), `.mcp.json`, `fleet.json`, and `mcp/`, sets both `[[ratelimits]]`
+`namespace_id`s to a pair derived from the new name (the namespace is scoped to your Cloudflare
+account, so every app on it needs its own — `scripts/ratelimit-namespace.ts`), and prints what's
+left for you to do by hand. Missing one of these is not obvious later: Workers Builds refuses every build when
 the dashboard Worker name doesn't match `wrangler.toml`, and the Nuxt MCP server just never
 connects when its URL doesn't match `portless.name`.
 
