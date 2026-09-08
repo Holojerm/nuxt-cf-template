@@ -93,13 +93,16 @@ export default defineEventHandler(async (event) => {
     (outcome.previousStatus === null || outcome.previousStatus === 'trialing')
 
   if (outcome.kind === 'pass' || firstSubscriptionPayment) {
-    // `data.id` is the ref of the entitlement row this purchase created — the
-    // transaction id for a pass, the subscription id for a subscription — and
-    // therefore exactly what a later adjustment will match on. Stored on the
-    // reward so a refund of THIS purchase can find it. Without it the reward
-    // is unreachable by any clawback.
+    // The ref a later refund will name: the transaction id for a pass, and for
+    // a subscription its FIRST transaction — so a refund of a later renewal
+    // finds no reward to claw back. Falls back to the subscription id when
+    // Paddle never sent one. Without a ref the reward is unreachable by any
+    // clawback.
     await rewardReferrerForFirstPurchase(db, outcome.userId, {
-      earnedFromRef: paddleEvent.data.id,
+      earnedFromRef:
+        outcome.kind === 'subscription'
+          ? (outcome.firstTransactionId ?? paddleEvent.data.id)
+          : paddleEvent.data.id,
     })
   }
 

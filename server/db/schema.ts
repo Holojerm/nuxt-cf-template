@@ -174,6 +174,10 @@ export const entitlements = sqliteTable(
     // never be re-earned because nothing distinguished "which purchase was this
     // for". Keyed on the purchase, each of those answers itself.
     //
+    // For a subscription it is the FIRST transaction (`first_transaction_id`),
+    // not the `sub_` id: a refund adjustment names the transaction it reverses,
+    // and only the first one paid for the reward.
+    //
     // NULL on every ordinary row, and on referral rows granted before this column
     // existed — which is why the cascade treats NULL as "provenance unknown, do
     // not touch". A missed clawback is recoverable; clawing back a reward that
@@ -189,6 +193,13 @@ export const entitlements = sqliteTable(
     // predicate the restore matches on — a row nobody took away cannot be
     // "restored" into a window it never had.
     restorePeriodEnd: integer('restore_period_end', { mode: 'timestamp' }),
+    // `sub_` rows only: the transaction that created the subscription, which
+    // Paddle sends once, on `subscription.created`. The referral reward is
+    // keyed on it (`earned_from_ref`) rather than on the subscription id, so a
+    // refund of a later renewal cannot claw back what the first payment earned.
+    // NULL on rows created before the column and when Paddle omitted the field;
+    // the reward then falls back to the subscription id.
+    firstTransactionId: text('first_transaction_id'),
     // `occurred_at` of the newest Paddle event applied to this row. Paddle
     // documents out-of-order delivery, so an event older than this is refused
     // rather than allowed to overwrite a later status (see upsertSubscription).

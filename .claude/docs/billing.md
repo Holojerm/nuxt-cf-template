@@ -24,6 +24,15 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
   1. **The reward is revoked when the PURCHASE behind it reverses.** Keyed on
      `entitlements.earned_from_ref` — the transaction, never the person, or a
      refund of somebody's second pass claws back the reward their first earned.
+     For a subscription that means its **first transaction**
+     (`entitlements.first_transaction_id`, which Paddle sends once on
+     `subscription.created`), not the `sub_` id: a refund of a later renewal
+     names the renewal's transaction, finds no reward keyed on it, and claws
+     nothing back. It still closes the buyer's current period (any approved
+     refund ends access), and the next paid period reopens it — see the
+     ordering bullet below. Only when Paddle never sent a transaction id does
+     the reward fall back to the subscription id, and then a renewal refund
+     does cascade.
      The cascade follows the **buyer's own row**, never the adjustment's
      `full`/`partial` label: that field is nullish in the schema and Paddle
      labels an item-level 100% refund `partial`, so keying on it failed open.
@@ -116,9 +125,12 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
   Separately, `refunded` and `chargeback` are **terminal for lifecycle
   events**: only an adjustment sets them and only an adjustment (a reversal)
   clears them, so the routine `subscription.updated` Paddle sends for a card
-  edit is refused as `terminal_status`. A `sub_` row whose chargeback is
-  reversed is unlocked to `canceled`, not revived — Paddle cancels a
-  subscription it charged back, and whatever it sends next is the truth. The
+  edit is refused as `terminal_status`. The one lifecycle event that may move a
+  `sub_` row out of either: a **new billing period**, i.e. `current_billing_period.ends_at`
+  later than the period the adjustment closed (kept in `restore_period_end`).
+  The customer paid again, so the refunded period stays refunded and the new
+  one counts. A won chargeback (`chargeback_reverse`) restores the disputed
+  period from the same column. The
   `paddle_events` rows are swept by `purgeExpiredTokens` after
   `PADDLE_EVENT_RETENTION_SECONDS` (30 days), long after Paddle stops retrying.
   All three refusals are logged as `paddle_webhook_not_applied` with the reason.

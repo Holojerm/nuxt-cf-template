@@ -912,7 +912,7 @@ The pieces:
 
 What the webhook does with each event:
 
-- Before any of them: an `event_id` already applied is a no-op, and an event whose `occurred_at` is older than the row's last applied event is refused — Paddle delivers out of order. `refunded`/`chargeback` rows ignore lifecycle events until an adjustment reverses them.
+- Before any of them: an `event_id` already applied is a no-op, and an event whose `occurred_at` is older than the row's last applied event is refused — Paddle delivers out of order. `refunded`/`chargeback` rows ignore lifecycle events until an adjustment reverses them or Paddle bills a new period.
 - `subscription.*` — upsert the row; Paddle's status is the source of truth.
 - `transaction.completed` **without** a subscription — a one-time pass: grants `PASS_DAYS` of access, stacking on top of any unexpired access rather than starting from the purchase date. Idempotent across redelivery.
 - `adjustment.created` / `adjustment.updated` — money going back out. An **approved** refund or a chargeback revokes the matching entitlement (status `refunded`/`chargeback`, window closed immediately). Credits, chargeback warnings, and reversals never revoke. Refunds arrive as `pending_approval` first, so access survives a refund that gets rejected.

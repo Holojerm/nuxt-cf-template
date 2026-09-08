@@ -288,6 +288,8 @@ export interface UpsertSubscriptionParams {
    * and a delayed `subscription.updated{active}` must not undo a cancel.
    */
   occurredAt?: Date
+  /** The transaction that created the subscription — sent on `subscription.created` only. */
+  firstTransactionId?: string | null
 }
 
 export interface UpsertSubscriptionResult {
@@ -296,6 +298,8 @@ export interface UpsertSubscriptionResult {
   /** false when the event was refused; `skipped` says why. */
   applied: boolean
   skipped?: 'stale' | 'terminal'
+  /** What the reward for this subscription is keyed on: the first transaction, if Paddle ever told us. */
+  firstTransactionId: string | null
 }
 
 /**
@@ -314,18 +318,28 @@ export async function upsertSubscription(
 ): Promise<UpsertSubscriptionResult> {
   const prior = await db.query.entitlements.findFirst({
     where: eq(tables.entitlements.paddleSubscriptionId, params.subscriptionId),
-    columns: { status: true, lastEventAt: true },
+    columns: { status: true, lastEventAt: true, restorePeriodEnd: true, firstTransactionId: true },
   })
   const previousStatus = prior?.status ?? null
+  const firstTransactionId = params.firstTransactionId ?? prior?.firstTransactionId ?? null
 
   // Ordering guard, then the terminal guard. `refunded`/`chargeback` are set
   // by adjustments only; a routine subscription.updated arriving afterwards
   // (Paddle sends one for a card edit) must not flip the row back to active.
+  // The one lifecycle event that may: a NEW billing period, i.e. one ending
+  // after the period the adjustment closed (`restorePeriodEnd`). The customer
+  // paid again, so the refunded period stays refunded and the new one counts.
   if (prior?.lastEventAt && params.occurredAt && params.occurredAt < prior.lastEventAt) {
-    return { previousStatus, applied: false, skipped: 'stale' }
+    return { previousStatus, applied: false, skipped: 'stale', firstTransactionId }
   }
-  if (prior && REVOKED_STATUSES.includes(prior.status)) {
-    return { previousStatus, applied: false, skipped: 'terminal' }
+  // Second precision, because that is what D1 stored `restorePeriodEnd` at.
+  const newPeriod = Boolean(
+    prior?.restorePeriodEnd &&
+    params.currentPeriodEnd &&
+    toSeconds(params.currentPeriodEnd) > prior.restorePeriodEnd,
+  )
+  if (prior && REVOKED_STATUSES.includes(prior.status) && !newPeriod) {
+    return { previousStatus, applied: false, skipped: 'terminal', firstTransactionId }
   }
 
   const values = {
@@ -343,6 +357,7 @@ export async function upsertSubscription(
     scheduledChangeAction: params.scheduledChange?.action ?? null,
     scheduledChangeAt: params.scheduledChange?.effectiveAt ?? null,
     lastEventAt: params.occurredAt ?? null,
+    firstTransactionId,
   }
   await db
     .insert(tables.entitlements)
@@ -357,11 +372,14 @@ export async function upsertSubscription(
         scheduledChangeAt: values.scheduledChangeAt,
         // Callers without an occurredAt (seed, admin tooling) keep the stored one.
         ...(params.occurredAt ? { lastEventAt: params.occurredAt } : {}),
+        ...(params.firstTransactionId ? { firstTransactionId: params.firstTransactionId } : {}),
+        // A new period supersedes the closed one; the marker has done its job.
+        ...(newPeriod ? { restorePeriodEnd: null } : {}),
         updatedAt: new Date(),
       },
     })
 
-  return { previousStatus, applied: true }
+  return { previousStatus, applied: true, firstTransactionId }
 }
 
 /** The adjustment fields we care about (Paddle `adjustment.created|updated`). */
@@ -754,24 +772,11 @@ export async function restoreDerivedEntitlements(
 }
 
 /**
- * Put back what a chargeback the merchant WON took away.
- *
- * ── Only a chargeback, and only one that is still standing ───────────────────
- * The gate is the BUYER's own row, and it is the whole point of this function.
- * `restore_period_end` alone is not evidence that a reversal should restore
- * anything: a purchase that was honestly refunded in March leaves a revoked
- * reward behind, and a chargeback reversal arriving on that same transaction
- * later would otherwise hand the referrer their days back over money that
- * never came back to us. So the reward returns only when the purchase it was
- * paid for is itself being reinstated — status `chargeback`, now reversed —
- * and never when that row says `refunded`.
- *
- * The buyer's own row is repaired here too, and it has to be. A `txn_` pass
- * gets no lifecycle events from Paddle at all: nothing else in this system will
- * ever notice that the dispute resolved, so a customer who WON their dispute
- * would silently keep the loss of 30 days they had paid for. `sub_` rows are
- * left alone on purpose — Paddle owns those, and its next `subscription.*`
- * event carries the true status.
+ * A chargeback the merchant WON. Restores the buyer's own row from
+ * `restorePeriodEnd` (a `txn_` pass or a `sub_` period still reading
+ * `chargeback`) and every reward the refs earned. A subscription that was
+ * REFUNDED reverses nothing: `refunded` is a word only we write, so it still
+ * means the money went back and stayed back.
  */
 async function reverseAdjustment(
   db: EntitlementDb,
@@ -782,81 +787,64 @@ async function reverseAdjustment(
   const derived: DerivedChange[] = []
   let paddleRef: string | undefined
 
+  const rows = new Map<string, Entitlement>()
   for (const ref of refs) {
     const row = await db.query.entitlements.findFirst({
       where: eq(tables.entitlements.paddleSubscriptionId, ref),
     })
     if (!row) continue
     if (isStale(row, occurredAt)) return { outcome: 'stale', paddleRef: ref }
+    rows.set(ref, row)
+  }
+  const refundedSubscription = [...rows.values()].some(
+    (row) => isSubscriptionRef(row.paddleSubscriptionId) && row.status === REVOKED_STATUS.refund,
+  )
+  if (refundedSubscription) return { outcome: 'reversed', derived }
 
-    // ── A `sub_` row's status is not the gate ────────────────────────────────
-    // Rows charged back before the terminal guard existed were overwritten by
-    // the next subscription.* event, so the reward's own `restore_period_end`
-    // (which only the cascade sets) is what decides whether there is anything
-    // to put back. `refunded` is written by us, never by Paddle's lifecycle,
-    // so a purchase we agreed to refund still reverses nothing.
-    //
-    // A `sub_` row still reading `chargeback` is unlocked to `canceled`: the
-    // window it had is gone, Paddle cancels a subscription it charged back,
-    // and the terminal guard would otherwise refuse every later lifecycle
-    // event for it. Whatever Paddle sends next is the truth about the row.
-    if (isSubscriptionRef(row.paddleSubscriptionId)) {
-      if (row.status === REVOKED_STATUS.refund) continue
-      paddleRef ??= ref
+  for (const ref of refs) {
+    const row = rows.get(ref)
+    if (row) {
       if (row.status === REVOKED_STATUS.chargeback) {
-        await db
-          .update(tables.entitlements)
-          .set({
-            status: 'canceled',
-            ...(occurredAt ? { lastEventAt: occurredAt } : {}),
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(tables.entitlements.id, row.id),
-              eq(tables.entitlements.status, REVOKED_STATUS.chargeback),
-            ),
+        paddleRef ??= ref
+        if (row.restorePeriodEnd) {
+          await db
+            .update(tables.entitlements)
+            .set({
+              status: 'active',
+              currentPeriodEnd: row.restorePeriodEnd,
+              restorePeriodEnd: null,
+              ...(occurredAt ? { lastEventAt: occurredAt } : {}),
+              updatedAt: new Date(),
+            })
+            // Re-asserted, so two reversal deliveries cannot restore twice.
+            .where(
+              and(
+                eq(tables.entitlements.id, row.id),
+                eq(tables.entitlements.status, REVOKED_STATUS.chargeback),
+              ),
+            )
+        } else {
+          // Charged back before the column was written: the window it had is
+          // gone. Worth a line — a customer owed days only a comp can give back.
+          console.warn(
+            JSON.stringify({ kind: 'entitlement_reversal_unrestorable', paddleRef: ref }),
           )
+        }
+      } else if (isSubscriptionRef(row.paddleSubscriptionId)) {
+        // Overwritten by a later lifecycle event (a new period); the reward's
+        // own `restore_period_end` still says whether there is anything to put back.
+        paddleRef ??= ref
+      } else {
+        // A `txn_` row is ours alone — nothing overwrites its status, so it is
+        // trustworthy evidence: not `chargeback` means not a dispute we won.
+        continue
       }
-      derived.push(...(await restoreDerivedEntitlements(db, ref, now)))
-      continue
     }
-
-    // A `txn_` row is ours alone — nothing overwrites its status, so it is
-    // trustworthy evidence and stays the gate.
-    if (row.status !== REVOKED_STATUS.chargeback) continue
-    paddleRef ??= ref
-
-    if (row.restorePeriodEnd) {
-      await db
-        .update(tables.entitlements)
-        .set({
-          status: 'active',
-          currentPeriodEnd: row.restorePeriodEnd,
-          restorePeriodEnd: null,
-          ...(occurredAt ? { lastEventAt: occurredAt } : {}),
-          updatedAt: new Date(),
-        })
-        // Re-asserted, so two reversal deliveries cannot restore twice.
-        .where(
-          and(
-            eq(tables.entitlements.id, row.id),
-            eq(tables.entitlements.status, REVOKED_STATUS.chargeback),
-          ),
-        )
-    } else {
-      // A row charged back before this column was written: the window it had is
-      // gone and no honest value can be invented for it. Worth a line — it is a
-      // customer owed days that only a comp can now give back.
-      console.warn(JSON.stringify({ kind: 'entitlement_reversal_unrestorable', paddleRef: ref }))
-    }
-
+    // Rewards are keyed on the ref that earned them, which for a subscription
+    // is its first transaction — a ref with no entitlement row of its own.
     derived.push(...(await restoreDerivedEntitlements(db, ref, now)))
   }
 
-  // `userId` is deliberately absent even when a row was restored: the webhook
-  // route keys its `paddle_access_revoked` capture on it, and this is the
-  // opposite event. The ref is reported so the audit row can name the purchase.
   return { outcome: 'reversed', paddleRef, derived }
 }
 
@@ -930,9 +918,11 @@ export async function revokeForAdjustment(
     // is still granting: a redelivery would otherwise stamp `now` over the
     // original date and make the row unrestorable, which is the same hazard
     // revokeDerivedEntitlements guards against with its status re-assertion.
+    // A `sub_` row keeps its period end on BOTH actions, for a different
+    // reason: it is how upsertSubscription tells a renewal (a new period) from
+    // a routine update re-sending the refunded one.
     const reinstatable =
-      adjustment.action === 'chargeback' &&
-      !isSubscriptionRef(row.paddleSubscriptionId) &&
+      (adjustment.action === 'chargeback' || isSubscriptionRef(row.paddleSubscriptionId)) &&
       ACTIVE_STATUSES.includes(row.status) &&
       Boolean(row.currentPeriodEnd && row.currentPeriodEnd > now)
 
@@ -963,7 +953,13 @@ export async function revokeForAdjustment(
     // only for this ref. Keying the cascade on the purchase rather than on the
     // buyer is what stops a refund of somebody's second pass from clawing back
     // the reward their first one earned.
-    const derived = await revokeDerivedEntitlements(db, ref, now)
+    // Every ref the adjustment names, not only the one that matched a row: a
+    // subscription refund names the transaction (what the reward is keyed on)
+    // and the subscription (the row), and only one of those is an entitlement.
+    const derived: DerivedChange[] = []
+    for (const earningRef of refs) {
+      derived.push(...(await revokeDerivedEntitlements(db, earningRef, now)))
+    }
     return { outcome: 'revoked', userId: row.userId, paddleRef: ref, derived }
   }
   return { outcome: 'no_matching_entitlement' }
@@ -1017,7 +1013,14 @@ export const paddleEventSchema = z.object({
 export type PaddleEvent = z.infer<typeof paddleEventSchema>
 
 export type PaddleEventOutcome =
-  | { kind: 'subscription'; userId: string; status: string; previousStatus: string | null }
+  | {
+      kind: 'subscription'
+      userId: string
+      status: string
+      previousStatus: string | null
+      /** What a referral reward for this subscription is keyed on; null falls back to the sub id. */
+      firstTransactionId: string | null
+    }
   | { kind: 'pass'; userId: string; granted: boolean; endsAt: Date; stackedOn: Date | null }
   | { kind: 'adjustment'; action: string; result: RevokeResult }
   | { kind: 'ignored'; reason: 'no_user' | 'subscription_transaction' | 'unhandled_event' }
@@ -1102,13 +1105,16 @@ async function dispatchPaddleEvent(
       productKey = price.entry.productKey
     }
     const status = data.status ?? 'unknown'
-    const { previousStatus, applied, skipped } = await upsertSubscription(db, {
+    const { previousStatus, applied, skipped, firstTransactionId } = await upsertSubscription(db, {
       userId,
       subscriptionId: data.id,
       customerId: data.customer_id,
       productKey,
       status,
       occurredAt,
+      // Paddle sends it once, on subscription.created; later events omit it
+      // and the stored value stands.
+      firstTransactionId: data.transaction_id ?? null,
       currentPeriodEnd: data.current_billing_period
         ? new Date(data.current_billing_period.ends_at)
         : null,
@@ -1124,7 +1130,7 @@ async function dispatchPaddleEvent(
     if (!applied) {
       return { kind: 'ignored', reason: skipped === 'stale' ? 'stale_event' : 'terminal_status' }
     }
-    return { kind: 'subscription', userId, status, previousStatus }
+    return { kind: 'subscription', userId, status, previousStatus, firstTransactionId }
   }
 
   if (eventType === 'transaction.completed') {
