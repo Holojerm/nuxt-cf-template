@@ -136,6 +136,25 @@ async function signOut() {
   await navigateTo('/')
 }
 
+// Every other device's cookie dies on its next request; this one is re-issued
+// by the route, so nothing here has to change client state.
+const revokePending = ref(false)
+async function signOutEverywhere(): Promise<void> {
+  revokePending.value = true
+  try {
+    await $fetch('/api/account/sessions/revoke', { method: 'POST' })
+    toast.add({
+      title: 'Signed out everywhere else',
+      description: 'Every other device will need to sign in again. This one stays signed in.',
+      color: 'success',
+    })
+  } catch {
+    toast.add({ title: 'Could not sign out other devices', color: 'error' })
+  } finally {
+    revokePending.value = false
+  }
+}
+
 // ── Your data ────────────────────────────────────────────────────────────────
 // Self-serve export and deletion — exactly what /privacy promises under "your
 // rights", moved off the support inbox. Routing account deletion through email
@@ -261,6 +280,23 @@ useSeo({
           Sign out
         </UButton>
       </div>
+      <template #footer>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p class="text-sm text-muted">
+            Signed in on a device you don't recognise, or lost one? Sign out of every other device
+            at once.
+          </p>
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-log-out"
+            :loading="revokePending"
+            @click="signOutEverywhere"
+          >
+            Sign out everywhere
+          </UButton>
+        </div>
+      </template>
     </UCard>
 
     <!-- Plan -->

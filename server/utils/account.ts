@@ -35,7 +35,7 @@ import * as tables from '../db/schema'
 import type { AuditMetadata } from '../db/schema'
 import { isBillingLive } from './entitlements'
 import { isSubscriptionRef } from './paddle-refs'
-import { withAudit } from './audit'
+import { withAudit, writeAudit } from './audit'
 import { OPTIONAL_NOTIFICATION_EVENT_TYPES } from '#shared/utils/notifications'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
@@ -254,6 +254,43 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
       return { outcome: 'deleted' }
     },
   )
+}
+
+// ─── Sign out everywhere ─────────────────────────────────────────────────────
+
+export interface RevokeSessionsOutcome {
+  outcome: 'revoked' | 'not_found'
+  /** The watermark written. Sessions dated before it (in seconds) are dead. */
+  at: Date
+}
+
+/**
+ * Invalidate every session this account holds by moving the watermark
+ * `server/utils/session-guard.ts` checks on each request. The caller re-issues
+ * its own cookie at the same instant, so "everywhere" means "everywhere else".
+ * Same lever as deletion — there is deliberately no second mechanism.
+ */
+export async function revokeSessions(
+  db: AccountDb,
+  userId: string,
+  now: Date = new Date(),
+): Promise<RevokeSessionsOutcome> {
+  const [updated] = await db
+    .update(tables.users)
+    .set({ sessionsInvalidBefore: now })
+    .where(eq(tables.users.id, userId))
+    .returning({ id: tables.users.id })
+  if (!updated) return { outcome: 'not_found', at: now }
+
+  await writeAudit(db, {
+    actorUserId: userId,
+    actorType: 'user',
+    action: 'account.sessions_revoked',
+    targetType: 'user',
+    targetId: userId,
+    metadata: { sessionsInvalidBefore: now.toISOString() },
+  })
+  return { outcome: 'revoked', at: now }
 }
 
 // ─── Data export ─────────────────────────────────────────────────────────────

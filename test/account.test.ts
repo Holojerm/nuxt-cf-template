@@ -16,7 +16,8 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import { deleteAccount, exportAccount } from '../server/utils/account'
+import { deleteAccount, exportAccount, revokeSessions } from '../server/utils/account'
+import { checkSession } from '../server/utils/session-guard'
 import { getBillingOverview } from '../server/utils/entitlements'
 
 const db = drizzle(env.DB, { schema })
@@ -338,6 +339,57 @@ describe('deleteAccount', () => {
 
     const outcome = await deleteAccount(db, USER)
     expect(outcome).toEqual({ outcome: 'live_subscription', subscriptionId: 'sub_other_product' })
+  })
+})
+
+describe('revokeSessions — sign out everywhere', () => {
+  it('kills sessions issued before the watermark and keeps one issued with it', async () => {
+    const now = new Date('2026-09-08T12:00:00.500Z')
+    const before = Math.floor(now.getTime() / 1000) - 1
+    expect((await checkSession(db, { userId: USER, issuedAt: before })).valid).toBe(true)
+
+    const outcome = await revokeSessions(db, USER, now)
+    expect(outcome.outcome).toBe('revoked')
+
+    // The phone in the other room.
+    expect(await checkSession(db, { userId: USER, issuedAt: before })).toEqual({
+      valid: false,
+      reason: 'revoked',
+    })
+    // The cookie the route re-issues at the same instant — same second as the
+    // watermark, and the guard is a strict less-than.
+    const reissued = Math.floor(now.getTime() / 1000)
+    expect((await checkSession(db, { userId: USER, issuedAt: reissued })).valid).toBe(true)
+    // A session with no date at all is refused once a watermark exists.
+    expect((await checkSession(db, { userId: USER })).valid).toBe(false)
+  })
+
+  it('writes an account.sessions_revoked audit row by and about the user', async () => {
+    const now = new Date('2026-09-08T12:00:00Z')
+    await revokeSessions(db, USER, now)
+
+    const rows = await db.select().from(schema.auditLog)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      actorUserId: USER,
+      actorType: 'user',
+      action: 'account.sessions_revoked',
+      targetType: 'user',
+      targetId: USER,
+      metadata: { sessionsInvalidBefore: now.toISOString() },
+    })
+  })
+
+  it('reports not_found for a missing user and writes nothing', async () => {
+    expect((await revokeSessions(db, 'nobody')).outcome).toBe('not_found')
+    expect(await db.select().from(schema.auditLog)).toHaveLength(0)
+  })
+
+  it('touches only this account', async () => {
+    await db.insert(schema.users).values({ id: OTHER, email: `${OTHER}@example.com`, name: 'Bob' })
+    await revokeSessions(db, USER)
+    const other = await db.query.users.findFirst({ where: eq(schema.users.id, OTHER) })
+    expect(other?.sessionsInvalidBefore).toBeNull()
   })
 })
 

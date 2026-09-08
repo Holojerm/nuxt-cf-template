@@ -114,6 +114,12 @@ export const AUDIT_ACTIONS = [
    */
   'account.deleted',
   /**
+   * A person signed out of every device from /account — `actorType: 'user'`.
+   * Records that `sessions_invalid_before` moved (metadata: the watermark),
+   * which is otherwise invisible: it kills cookies, and cookies leave no rows.
+   */
+  'account.sessions_revoked',
+  /**
    * The first-run checklist (server/utils/onboarding.ts) was observed
    * complete for this account, for the first time. `actorType: 'user'`,
    * same as `account.deleted` — this is a person's own activity, not an
