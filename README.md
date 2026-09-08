@@ -679,7 +679,9 @@ Adding a scheduled job is two edits plus a file:
 The one task that ships is [`purge-expired-tokens`](./server/tasks/purge-expired-tokens.ts),
 daily at 04:00 UTC. It deletes spent and expired `magic_link_tokens` and `mcp_connect_codes`
 older than a 24-hour grace window — nothing in the request path ever deleted them, so both
-tables grew forever with sign-ins. The grace window is deliberate: a spent token is the only
+tables grew forever with sign-ins. It also drops applied Paddle `event_id`s from
+`paddle_events` after 30 days (the webhook's redelivery dedup; see
+[`.claude/docs/billing.md`](./.claude/docs/billing.md)). The grace window is deliberate: a spent token is the only
 evidence a link was replayed, and an expired one is what lets the verify page say "expired"
 rather than "invalid". Each run deletes at most 5000 rows per table, so a long backlog drains
 over several days instead of timing out forever on one enormous `DELETE`. Both tables carry
@@ -910,6 +912,7 @@ The pieces:
 
 What the webhook does with each event:
 
+- Before any of them: an `event_id` already applied is a no-op, and an event whose `occurred_at` is older than the row's last applied event is refused — Paddle delivers out of order. `refunded`/`chargeback` rows ignore lifecycle events until an adjustment reverses them.
 - `subscription.*` — upsert the row; Paddle's status is the source of truth.
 - `transaction.completed` **without** a subscription — a one-time pass: grants `PASS_DAYS` of access, stacking on top of any unexpired access rather than starting from the purchase date. Idempotent across redelivery.
 - `adjustment.created` / `adjustment.updated` — money going back out. An **approved** refund or a chargeback revokes the matching entitlement (status `refunded`/`chargeback`, window closed immediately). Credits, chargeback warnings, and reversals never revoke. Refunds arrive as `pending_approval` first, so access survives a refund that gets rejected.

@@ -189,6 +189,11 @@ export const entitlements = sqliteTable(
     // predicate the restore matches on — a row nobody took away cannot be
     // "restored" into a window it never had.
     restorePeriodEnd: integer('restore_period_end', { mode: 'timestamp' }),
+    // `occurred_at` of the newest Paddle event applied to this row. Paddle
+    // documents out-of-order delivery, so an event older than this is refused
+    // rather than allowed to overwrite a later status (see upsertSubscription).
+    // NULL on rows written before the column existed and on derived rows.
+    lastEventAt: integer('last_event_at', { mode: 'timestamp' }),
     ...timestamps,
   },
   (table) => [
@@ -210,6 +215,26 @@ export const entitlements = sqliteTable(
     // NOCASE collation and no ESCAPE clause, and ours has an ESCAPE clause
     // precisely because `_` is a wildcard (see server/utils/sql.ts).
     index('entitlements_user_id_idx').on(table.userId),
+  ],
+)
+
+// Paddle events already applied, keyed on Paddle's `event_id`. Paddle retries
+// any delivery that did not get a 2xx and operators can replay from the
+// dashboard, so the webhook checks here before writing anything. Rows are
+// swept by server/utils/purge.ts after PADDLE_EVENT_RETENTION_SECONDS.
+export const paddleEvents = sqliteTable(
+  'paddle_events',
+  {
+    eventId: text('event_id').primaryKey(),
+    eventType: text('event_type').notNull(),
+    occurredAt: integer('occurred_at', { mode: 'timestamp' }).notNull(),
+    receivedAt: integer('received_at', { mode: 'timestamp' })
+      .$defaultFn(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    // The sweep deletes by age; without this it scans the table every run.
+    index('paddle_events_received_at_idx').on(table.receivedAt),
   ],
 )
 
@@ -602,6 +627,7 @@ export const opsEvents = sqliteTable(
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Entitlement = typeof entitlements.$inferSelect
+export type PaddleEventRecord = typeof paddleEvents.$inferSelect
 export type NewEntitlement = typeof entitlements.$inferInsert
 export type McpConnectCode = typeof mcpConnectCodes.$inferSelect
 export type MagicLinkToken = typeof magicLinkTokens.$inferSelect

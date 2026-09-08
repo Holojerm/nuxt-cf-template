@@ -107,6 +107,11 @@ export const REVOKED_STATUS = { refund: 'refunded', chargeback: 'chargeback' } a
  * construction.
  */
 export const DERIVED_REVOKED_STATUS = 'revoked'
+/** Statuses only an adjustment may set — and only an adjustment may move a row out of. */
+export const REVOKED_STATUSES: readonly string[] = [
+  REVOKED_STATUS.refund,
+  REVOKED_STATUS.chargeback,
+]
 
 /**
  * Statuses in which a `sub_` row will never charge a card again.
@@ -191,6 +196,8 @@ export interface GrantPassParams {
   productKey?: string
   /** When Paddle billed the transaction; defaults to now. */
   billedAt?: Date
+  /** `occurred_at` of the event that reported it; defaults to `billedAt`. */
+  occurredAt?: Date
 }
 
 export interface GrantPassResult {
@@ -245,6 +252,7 @@ export async function grantPass(
       // server/db/schema.ts for why the start is stored rather than inferred.
       periodStart: startsAt,
       currentPeriodEnd: endsAt,
+      lastEventAt: params.occurredAt ?? billedAt,
     })
     .onConflictDoUpdate({
       target: tables.entitlements.paddleSubscriptionId,
@@ -274,11 +282,20 @@ export interface UpsertSubscriptionParams {
    * upsert has to write (see the note there), not an absence it may skip.
    */
   scheduledChange?: { action: string; effectiveAt: Date | null } | null
+  /**
+   * Paddle's `occurred_at` for the event. When set, an event older than the
+   * row's `lastEventAt` is refused: Paddle documents out-of-order delivery,
+   * and a delayed `subscription.updated{active}` must not undo a cancel.
+   */
+  occurredAt?: Date
 }
 
 export interface UpsertSubscriptionResult {
   /** The status this row held before the event, or null if it's brand new. */
   previousStatus: string | null
+  /** false when the event was refused; `skipped` says why. */
+  applied: boolean
+  skipped?: 'stale' | 'terminal'
 }
 
 /**
@@ -297,8 +314,19 @@ export async function upsertSubscription(
 ): Promise<UpsertSubscriptionResult> {
   const prior = await db.query.entitlements.findFirst({
     where: eq(tables.entitlements.paddleSubscriptionId, params.subscriptionId),
-    columns: { status: true },
+    columns: { status: true, lastEventAt: true },
   })
+  const previousStatus = prior?.status ?? null
+
+  // Ordering guard, then the terminal guard. `refunded`/`chargeback` are set
+  // by adjustments only; a routine subscription.updated arriving afterwards
+  // (Paddle sends one for a card edit) must not flip the row back to active.
+  if (prior?.lastEventAt && params.occurredAt && params.occurredAt < prior.lastEventAt) {
+    return { previousStatus, applied: false, skipped: 'stale' }
+  }
+  if (prior && REVOKED_STATUSES.includes(prior.status)) {
+    return { previousStatus, applied: false, skipped: 'terminal' }
+  }
 
   const values = {
     userId: params.userId,
@@ -314,6 +342,7 @@ export async function upsertSubscription(
     // live subscription looking cancelled for good.
     scheduledChangeAction: params.scheduledChange?.action ?? null,
     scheduledChangeAt: params.scheduledChange?.effectiveAt ?? null,
+    lastEventAt: params.occurredAt ?? null,
   }
   await db
     .insert(tables.entitlements)
@@ -326,11 +355,13 @@ export async function upsertSubscription(
         paddleCustomerId: values.paddleCustomerId,
         scheduledChangeAction: values.scheduledChangeAction,
         scheduledChangeAt: values.scheduledChangeAt,
+        // Callers without an occurredAt (seed, admin tooling) keep the stored one.
+        ...(params.occurredAt ? { lastEventAt: params.occurredAt } : {}),
         updatedAt: new Date(),
       },
     })
 
-  return { previousStatus: prior?.status ?? null }
+  return { previousStatus, applied: true }
 }
 
 /** The adjustment fields we care about (Paddle `adjustment.created|updated`). */
@@ -347,10 +378,13 @@ export interface AdjustmentInput {
   type?: string | null
   transactionId?: string | null
   subscriptionId?: string | null
+  /** Paddle's `occurred_at`; when set, an adjustment older than the row's `lastEventAt` is refused. */
+  occurredAt?: Date
 }
 
 export type RevokeOutcome =
   | 'revoked'
+  | 'stale'
   | 'no_matching_entitlement'
   | 'action_not_revoking'
   | 'status_not_final'
@@ -426,6 +460,11 @@ function isReversing({ action, status }: AdjustmentInput): boolean {
  * spent, so the remainder is the whole window, which is why the `start > at`
  * branch exists rather than always measuring from `at`.
  */
+/** True when `occurredAt` predates the newest event already applied to the row. */
+function isStale(row: { lastEventAt: Date | null }, occurredAt: Date | undefined): boolean {
+  return Boolean(row.lastEventAt && occurredAt && occurredAt < row.lastEventAt)
+}
+
 function unspentMs(start: Date | null | undefined, end: Date, at: Date): number {
   const from = start && start > at ? start : at
   return Math.max(0, end.getTime() - from.getTime())
@@ -738,6 +777,7 @@ async function reverseAdjustment(
   db: EntitlementDb,
   refs: string[],
   now: Date,
+  occurredAt: Date | undefined,
 ): Promise<RevokeResult> {
   const derived: DerivedChange[] = []
   let paddleRef: string | undefined
@@ -747,22 +787,37 @@ async function reverseAdjustment(
       where: eq(tables.entitlements.paddleSubscriptionId, ref),
     })
     if (!row) continue
+    if (isStale(row, occurredAt)) return { outcome: 'stale', paddleRef: ref }
 
-    // ── A `sub_` row cannot be asked whether it was charged back ──────────────
-    // Paddle rewrites the status of a subscription row on EVERY subscription.*
-    // event, and disputes take days to resolve — so by the time the reversal
-    // lands, `chargeback` has long since been overwritten by whatever the
-    // subscription is doing now. Gating on it would strand the referrer's
-    // reward revoked forever on exactly the disputes that were won.
+    // ── A `sub_` row's status is not the gate ────────────────────────────────
+    // Rows charged back before the terminal guard existed were overwritten by
+    // the next subscription.* event, so the reward's own `restore_period_end`
+    // (which only the cascade sets) is what decides whether there is anything
+    // to put back. `refunded` is written by us, never by Paddle's lifecycle,
+    // so a purchase we agreed to refund still reverses nothing.
     //
-    // What survives is the reward's own `restore_period_end` (the predicate
-    // restoreDerivedEntitlements already scans on, and which nothing but the
-    // cascade sets) plus one fact this row does keep: `refunded` is written by
-    // us and never by Paddle's lifecycle, so a purchase we agreed to refund
-    // still reverses nothing.
+    // A `sub_` row still reading `chargeback` is unlocked to `canceled`: the
+    // window it had is gone, Paddle cancels a subscription it charged back,
+    // and the terminal guard would otherwise refuse every later lifecycle
+    // event for it. Whatever Paddle sends next is the truth about the row.
     if (isSubscriptionRef(row.paddleSubscriptionId)) {
       if (row.status === REVOKED_STATUS.refund) continue
       paddleRef ??= ref
+      if (row.status === REVOKED_STATUS.chargeback) {
+        await db
+          .update(tables.entitlements)
+          .set({
+            status: 'canceled',
+            ...(occurredAt ? { lastEventAt: occurredAt } : {}),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(tables.entitlements.id, row.id),
+              eq(tables.entitlements.status, REVOKED_STATUS.chargeback),
+            ),
+          )
+      }
       derived.push(...(await restoreDerivedEntitlements(db, ref, now)))
       continue
     }
@@ -779,6 +834,7 @@ async function reverseAdjustment(
           status: 'active',
           currentPeriodEnd: row.restorePeriodEnd,
           restorePeriodEnd: null,
+          ...(occurredAt ? { lastEventAt: occurredAt } : {}),
           updatedAt: new Date(),
         })
         // Re-asserted, so two reversal deliveries cannot restore twice.
@@ -853,7 +909,9 @@ export async function revokeForAdjustment(
   // it would otherwise fall straight out of this function. That leaves every
   // derived row revoked forever on a dispute that went our way — money taken
   // back from a referrer over a chargeback that never stood.
-  if (isReversing(adjustment)) return await reverseAdjustment(db, refs, now)
+  if (isReversing(adjustment)) {
+    return await reverseAdjustment(db, refs, now, adjustment.occurredAt)
+  }
 
   if (adjustment.action !== 'refund' && adjustment.action !== 'chargeback') {
     return { outcome: 'action_not_revoking' }
@@ -865,6 +923,7 @@ export async function revokeForAdjustment(
       where: eq(tables.entitlements.paddleSubscriptionId, ref),
     })
     if (!row) continue
+    if (isStale(row, adjustment.occurredAt)) return { outcome: 'stale', paddleRef: ref }
 
     // A chargeback can be reversed, and for a `txn_` row this write is the only
     // record of the window it destroys — so keep it, once. Only while the row
@@ -888,6 +947,7 @@ export async function revokeForAdjustment(
         // — here an absent key is the point. Only the FIRST revoke may write
         // this column; every later delivery must leave it exactly as it is.
         ...(reinstatable ? { restorePeriodEnd: row.currentPeriodEnd } : {}),
+        ...(adjustment.occurredAt ? { lastEventAt: adjustment.occurredAt } : {}),
         updatedAt: new Date(),
       })
       .where(
@@ -919,6 +979,9 @@ export async function revokeForAdjustment(
 export const paddleEventSchema = z.object({
   event_id: z.string(),
   event_type: z.string(),
+  // When the thing happened at Paddle, not when the delivery arrived. This is
+  // the ordering key: deliveries are retried and can overtake each other.
+  occurred_at: z.string(),
   data: z.object({
     id: z.string(),
     status: z.string().nullish(),
@@ -958,6 +1021,8 @@ export type PaddleEventOutcome =
   | { kind: 'pass'; userId: string; granted: boolean; endsAt: Date; stackedOn: Date | null }
   | { kind: 'adjustment'; action: string; result: RevokeResult }
   | { kind: 'ignored'; reason: 'no_user' | 'subscription_transaction' | 'unhandled_event' }
+  /** Same event_id already applied, an older event than the row has seen, or a refunded row a routine update tried to revive. */
+  | { kind: 'ignored'; reason: 'duplicate_event' | 'stale_event' | 'terminal_status' }
   | {
       kind: 'ignored'
       reason: 'unrecognised_price'
@@ -980,8 +1045,38 @@ export async function applyPaddleEvent(
   event: PaddleEvent,
   catalogue: PaddlePriceCatalogue,
 ): Promise<PaddleEventOutcome> {
+  // Redelivery of an event that already wrote is a no-op before any write.
+  // Only outcomes that reached a write path are recorded (below), so a replay
+  // of an event that was ignored — say for a price added to config since —
+  // still applies.
+  const seen = await db.query.paddleEvents.findFirst({
+    where: eq(tables.paddleEvents.eventId, event.event_id),
+    columns: { eventId: true },
+  })
+  if (seen) return { kind: 'ignored', reason: 'duplicate_event' }
+
+  const outcome = await dispatchPaddleEvent(db, event, catalogue)
+  if (outcome.kind !== 'ignored') {
+    await db
+      .insert(tables.paddleEvents)
+      .values({
+        eventId: event.event_id,
+        eventType: event.event_type,
+        occurredAt: new Date(event.occurred_at),
+      })
+      .onConflictDoNothing()
+  }
+  return outcome
+}
+
+async function dispatchPaddleEvent(
+  db: EntitlementDb,
+  event: PaddleEvent,
+  catalogue: PaddlePriceCatalogue,
+): Promise<PaddleEventOutcome> {
   const { event_type: eventType, data } = event
   const userId = data.custom_data?.userId
+  const occurredAt = new Date(event.occurred_at)
 
   if (eventType.startsWith('subscription.')) {
     // Not fatal: a subscription created outside the app (e.g. a dashboard test)
@@ -1007,12 +1102,13 @@ export async function applyPaddleEvent(
       productKey = price.entry.productKey
     }
     const status = data.status ?? 'unknown'
-    const { previousStatus } = await upsertSubscription(db, {
+    const { previousStatus, applied, skipped } = await upsertSubscription(db, {
       userId,
       subscriptionId: data.id,
       customerId: data.customer_id,
       productKey,
       status,
+      occurredAt,
       currentPeriodEnd: data.current_billing_period
         ? new Date(data.current_billing_period.ends_at)
         : null,
@@ -1025,6 +1121,9 @@ export async function applyPaddleEvent(
           }
         : null,
     })
+    if (!applied) {
+      return { kind: 'ignored', reason: skipped === 'stale' ? 'stale_event' : 'terminal_status' }
+    }
     return { kind: 'subscription', userId, status, previousStatus }
   }
 
@@ -1048,6 +1147,7 @@ export async function applyPaddleEvent(
       customerId: data.customer_id,
       productKey: price.entry.productKey,
       billedAt: data.billed_at ? new Date(data.billed_at) : undefined,
+      occurredAt,
     })
     return { kind: 'pass', userId, ...result }
   }
@@ -1060,7 +1160,9 @@ export async function applyPaddleEvent(
       type: data.type,
       transactionId: data.transaction_id,
       subscriptionId: data.subscription_id,
+      occurredAt,
     })
+    if (result.outcome === 'stale') return { kind: 'ignored', reason: 'stale_event' }
     return { kind: 'adjustment', action, result }
   }
 

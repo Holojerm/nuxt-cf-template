@@ -15,7 +15,12 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import { PURGE_GRACE_SECONDS, purgeExpiredTokens, purgePendingUploads } from '../server/utils/purge'
+import {
+  PADDLE_EVENT_RETENTION_SECONDS,
+  PURGE_GRACE_SECONDS,
+  purgeExpiredTokens,
+  purgePendingUploads,
+} from '../server/utils/purge'
 import type { PurgeBlobStore } from '../server/utils/purge'
 
 const db = drizzle(env.DB, { schema })
@@ -33,6 +38,7 @@ const RECENTLY = new Date(NOW - 1 * HOUR)
 const SOON = new Date(NOW + 1 * HOUR)
 
 beforeEach(async () => {
+  await env.DB.exec('DELETE FROM paddle_events')
   await env.DB.exec('DELETE FROM mcp_connect_codes')
   await env.DB.exec('DELETE FROM magic_link_tokens')
   await env.DB.exec('DELETE FROM files')
@@ -69,6 +75,28 @@ async function remainingIds(table: 'mcp_connect_codes' | 'magic_link_tokens'): P
       : await db.select({ id: schema.magicLinkTokens.id }).from(schema.magicLinkTokens)
   return rows.map((row) => row.id).sort()
 }
+
+describe('purgeExpiredTokens — applied Paddle event ids', () => {
+  async function addEvent(eventId: string, receivedAt: Date): Promise<void> {
+    await db
+      .insert(schema.paddleEvents)
+      .values({ eventId, eventType: 'subscription.updated', occurredAt: receivedAt, receivedAt })
+  }
+
+  it('keeps an event id for the whole retention window, not just the grace window', async () => {
+    // Paddle retries for days; a row swept after 24h would let a late
+    // redelivery re-apply. Inside retention it stays, past it it goes.
+    await addEvent('evt-old', new Date(NOW - (PADDLE_EVENT_RETENTION_SECONDS + 60) * 1000))
+    await addEvent('evt-week', new Date(NOW - 7 * DAY))
+    await addEvent('evt-fresh', RECENTLY)
+
+    const result = await purgeExpiredTokens(db, { now: NOW })
+
+    expect(result.paddleEvents).toBe(1)
+    const remaining = await db.select({ id: schema.paddleEvents.eventId }).from(schema.paddleEvents)
+    expect(remaining.map((row) => row.id).sort()).toEqual(['evt-fresh', 'evt-week'])
+  })
+})
 
 describe('purgeExpiredTokens — what it deletes', () => {
   it('deletes rows that expired longer ago than the grace window', async () => {

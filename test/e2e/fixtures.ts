@@ -133,11 +133,17 @@ export interface PaddleEventData {
 export interface PaddleWebhookEvent {
   event_id: string
   event_type: string
+  occurred_at: string
   data: PaddleEventData
 }
 
 export function buildPaddleEvent(eventType: string, data: PaddleEventData): PaddleWebhookEvent {
-  return { event_id: `evt_e2e_${crypto.randomUUID()}`, event_type: eventType, data }
+  return {
+    event_id: `evt_e2e_${crypto.randomUUID()}`,
+    event_type: eventType,
+    occurred_at: new Date().toISOString(),
+    data,
+  }
 }
 
 /** A one-time pass purchase — `transaction.completed` with no `subscription_id`. */
