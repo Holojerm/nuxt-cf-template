@@ -49,7 +49,12 @@ export function isMandatoryNotification(eventType: string): boolean {
  * sends for either yet, but the preference exists so someone who opts out
  * today isn't surprised the day that email ships.
  */
-export const OPTIONAL_NOTIFICATION_EVENT_TYPES = ['welcome', 'product_updates', 'referral'] as const
+export const OPTIONAL_NOTIFICATION_EVENT_TYPES = [
+  'welcome',
+  'tips',
+  'product_updates',
+  'referral',
+] as const
 
 export type OptionalNotificationEventType = (typeof OPTIONAL_NOTIFICATION_EVENT_TYPES)[number]
 
@@ -72,6 +77,10 @@ export const OPTIONAL_NOTIFICATION_COPY: Record<
   welcome: {
     label: 'Welcome email',
     description: 'A one-time note when your account is first created.',
+  },
+  tips: {
+    label: 'Tips and reminders',
+    description: 'A nudge if you get stuck setting up, sent at most once per stage.',
   },
   product_updates: {
     label: 'Product updates',

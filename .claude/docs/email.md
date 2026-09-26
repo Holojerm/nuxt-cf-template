@@ -60,3 +60,23 @@ with it. Add a case to that function, not an ad-hoc send in a handler.
 ---
 
 
+
+## Lifecycle email
+
+`server/utils/lifecycle.ts` sends "did X, not Y within N days" email once a day
+(`server/tasks/lifecycle-email.ts`, on the 04:00 cron). A step is a `due()` query
+plus a template; the runner owns preferences, undeliverable addresses, the per-run
+cap, the `lifecycle_email_sent` event, and once-only delivery through a
+`lifecycle_sends` row claimed before the send.
+
+- **Template steps** (`lifecycle-steps.ts`): `activation_nudge` (optional `tips`
+  preference; signed up 1–7 days ago, never activated) and `pass_expiring`
+  (mandatory `billing.pass_expiring`; a paid pass ends within 3 days with no
+  subscription or later pass behind it — with auto-renew off by default, this is
+  the only warning a customer gets).
+- **Fork steps** go in `lifecycle-app-steps.ts`, which the template ships empty.
+  A win-back belongs there, keyed on whatever "used the product" means.
+- **Bound every window on both sides.** "Signed up more than a day ago" mails the
+  whole user table the day Resend is first configured.
+- **Never rename a step id.** The id is the dedup key; a rename re-sends to everyone.
+- With Resend unconfigured the task logs `lifecycle_skipped` and does nothing.

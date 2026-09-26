@@ -352,12 +352,19 @@ export interface AccountExportAuditEntry {
   createdAt: string
 }
 
+/** A lifecycle email this account was sent (server/utils/lifecycle.ts). */
+export interface AccountExportLifecycleEmail {
+  step: string
+  sentAt: string
+}
+
 export interface AccountExport {
   exportedAt: string
   user: AccountExportUser
   entitlements: AccountExportEntitlement[]
   feedback: AccountExportFeedback[]
   notificationPreferences: AccountExportNotificationPreference[]
+  lifecycleEmails: AccountExportLifecycleEmail[]
   auditEntries: AccountExportAuditEntry[]
 }
 
@@ -375,29 +382,35 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
   const user = await db.query.users.findFirst({ where: eq(tables.users.id, userId) })
   if (!user) return null
 
-  const [entitlementRows, feedbackRows, preferenceRows, auditRows] = await Promise.all([
-    db.query.entitlements.findMany({
-      where: eq(tables.entitlements.userId, userId),
-      orderBy: desc(tables.entitlements.createdAt),
-    }),
-    db.query.feedback.findMany({
-      where: eq(tables.feedback.userId, userId),
-      orderBy: desc(tables.feedback.createdAt),
-    }),
-    // One read for every optional type, not one read each. isNotificationEnabled
-    // is a point lookup per event type, so calling it in a loop meant three
-    // round trips to answer a question about three rows in one table. The
-    // default-on rule (absence of a row means enabled — see schema.ts) is
-    // applied here, over whatever the single query returned.
-    db.query.notificationPreferences.findMany({
-      where: eq(tables.notificationPreferences.userId, userId),
-      columns: { eventType: true, enabled: true },
-    }),
-    db.query.auditLog.findMany({
-      where: and(eq(tables.auditLog.targetType, 'user'), eq(tables.auditLog.targetId, userId)),
-      orderBy: desc(tables.auditLog.createdAt),
-    }),
-  ])
+  const [entitlementRows, feedbackRows, preferenceRows, lifecycleRows, auditRows] =
+    await Promise.all([
+      db.query.entitlements.findMany({
+        where: eq(tables.entitlements.userId, userId),
+        orderBy: desc(tables.entitlements.createdAt),
+      }),
+      db.query.feedback.findMany({
+        where: eq(tables.feedback.userId, userId),
+        orderBy: desc(tables.feedback.createdAt),
+      }),
+      // One read for every optional type, not one read each. isNotificationEnabled
+      // is a point lookup per event type, so calling it in a loop meant three
+      // round trips to answer a question about three rows in one table. The
+      // default-on rule (absence of a row means enabled — see schema.ts) is
+      // applied here, over whatever the single query returned.
+      db.query.notificationPreferences.findMany({
+        where: eq(tables.notificationPreferences.userId, userId),
+        columns: { eventType: true, enabled: true },
+      }),
+      db.query.lifecycleSends.findMany({
+        where: eq(tables.lifecycleSends.userId, userId),
+        orderBy: desc(tables.lifecycleSends.sentAt),
+        columns: { stepId: true, sentAt: true },
+      }),
+      db.query.auditLog.findMany({
+        where: and(eq(tables.auditLog.targetType, 'user'), eq(tables.auditLog.targetId, userId)),
+        orderBy: desc(tables.auditLog.createdAt),
+      }),
+    ])
 
   const overrides = new Map(preferenceRows.map((row) => [row.eventType, row.enabled]))
   const notificationPreferences = OPTIONAL_NOTIFICATION_EVENT_TYPES.map((eventType) => ({
@@ -441,6 +454,10 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
       createdAt: row.createdAt.toISOString(),
     })),
     notificationPreferences,
+    lifecycleEmails: lifecycleRows.map((row) => ({
+      step: row.stepId,
+      sentAt: row.sentAt.toISOString(),
+    })),
     auditEntries: auditRows.map((row) => ({
       action: row.action,
       actorType: row.actorType,
