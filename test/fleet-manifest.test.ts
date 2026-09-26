@@ -68,6 +68,30 @@ describe('FleetManifestSchema', () => {
     expect(result.success).toBe(false)
   })
 
+  it('defaults product to null and accepts a declared funnel', () => {
+    expect(FleetManifestSchema.parse(valid).product).toBeNull()
+    const product = {
+      northStar: 'session_completed',
+      activation: { event: 'user_activated', withinDays: 3 },
+      retention: { event: '$pageview', window: 'weekly' as const },
+    }
+    expect(FleetManifestSchema.parse({ ...valid, product }).product).toEqual(product)
+  })
+
+  it('rejects a product block with a malformed event or window', () => {
+    const product = {
+      northStar: 'Session Completed',
+      activation: { event: 'user_activated', withinDays: 0 },
+      retention: { event: '$pageview', window: 'hourly' },
+    }
+    const issues = FleetManifestSchema.safeParse({ ...valid, product }).error?.issues ?? []
+    expect(issues.map((issue) => issue.path.join('.')).sort()).toEqual([
+      'product.activation.withinDays',
+      'product.northStar',
+      'product.retention.window',
+    ])
+  })
+
   it('rejects a schema version it does not know', () => {
     expect(FleetManifestSchema.safeParse({ ...valid, schema: 2 }).success).toBe(false)
   })

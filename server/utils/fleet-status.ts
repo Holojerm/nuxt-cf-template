@@ -27,6 +27,7 @@ import type { drizzle } from 'drizzle-orm/d1'
 
 import journal from '../db/migrations/meta/_journal.json'
 import * as tables from '../db/schema'
+import { collectFleetFunnel, type FleetFunnel } from './fleet-funnel'
 
 /** Same shape as PurgeDb — the Drizzle client, passed in explicitly. */
 export type FleetDb = ReturnType<typeof drizzle<typeof tables>>
@@ -109,6 +110,7 @@ export interface FleetCounters {
   entitlements: { byStatus: Record<string, number> }
   opsEvents: { pending: number; last24h: number }
   feedback: { total: number; open: number }
+  funnel: FleetFunnel
   extra: Record<string, number>
 }
 
@@ -149,6 +151,7 @@ export async function collectFleetCounters(db: FleetDb, now = new Date()): Promi
     entitlements: { byStatus },
     opsEvents: { pending: pendingOps?.total ?? 0, last24h: recentOps?.total ?? 0 },
     feedback: { total: feedbackTotal?.total ?? 0, open: feedbackOpen?.total ?? 0 },
+    funnel: await collectFleetFunnel(db, now),
     extra: {},
   }
 }

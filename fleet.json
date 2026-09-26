@@ -14,5 +14,10 @@
   "deploy": "workers-builds",
   "template": { "repo": "Holojerm/nuxt-cf-template", "syncedSha": null },
   "features": { "auth": true, "billing": true, "posthog": null, "opsEvents": true },
+  "product": {
+    "northStar": "user_activated",
+    "activation": { "event": "user_activated", "withinDays": 7 },
+    "retention": { "event": "$pageview", "window": "weekly" }
+  },
   "secrets": ["NUXT_SESSION_PASSWORD"]
 }

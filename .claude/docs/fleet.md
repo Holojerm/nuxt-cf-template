@@ -16,11 +16,19 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   deploy-before-migrate outage, live), and the cron map Nitro runs. That is a
   fingerprint of the deployment, so it sits behind `NUXT_FLEET_TOKEN` like
   `GET /api/fleet` (counters only: users, entitlements by status, ops spool,
-  feedback queue): `Authorization: Bearer …`, 404 when the token is unset, 401
+  feedback queue, and a 28-day signup → activated → paid funnel with top
+  signup sources, from `server/utils/fleet-funnel.ts`): `Authorization: Bearer …`, 404 when the token is unset, 401
   on a bad one (`requireFleetToken()`). `/api/health` stays public for dumb
   uptime checks. Both are allowlisted in `server/middleware/auth.ts` because
   the session guard must not 401 them first. Add a fork-specific counter to `collectFleetCounters()`'s `extra`, not
   a second endpoint.
+- **The `product` block** in `fleet.json` names this product's north-star,
+  activation and retention events, so the dashboard can chart any fork's
+  funnel without knowing the product. Every name must be registered in
+  `shared/utils/analytics-events.ts` (the template's) or `app-events.ts` (the
+  fork's own, shipped empty) — `fleet:check` fails otherwise, and
+  `captureServerEvent` only accepts registered names. `null` for an app with no
+  users to grow.
 - **Ops alerting.** Anything worth waking the owner up for calls
   `recordOpsEvent(db, { kind, detail, path })` — the error plugin already does
   for every 5xx — and `server/tasks/ops/alert.ts` drains the spool into one
