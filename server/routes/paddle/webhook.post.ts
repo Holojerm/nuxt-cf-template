@@ -121,7 +121,7 @@ export default defineEventHandler(async (event) => {
   if (outcome.kind === 'subscription') {
     await captureServerEvent({
       distinctId: outcome.userId,
-      event: `paddle_${eventType.replace('.', '_')}`,
+      event: paddleSubscriptionEvent(eventType),
       properties: { subscriptionId: paddleEvent.data.id, status: outcome.status },
     })
   } else if (outcome.kind === 'pass') {

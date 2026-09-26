@@ -89,6 +89,7 @@ describe('compareMigrations', () => {
 describe('collectFleetCounters', () => {
   beforeEach(async () => {
     await env.DB.exec('DELETE FROM entitlements')
+    await env.DB.exec('DELETE FROM audit_log')
     await env.DB.exec('DELETE FROM feedback')
     await env.DB.exec('DELETE FROM ops_events')
     await env.DB.exec('DELETE FROM users')
@@ -100,6 +101,7 @@ describe('collectFleetCounters', () => {
       entitlements: { byStatus: {} },
       opsEvents: { pending: 0, last24h: 0 },
       feedback: { total: 0, open: 0 },
+      funnel: { cohortDays: 28, signups: 0, activated: 0, paid: 0, sources: {} },
       extra: {},
     })
   })

@@ -6,9 +6,12 @@
 // Goes directly to `posthogHost` — no proxy needed since this runs on the
 // Worker, not in a browser.
 
+import type { AnalyticsEvent } from '#shared/utils/analytics-events'
+
 interface CaptureOpts {
   distinctId: string
-  event: string
+  /** Registered in shared/utils/analytics-events.ts (or app-events.ts for a fork's own). */
+  event: AnalyticsEvent
   properties?: Record<string, unknown>
 }
 

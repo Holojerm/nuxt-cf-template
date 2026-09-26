@@ -17,6 +17,8 @@
 //      fetches /api/status relative to it.
 //   6. No binding id is a template placeholder unless `stage` is "unreleased".
 //   7. If mcp/wrangler.jsonc exists, its Worker is listed in `workers`.
+//   8. Every event the `product` block names is registered in
+//      shared/utils/analytics-events.ts or app-events.ts.
 //
 // Reads the TOML with Bun's built-in parser, so this runs with no dependency
 // the app does not already have. It is a Bun script rather than a vitest case
@@ -26,6 +28,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
+import { isAnalyticsEvent } from '../shared/utils/analytics-events'
 import {
   FleetManifestSchema,
   placeholderBindings,
@@ -187,6 +190,24 @@ if (manifest) {
         `mcp/wrangler.jsonc deploys "${mcpName}", which is not in fleet.json workers`,
         'add it after the app Worker — the dashboard checks every Worker this repo deploys',
       )
+    }
+  }
+
+  // ── 8. product events are real ──────────────────────────────────────────
+  if (manifest.product) {
+    const named = {
+      'product.northStar': manifest.product.northStar,
+      'product.activation.event': manifest.product.activation.event,
+      'product.retention.event': manifest.product.retention.event,
+    }
+    for (const [where, event] of Object.entries(named)) {
+      if (!isAnalyticsEvent(event)) {
+        report(
+          `${where} is not a registered event`,
+          `"${event}" is in neither analytics-events.ts nor app-events.ts`,
+          'register it in shared/utils/app-events.ts, or fix the typo — the dashboard would chart a flat zero',
+        )
+      }
     }
   }
 }

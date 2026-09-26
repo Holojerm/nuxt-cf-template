@@ -30,6 +30,8 @@
 
 import { z } from 'zod'
 
+import { EVENT_NAME_PATTERN } from './analytics-events'
+
 export const FLEET_MANIFEST_SCHEMA_VERSION = 1
 
 /**
@@ -76,6 +78,13 @@ const cronExpression = z
   .regex(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+$/, 'a five-field cron expression, e.g. "0 4 * * *"')
 
 const gitSha = z.string().regex(/^[0-9a-f]{7,40}$/, 'a git commit sha (7–40 hex characters)')
+
+const eventName = z
+  .string()
+  .regex(EVENT_NAME_PATTERN, 'a registered analytics event, e.g. user_activated')
+
+/** How often "came back" is measured. Weekly suits most products; daily suits habits. */
+export const RETENTION_WINDOWS = ['daily', 'weekly', 'monthly'] as const
 
 const envVarName = z
   .string()
@@ -150,6 +159,31 @@ export const FleetManifestSchema = z.strictObject({
     /** The `ops_events` spool and its digest cron. */
     opsEvents: z.boolean(),
   }),
+
+  /**
+   * What success means for this product, in event names the dashboard can
+   * count. Every name must be registered in analytics-events.ts / app-events.ts
+   * — check-fleet enforces that, because a funnel step nobody fires reads as a
+   * 0% conversion rather than as a mistake. Null for an app with no users to
+   * grow (a personal tool, the dashboard itself).
+   */
+  product: z
+    .strictObject({
+      /** The one number that says the product is delivering value. */
+      northStar: eventName,
+      /** A signup counts as activated if it fires `event` within `withinDays`. */
+      activation: z.strictObject({
+        event: eventName,
+        withinDays: z.number().int().min(1).max(90),
+      }),
+      /** A user is retained in a window if they fire `event` in it. */
+      retention: z.strictObject({
+        event: eventName,
+        window: z.enum(RETENTION_WINDOWS),
+      }),
+    })
+    .nullable()
+    .default(null),
 
   /**
    * Secret NAMES the production Worker must have set. Values never appear
