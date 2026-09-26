@@ -16,6 +16,15 @@ treat placeholder values as "not configured" and skip the dependent work (journa
 | Feedback queue | D1 `feedback` table (in-app widget → `POST /api/feedback`); read via `wrangler d1 execute --remote` |
 | Target audience (for marketing tone) | `<who the product is for>` |
 
+## Autonomy grants
+
+Routines above tier 1 act only where listed here (see `_shared.md` › Autonomy tiers). Add a line
+after reading a routine's drafts for a few weeks; delete it to take the grant back.
+
+| Routine | Tier | Granted on |
+| --- | --- | --- |
+| _(none yet)_ | | |
+
 ## Product context
 
 Replace this section with 2–3 paragraphs about what the product does, who uses it, current

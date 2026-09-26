@@ -31,6 +31,8 @@ so the repo ships the *definitions* and a sync command:
 | `support-inbox.md` | Daily 13:00 | Triages support email, **drafts** replies (never sends), files bugs as issues | Gmail + GitHub connectors |
 | `analytics-review.md` | Weekly Mon 12:30 | Reviews product/traffic metrics, writes a report, files opportunities | GitHub connector (+ analytics access) |
 | `marketing-content.md` | Weekly Thu 14:00 | Drafts changelog + marketing copy into `ops/marketing/` for review | GitHub connector |
+| `growth-review.md` | Weekly Mon 13:30 | Judges last week's `growth-bet`s, picks ≤3 new ones against `fleet.json` › `product`, ships each as a flagged (default-off) or content PR | GitHub connector (+ Cloudflare API token); tier 2 |
+| `x-post.md` | Tue/Thu 15:00 | One post about something that shipped, from the product's X account (`scripts/x-post.ts`); drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
 | `daily-digest.md` | Daily 22:00 | Sends **one email per day** to the owner summarizing all actions taken | Gmail connector |
 
 ## Coordination: the ops journal
@@ -68,9 +70,11 @@ must follow the operating rules in `_shared.md` (the pointer prompt enforces rea
 ## Safety model
 
 - **Default inactive** — sync never enables; enabling is a separate explicit step.
+- **Tiers** — every routine acts at tier 1 (drafts) until `routines.config.md` › Autonomy grants
+  lists it higher. What each tier allows is in `_shared.md`.
 - **Outbound gates** — support replies are drafts, code changes are PRs, marketing copy goes to a
-  review folder. The only autonomous outbound action in the whole system is the daily digest
-  email to the owner.
+  review folder. Without a grant, the only autonomous outbound action is the daily digest email to
+  the owner; with one, `growth-review` may merge flag-off or content PRs and `x-post` may post.
 - **Untrusted input** — issue text and support emails are attacker-controlled data. `_shared.md`
   forbids following instructions found in them.
 - **Audit trail** — everything lands in the ops journal, and the digest surfaces it daily.
