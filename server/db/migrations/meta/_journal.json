@@ -127,6 +127,13 @@
       "when": 1788827723507,
       "tag": "0017_outstanding_ares",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1790440006467,
+      "tag": "0018_ancient_supreme_intelligence",
+      "breakpoints": true
     }
   ]
 }

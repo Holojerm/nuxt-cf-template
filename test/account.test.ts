@@ -26,6 +26,7 @@ const USER = 'user-1'
 const OTHER = 'user-2'
 
 beforeEach(async () => {
+  await db.delete(schema.lifecycleSends)
   await db.delete(schema.auditLog)
   await db.delete(schema.feedback)
   await db.delete(schema.notificationPreferences)
@@ -435,6 +436,12 @@ describe('exportAccount', () => {
       targetType: 'user',
       targetId: USER,
     })
+    const sentAt = new Date('2026-09-20T04:00:00.000Z')
+    await db.insert(schema.users).values({ id: OTHER, email: `${OTHER}@example.com`, name: 'Bob' })
+    await db.insert(schema.lifecycleSends).values([
+      { userId: USER, stepId: 'activation_nudge', sentAt },
+      { userId: OTHER, stepId: 'activation_nudge', sentAt },
+    ])
     // Targets a DIFFERENT user — must not leak into this export.
     await db.insert(schema.auditLog).values({
       id: 'audit-2',
@@ -471,11 +478,15 @@ describe('exportAccount', () => {
     // was ever toggled, product_updates reflects the row above.
     expect(result.notificationPreferences).toEqual([
       { eventType: 'welcome', enabled: true },
+      { eventType: 'tips', enabled: true },
       { eventType: 'product_updates', enabled: false },
       { eventType: 'referral', enabled: true },
     ])
 
     // Only the row that targets THIS user — and never who did it.
+    expect(result.lifecycleEmails).toEqual([
+      { step: 'activation_nudge', sentAt: '2026-09-20T04:00:00.000Z' },
+    ])
     expect(result.auditEntries).toEqual([
       { action: 'admin.user_viewed', actorType: 'admin', createdAt: expect.any(String) },
     ])

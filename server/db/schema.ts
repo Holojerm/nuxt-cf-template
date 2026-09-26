@@ -579,6 +579,42 @@ export const notificationPreferences = sqliteTable(
   ],
 )
 
+// Lifecycle email sends — one row per (user, step, subject), written BEFORE the
+// send (server/utils/lifecycle.ts). The unique index is the idempotency guard:
+// two cron runs racing, or a run retried after a timeout, cannot mail the same
+// person the same step twice, because only one INSERT wins.
+//
+// `subject_key` is what makes a step repeatable where it should be: '' for a
+// once-per-account step (the activation nudge), the pass's end date for the
+// expiring-pass reminder, so buying another pass earns another reminder.
+//
+// Kept after an account is deleted (the row names a user id, never an address),
+// so the history of what was sent survives for support questions.
+export const lifecycleSends = sqliteTable(
+  'lifecycle_sends',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    stepId: text('step_id').notNull(),
+    subjectKey: text('subject_key').notNull().default(''),
+    sentAt: integer('sent_at', { mode: 'timestamp' })
+      .$defaultFn(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex('lifecycle_sends_user_step_subject_idx').on(
+      table.userId,
+      table.stepId,
+      table.subjectKey,
+    ),
+    index('lifecycle_sends_step_idx').on(table.stepId),
+  ],
+)
+
 // Instance secrets — server-generated derivation salts, one row each.
 //
 // ── Why this exists rather than another env var ──────────────────────────────
@@ -646,6 +682,7 @@ export const opsEvents = sqliteTable(
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Entitlement = typeof entitlements.$inferSelect
+export type LifecycleSend = typeof lifecycleSends.$inferSelect
 export type PaddleEventRecord = typeof paddleEvents.$inferSelect
 export type NewEntitlement = typeof entitlements.$inferInsert
 export type McpConnectCode = typeof mcpConnectCodes.$inferSelect

@@ -208,11 +208,12 @@ const securityHeaders = {
 // map, so the dashboard compares the schedule Nitro will honour against the
 // triggers Cloudflare says it registered.
 //
-//   04:00 UTC  — retention sweep, server/tasks/purge-expired-tokens.ts
+//   04:00 UTC  — retention sweep, server/tasks/purge-expired-tokens.ts; then
+//                lifecycle email, server/tasks/lifecycle-email.ts
 //   */30       — ops digest, server/tasks/ops/alert.ts. Silence is the healthy
 //                state: an empty spool costs one indexed SELECT per tick.
 const SCHEDULED_TASKS: Record<string, string[]> = {
-  '0 4 * * *': ['purge-expired-tokens'],
+  '0 4 * * *': ['purge-expired-tokens', 'lifecycle-email'],
   '*/30 * * * *': ['ops:alert'],
 }
 

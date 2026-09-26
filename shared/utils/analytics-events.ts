@@ -114,6 +114,12 @@ export const TEMPLATE_EVENTS = {
     description: 'In-app feedback arrived. `kind: churn` marks a cancellation reason.',
   },
   feedback_replied: { origin: 'server', description: 'The owner replied to a feedback item.' },
+
+  lifecycle_email_sent: {
+    origin: 'server',
+    description:
+      'A lifecycle email went out. `step` names which (activation_nudge, pass_expiring, …).',
+  },
 } as const satisfies Record<string, EventDefinition>
 
 export const ANALYTICS_EVENTS = { ...TEMPLATE_EVENTS, ...APP_EVENTS } as const
