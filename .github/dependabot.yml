@@ -1,7 +1,7 @@
 version: 2
 updates:
-  # npm — bun is npm-compatible; Dependabot operates on package.json directly.
-  - package-ecosystem: "npm"
+  # bun — npm_and_yarn cannot update bun.lock.
+  - package-ecosystem: "bun"
     directory: "/"
     schedule:
       interval: "weekly"
