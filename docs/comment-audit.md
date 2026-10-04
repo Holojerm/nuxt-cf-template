@@ -22,7 +22,7 @@ independent measurements say so:
 | Probe | Result | Reading |
 | --- | --- | --- |
 | Narrative-history markers (`used to`, `was rejected`, `the first version`, …) | **70 of 11,680 comment lines — 0.6%** | The "story of how we found it" failure mode is rare, not systemic |
-| Verbatim 7-gram overlap with `CLAUDE.md` | **max 1.5%** (`server/utils/referral.ts`), median <1% | Almost no copy-paste duplication; what exists is semantic and needs judgment |
+| Verbatim 7-gram overlap with `AGENTS.md` | **max 1.5%** (`server/utils/referral.ts`), median <1% | Almost no copy-paste duplication; what exists is semantic and needs judgment |
 | Largest comment block per file, for the brief's named heavy hitters | `entitlements.ts` 18 lines, `files.ts` 21, `users.ts` 32, `account.vue` 15, `admin/users/[id].vue` 10 | Those files are heavy by *total*, not by essay drift — many small comments on specific decisions, which is the healthy pattern |
 
 Two things are worth doing regardless of the bloat decision:
@@ -91,7 +91,7 @@ Wrong twice over: **`revokeReferralRewardForReferee` does not exist anywhere in 
 repo**, and the mechanism it describes lives in a different file. The real cascade is
 `revokeDerivedEntitlements`, called from `revokeForAdjustment`, both in
 [server/utils/entitlements.ts:441](server/utils/entitlements.ts:441) and
-[:568](server/utils/entitlements.ts:568). `CLAUDE.md` states the correct location; this
+[:568](server/utils/entitlements.ts:568). `AGENTS.md` states the correct location; this
 comment contradicts it.
 
 **Fix:** `(server/utils/entitlements.ts › revokeDerivedEntitlements, called from revokeForAdjustment).`
@@ -579,7 +579,7 @@ I verified how each gate treats comment text:
 | Location | Size | Why it stays |
 | --- | ---: | --- |
 | `server/api/auth/apple.ts:1-56` | 907 tok | Five distinct silent-failure gotchas (no `.get` suffix, four-value config, required redirect URL, Hide My Email identity split, SameSite=Lax limitation). I verified the library claim at `apple.js:27` vs `:62` — it is correct. Cut nothing |
-| `server/utils/session-guard.ts:17-32` | ~250 tok | The "why not a KV cache" argument. `CLAUDE.md` explicitly points *here* as the canonical home, and this is the exact refactor an agent would otherwise make — a cache that fails open reintroduces the bug |
+| `server/utils/session-guard.ts:17-32` | ~250 tok | The "why not a KV cache" argument. `AGENTS.md` explicitly points *here* as the canonical home, and this is the exact refactor an agent would otherwise make — a cache that fails open reintroduces the bug |
 | `server/db/schema.ts` index rationales (`:98-104`, `:288-305`, `:462-470`) | ~600 tok | Each names a query that full-scans without the index, and a `LIMIT` that bounds rows deleted rather than examined. Pure silent-degradation-as-you-grow |
 | `server/utils/admin-grants.ts:321-339` | ~330 tok | "Comps only" + "both status and date must be set". Ordering/atomicity the code cannot express, on access-control code |
 | `scripts/seed.ts:44-53` | ~180 tok | `grantCompPasses()` calls `db.batch()`, which bun-sqlite does not have — it would **throw**, not merely diverge. Prevents an obvious "reuse the helper" refactor |
@@ -605,7 +605,7 @@ I verified how each gate treats comment text:
   other comments does not falsely resolve), plus `package.json` scripts, migration
   filenames, and `node_modules` for library-internal paths. 65 candidates, 61 confirmed
   as legitimate external or hypothetical references, 4 real + 1 directional.
-- **Duplication.** 7-gram shingle overlap against `CLAUDE.md` per file. Peak 1.5%.
+- **Duplication.** 7-gram shingle overlap against `AGENTS.md` per file. Peak 1.5%.
   Semantic clusters were then identified by hand: the referral cost model, the identity
   salt, the posthog-flags argument, the Apple redirect bug, "db as first argument", and
   "deliberately NOT a foreign key" (5 sites, of which 2 already cross-reference).

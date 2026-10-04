@@ -14,7 +14,7 @@ derives the favicon, app icon, and share image from that component, and `bun run
 fails the build when they fall out of sync.
 
 > **Scope note:** this file means *visual* design — color, type, space, motion, component
-> behavior. Architectural rationale and stack decisions live in `CLAUDE.md`, not here.
+> behavior. Architectural rationale and stack decisions live in `AGENTS.md`, not here.
 
 > **Forking?** Replace everything below the Identity heading. The system described here is
 > "Quarry", the template's placeholder identity — it exists to prove the pipeline works, not

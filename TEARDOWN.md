@@ -286,6 +286,6 @@ you deleted:
 bun run mirror:check
 ```
 
-Finally, update [`CLAUDE.md`](CLAUDE.md)'s index table and delete the
+Finally, update [`AGENTS.md`](AGENTS.md)'s index table and delete the
 `.claude/docs/` file for anything you removed. A doc describing a subsystem your fork no
 longer has is worse than no doc: an agent will read it and write code against it.

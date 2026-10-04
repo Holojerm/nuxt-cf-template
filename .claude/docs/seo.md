@@ -3,7 +3,7 @@
 The `useSeo()` one-call-per-page contract, how `publicPage` meta feeds both `sitemap.xml` and `llms.txt`, structured-data rules, and how `@nuxt/content` blog posts are authored and served.
 
 > **Load this when:** adding or editing a page, writing structured data, changing crawler behaviour, or working in `content/blog/`.
-> Canonical index: [CLAUDE.md](../../CLAUDE.md).
+> Canonical index: [AGENTS.md](../../AGENTS.md).
 
 ---
 

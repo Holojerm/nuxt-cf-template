@@ -51,7 +51,7 @@ test.describe('buy → access', () => {
     expect(body.kind).toBe('pass')
 
     // Also sweeps /account — the other signed-in page a console/CSP
-    // regression could hide on (see CLAUDE.md's a11y/CSP suites, which only
+    // regression could hide on (see AGENTS.md's a11y/CSP suites, which only
     // ever scan signed-out routes).
     // The full sentence, not the fragment 'One-time pass' — the Plan card
     // also has a `dt`/`dd` pair spelling out the type, and getByText's

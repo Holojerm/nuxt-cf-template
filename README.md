@@ -158,7 +158,7 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
 3. Configure the build:
    - **Build command**: `bun run ci` (lint → design:check → brand:check → seo:check → typecheck → test → build)
      The browser suites are deliberately absent — Workers Builds cannot launch Chromium, so
-     `.github/workflows/browser-suites.yml` runs them instead. See CLAUDE.md › Gotchas.
+     `.github/workflows/browser-suites.yml` runs them instead. See AGENTS.md › Gotchas.
    - **Deploy command**: `bunx wrangler --cwd .output deploy`
    - **Preview deploy command**: `bunx wrangler --cwd .output versions upload`
 4. Under **Build Variables and Secrets**, add `NUXT_SESSION_PASSWORD` (mark it secret).
@@ -228,7 +228,7 @@ bun run fleet:check   # Fail if fleet.json no longer matches wrangler.toml (part
 bun run crons:check   # Fail if [triggers] crons and nitro.scheduledTasks disagree (part of ci)
 bun run ci            # Lint + format:check + design/brand/seo/fleet/crons gates + typecheck + test + build — Workers Builds runs this
 bun run ci:browser    # playwright:install + test:a11y (a11y + CSP + E2E) — GitHub Actions runs this,
-                      # because Workers Builds has no Chromium libraries. See CLAUDE.md › Gotchas.
+                      # because Workers Builds has no Chromium libraries. See AGENTS.md › Gotchas.
 bun db:generate       # Generate Drizzle migration after schema changes
 bun db:migrate        # Apply migrations to local D1 (via wrangler)
 bun db:migrate:remote # Apply migrations to remote/prod D1
@@ -282,7 +282,7 @@ bun run deploy:preview # Same, then deploy — creates/updates the my-app-previe
 ├── DESIGN.md           # Visual design system — the source of truth, see /design-sync
 ├── brand.lock.json     # Fingerprint of the generated brand assets (see brand:check)
 ├── wrangler.toml       # Cloudflare config (rename project here)
-├── CLAUDE.md           # AI development guide — the index, kept small
+├── AGENTS.md           # AI development guide — the index, kept small
 ├── TEARDOWN.md         # How to remove billing / referrals / the MCP worker
 └── .claude/docs/       # Per-subsystem detail, loaded on demand by agents
 ```
@@ -797,7 +797,7 @@ fingerprint the deployment. It carries no secrets:
 ```
 
 `migrations.pending` is the field that earns the route its keep: it is every migration in the repo
-that production has never applied — the deploy-before-migrate gap described in CLAUDE.md ›
+that production has never applied — the deploy-before-migrate gap described in AGENTS.md ›
 Gotchas, reported by the Worker the moment it opens instead of by a user. `status` is `degraded`
 while it is non-empty, `down` (HTTP 503) when D1 is unreachable. `/api/health` is unchanged and
 still the thing to point a dumb uptime check at.
@@ -1368,7 +1368,7 @@ This template ships with Claude Code configuration out of the box:
 - **MCP servers** (`.mcp.json`): Cloudflare docs, NuxtUI docs, Drizzle schema introspection, Nuxt live introspection, GitHub
 - **Slash commands** (`.claude/commands/`): `/new-feature`, `/scaffold-component`, `/scaffold-api`, `/db-migrate`
 - **Skills** (`.claude/skills/`): NuxtUI, frontend design, theming, and more
-- **AI guide** (`CLAUDE.md`): stack conventions, styling rules, commands, and an index into `.claude/docs/` — kept small on purpose, since it loads into every agent session
+- **AI guide** (`AGENTS.md`): stack conventions, styling rules, commands, and an index into `.claude/docs/` — kept small on purpose, since it loads into every agent session
 - **Subsystem docs** (`.claude/docs/`): auth, billing, email, SEO, patterns, brand, agent tooling, and the gotchas list — read on demand, not all at once
 - **Teardown guide** (`TEARDOWN.md`): ordered removal steps for billing, referrals, and the MCP worker
 

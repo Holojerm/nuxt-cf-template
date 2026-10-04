@@ -377,7 +377,7 @@ export default defineNuxtConfig({
   // write traffic, split it: create the database, add the binding, and change
   // `bindingName` here — nothing else in the app reads these tables.
   //
-  // NO MIGRATION STEP. Unlike the app's own schema (CLAUDE.md › Gotchas:
+  // NO MIGRATION STEP. Unlike the app's own schema (AGENTS.md › Gotchas:
   // "Nothing applies migrations to production D1"), the content tables need no
   // `db:migrate:remote`. The build writes a compressed SQL dump into the
   // Worker's static assets, and the first request after a deploy compares its

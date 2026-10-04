@@ -21,7 +21,7 @@
 // time). The count is computed, not asserted — adding a `my-app` to a file
 // already listed here needs no change to this script.
 //
-// It deliberately does NOT touch prose: README.md and CLAUDE.md explain the
+// It deliberately does NOT touch prose: README.md and AGENTS.md explain the
 // template using `my-app` as the worked example, and rewriting them mid-sentence
 // makes the docs read like nonsense. The same exemption covers the one
 // `my-app-email-preview` left in a comment in server/utils/email-queue.ts,

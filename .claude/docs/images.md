@@ -5,7 +5,7 @@ wrong one produces a broken image in dev or a 401 in production, and neither say
 
 > **Load this when:** rendering any image, adding an upload preview or thumbnail, or
 > debugging a `/cdn-cgi/image/` 404.
-> Canonical index: [CLAUDE.md](../../CLAUDE.md).
+> Canonical index: [AGENTS.md](../../AGENTS.md).
 
 ---
 

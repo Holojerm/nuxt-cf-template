@@ -3,7 +3,7 @@
 Magic-link sign-in, OAuth providers, session revocation, the `rateLimit()` two-backend contract, and Turnstile. Several rules here are load-bearing security invariants — breaking one is a login bypass or an account-enumeration oracle, not a style regression.
 
 > **Load this when:** touching anything under `server/api/auth/`, `server/utils/magic-link.ts`, `server/utils/rate-limit.ts`, `server/utils/turnstile.ts`, session handling, or adding an OAuth provider.
-> Canonical index: [CLAUDE.md](../../CLAUDE.md).
+> Canonical index: [AGENTS.md](../../AGENTS.md).
 
 ---
 

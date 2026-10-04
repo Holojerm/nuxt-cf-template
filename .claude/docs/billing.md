@@ -3,7 +3,7 @@
 Paddle as merchant of record, the entitlement/clawback model, and the referral reward economics. Treat `server/utils/referral.ts` as billing code: a referral reward is access nobody paid for, granted automatically, on a signal from outside the building.
 
 > **Load this when:** touching `server/utils/entitlements.ts`, `server/utils/referral.ts`, `server/utils/paddle*.ts`, `server/routes/paddle/webhook.post.ts`, pricing, or the optional `mcp/` worker.
-> Canonical index: [CLAUDE.md](../../CLAUDE.md).
+> Canonical index: [AGENTS.md](../../AGENTS.md).
 
 ---
 

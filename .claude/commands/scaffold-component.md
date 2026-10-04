@@ -13,7 +13,7 @@ Given the component path argument, create `app/components/[FeatureName]/[Compone
 
 If only one name is provided (no slash), use it as both the feature folder and component name.
 
-The component must follow these conventions from CLAUDE.md:
+The component must follow these conventions from AGENTS.md:
 
 1. **Always use `<script setup lang="ts">`** — never Options API or `<script>` without setup
 2. **Define props with a TypeScript interface** and `withDefaults(defineProps<Props>(), {...})`

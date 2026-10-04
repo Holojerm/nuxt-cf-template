@@ -19,7 +19,7 @@
 # WHAT MOVED. `bun run test:a11y` is three Playwright projects, not one —
 # `a11y` (axe over every public route, light and dark), `csp` (the
 # Content-Security-Policy spec) and `e2e`. Moving it moved all three, which
-# means the SECURITY-HEADER gate now lives here too. That is the trap CLAUDE.md
+# means the SECURITY-HEADER gate now lives here too. That is the trap AGENTS.md
 # warns about: a broken CSP fails silently, in exactly the way that gate exists
 # to catch. If you ever delete this workflow, you are deleting the CSP gate.
 #
@@ -58,7 +58,7 @@ jobs:
           bun-version: latest
 
       # @nuxt/content parses content/ with node:sqlite, which is only
-      # unflagged from 22.13 — see CLAUDE.md › Gotchas. `.node-version` is the
+      # unflagged from 22.13 — see AGENTS.md › Gotchas. `.node-version` is the
       # single source of truth so this cannot drift from Workers Builds.
       - uses: actions/setup-node@v4
         with:

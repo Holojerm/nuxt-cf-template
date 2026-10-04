@@ -6,7 +6,7 @@
 // when it wakes. The join is an exact string match on the cron expression, and
 // a mismatch is silent in both directions — Cloudflare fires and Nitro runs
 // nothing, or Nitro waits for an expression Cloudflare was never told about.
-// CLAUDE.md › Gotchas has carried that warning for a while; this makes it a
+// AGENTS.md › Gotchas has carried that warning for a while; this makes it a
 // build failure instead of a paragraph.
 //
 // It has happened. A fork declared three scheduled tasks — a nightly backup
@@ -225,6 +225,6 @@ for (const { rule, detail, remedy } of problems) {
   console.error(`    → ${remedy}\n`)
 }
 console.error(
-  'A cron needs the same string in wrangler.toml and nuxt.config.ts — CLAUDE.md › Gotchas.\n',
+  'A cron needs the same string in wrangler.toml and nuxt.config.ts — AGENTS.md › Gotchas.\n',
 )
 process.exit(1)

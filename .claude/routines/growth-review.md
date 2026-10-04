@@ -37,7 +37,7 @@ content. It is the one routine that turns numbers into changes; everything else 
    - which `product` metric it moves, and the minimum detectable change
    - the flag name (`useFlag()` / `useFlagVariant()`), or "content — no flag" for a page
    - the minimum run length, and what keep / kill looks like, stated now
-4. **Ship them.** One PR per bet, on a `growth/<slug>` branch, following the repo's CLAUDE.md and
+4. **Ship them.** One PR per bet, on a `growth/<slug>` branch, following the repo's AGENTS.md and
    `bun run ci`:
    - A code bet goes behind a flag that defaults **off**. Leave the rollout to the owner and say
      in the issue which rollout you recommend. Turning a flag on is tier 4.

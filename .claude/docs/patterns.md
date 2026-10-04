@@ -3,7 +3,7 @@
 The worked examples: a `<script setup>` component, a validated API route, Drizzle queries, error handling, the feedback contract, forms, and performance defaults. Copy these shapes rather than inventing new ones.
 
 > **Load this when:** writing a new component, API route, form, or database query — especially on your first change in this repo.
-> Canonical index: [CLAUDE.md](../../CLAUDE.md).
+> Canonical index: [AGENTS.md](../../AGENTS.md).
 
 ---
 
