@@ -15,11 +15,11 @@
 // worse than no comment: an agent trusts it and goes hunting for a file that
 // is not there, or worse, reasons about a rule that no longer exists.
 //
-// The split of CLAUDE.md into `.claude/docs/` made this urgent rather than
-// theoretical — a dozen comments pointed at "CLAUDE.md › Gotchas", a heading
+// The split of AGENTS.md into `.claude/docs/` made this urgent rather than
+// theoretical — a dozen comments pointed at "AGENTS.md › Gotchas", a heading
 // that moved. Running this for the first time also found a pointer that had
 // ALREADY been dead on main (`server/utils/onboarding.ts` cited reasoning
-// CLAUDE.md gives for `user_signed_up`, which CLAUDE.md never mentioned).
+// AGENTS.md gives for `user_signed_up`, which AGENTS.md never mentioned).
 //
 // ── The rule, deliberately narrow ───────────────────────────────────────────
 // A reference fails only when it resolves to NOTHING IN THIS REPO. Not "is not
@@ -65,7 +65,7 @@ export interface Reference {
 
 const SOURCE_DIRS = ['app', 'server', 'shared', 'scripts', 'test']
 const DOC_DIRS = ['.claude/docs', '.claude/commands', '.claude/routines']
-const DOC_FILES = ['CLAUDE.md', 'AGENTS.md', 'TEARDOWN.md', 'DESIGN.md', 'README.md']
+const DOC_FILES = ['AGENTS.md', 'TEARDOWN.md', 'DESIGN.md', 'README.md']
 const CORPUS_EXTRA = [
   'nuxt.config.ts',
   'wrangler.toml',

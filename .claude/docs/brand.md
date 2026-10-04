@@ -3,7 +3,7 @@
 How the logo is drawn once and every icon file is generated from it.
 
 > **Load this when:** redesigning the logo, running `/logo-sync`, or debugging a `bun run brand:check` failure.
-> Canonical index: [CLAUDE.md](../../CLAUDE.md).
+> Canonical index: [AGENTS.md](../../AGENTS.md).
 
 ---
 

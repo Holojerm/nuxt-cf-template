@@ -35,7 +35,7 @@ export default defineConfig({
       '~~': fileURLToPath(new URL('./', import.meta.url)),
       // Nuxt 4's shared/ alias. Server utils import through it rather than
       // relying on auto-imports, which typecheck everywhere but are not always
-      // injected at runtime — see CLAUDE.md › Gotchas.
+      // injected at runtime — see AGENTS.md › Gotchas.
       '#shared': fileURLToPath(new URL('./shared', import.meta.url)),
     },
   },

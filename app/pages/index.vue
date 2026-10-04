@@ -57,7 +57,7 @@ const features = [
     icon: 'i-lucide-bot',
     title: 'Built for agents',
     description:
-      'CLAUDE.md, slash commands, MCP servers, and cloud routines that triage issues and draft support replies while you sleep.',
+      'AGENTS.md, slash commands, MCP servers, and cloud routines that triage issues and draft support replies while you sleep.',
   },
 ]
 

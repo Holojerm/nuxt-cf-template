@@ -3,7 +3,7 @@
 What ships in `.mcp.json` and `.claude/`: the MCP servers available for live introspection, the NuxtUI skill, the slash commands, and the cloud operations routines that run the commercial side of a fork.
 
 > **Load this when:** configuring Claude Code for this repo, wiring a new MCP server, or setting up the operations routines after a fork.
-> Canonical index: [CLAUDE.md](../../CLAUDE.md).
+> Canonical index: [AGENTS.md](../../AGENTS.md).
 
 ---
 

@@ -11,7 +11,7 @@
 // module's own config file, and the module re-exports the exact validator
 // build it converts to a JSON Schema and then to SQL columns. Handing it a
 // different Zod instance is a cross-version detail with no upside here — the
-// app's own input validation (server/api/**) is still Zod 4, as CLAUDE.md says.
+// app's own input validation (server/api/**) is still Zod 4, as AGENTS.md says.
 //
 // ── This schema is a column definition, not a validator ─────────────────────
 // Read that literally. Content walks the schema to derive SQL columns, their

@@ -3,7 +3,7 @@
 Resend over fetch, the `EMAIL_QUEUE` enqueue path, retry and dead-letter semantics, and why billing mail is decided on status transitions rather than on webhook events. Five rules here each cost real, undelivered mail when they were broken.
 
 > **Load this when:** touching `server/utils/email*.ts`, `server/plugins/email-queue-consumer.ts`, notification preferences, or adding any new outbound email.
-> Canonical index: [CLAUDE.md](../../CLAUDE.md).
+> Canonical index: [AGENTS.md](../../AGENTS.md).
 
 ---
 

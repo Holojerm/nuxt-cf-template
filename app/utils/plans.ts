@@ -9,7 +9,7 @@
 // entitlement layer tells them apart by the Paddle ref (`txn_` vs `sub_`) and
 // stacks passes rather than resetting them. See server/utils/entitlements.ts.
 //
-// Monthly only — no yearly plan, by rule (~/code/CLAUDE.md › Product rules).
+// Monthly only — no yearly plan, by rule (~/code/AGENTS.md › Product rules).
 // Which plan is `featured` is a per-product call; the template leads with the
 // pass because auto-renew defaults off. Flip the flag, don't add a third card.
 

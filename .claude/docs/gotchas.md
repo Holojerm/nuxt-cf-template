@@ -3,7 +3,7 @@
 Failures this repo has actually hit that produce **no error**: wrong-file databases, migrations that never run, empty sitemaps, rate limiters that quietly do nothing. If something appears to work but produces no output, or fails only for signed-in users, the answer is probably here.
 
 > **Load this when:** debugging anything that fails quietly, touching D1/migrations/deploy config, adding a cron task or a custom `definePageMeta` key, or working in a git worktree.
-> Canonical index: [CLAUDE.md](../../CLAUDE.md).
+> Canonical index: [AGENTS.md](../../AGENTS.md).
 
 ---
 

@@ -47,7 +47,7 @@ remote branch. Their checkouts stay on whatever branch and dirty state they were
 ## Scope: tailor per fork, don't bulk-copy
 
 The template carries a full commercial SaaS stack. Most of it does not belong in most forks.
-Decide per fork from what the app actually is — read its README and CLAUDE.md first — and say
+Decide per fork from what the app actually is — read its README and AGENTS.md first — and say
 in the PR what you left out and why.
 
 A feature that would require you to invent product decisions is **out of scope**. Pricing tiers,
@@ -101,7 +101,7 @@ Before changing them, **measure**. Add a probe element in the running page and r
 `getComputedStyle` for both the dead class and its replacement, so the PR can state exactly which
 replacements are pixel-identical and which are visible fixes.
 
-Also check `CLAUDE.md`. In at least one fork the file *recommended* those dead names as "NuxtUI's
+Also check `AGENTS.md`. In at least one fork the file *recommended* those dead names as "NuxtUI's
 semantic color tokens" — the guidance was the cause, and fixing the classes without fixing the
 guidance would let them grow straight back.
 
@@ -113,7 +113,7 @@ palette module over sprinkling ignores.
 ## The fleet contract
 
 The template ships three things the portfolio dashboard (`fleet`) depends on, and every sync
-PR must leave the fork with all of them working — see CLAUDE.md › Fleet contract:
+PR must leave the fork with all of them working — see AGENTS.md › Fleet contract:
 
 1. **`fleet.json`** at the repo root, matching `wrangler.toml`. Write it from the fork's real
    values (Worker names including `mcp/` if present, D1 `database_name` + `database_id`, KV
