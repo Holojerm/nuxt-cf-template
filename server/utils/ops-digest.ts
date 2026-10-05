@@ -5,9 +5,17 @@
 // The HTML follows email-templates.ts's rules (one table, inline styles, hex
 // colors, nothing external) for the same reason: Gmail and Outlook are not
 // browsers. It is a separate scaffold rather than `emailLayout()` because a
-// digest is a list of grouped rows, not paragraphs and a button.
+// digest is a list of grouped rows, not paragraphs and a button. It also
+// imports nothing from the email stack, so forks that tore out transactional
+// email (TEARDOWN.md) keep their alerts.
 
-import { escapeEmailHtml } from './email-templates'
+function escapeEmailHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
 export interface OpsDigestRow {
   kind: string
