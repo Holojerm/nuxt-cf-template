@@ -1,0 +1,14 @@
+Pick up where you left off
+
+Hi {{name}} — you created a {{appName}} account but haven't finished getting set up.
+
+It takes a couple of minutes, and the checklist on your dashboard shows exactly what's left.
+
+If something got in the way, reply to this email — a person reads it.
+
+Finish setting up: {{appUrl}}/dashboard
+
+—
+This is the only reminder we send about setup.
+
+{{appUrl}}

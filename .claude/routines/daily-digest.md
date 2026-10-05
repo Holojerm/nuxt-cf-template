@@ -31,8 +31,8 @@ summarizing what the routines (and the repo) did that day and what needs a human
    - No customer PII beyond masked identifiers (`_shared.md` rule 4).
    - **Format** — send HTML in `htmlBody` and the same content as plain text in `body` (spam
      filters and text-only clients read it). Match the ops alert emails
-     (`server/utils/ops-digest.ts`): Gmail strips `<style>` blocks, so inline styles only, one
-     centered table, hex colors, no images or web fonts. Use this skeleton and fill the two
+     (`emails/templates/ops-digest.vue`): Gmail strips `<style>` blocks, so inline styles only, one
+     centered table, hex colors, no web fonts. Use this skeleton and fill the two
      sections; nothing else goes in:
 
      ```html

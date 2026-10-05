@@ -21,7 +21,7 @@ Do not rebuild any of this:
 | --- | --- |
 | `DESIGN.md` › Brand mark | The contract: concept, construction rules, color roles, never-list |
 | `app/components/Brand/Logo.vue` | The mark itself, and the only place it is drawn |
-| `bun run brand:generate` | Derives `favicon.svg`, `apple-touch-icon.png`, `og.png` from that component |
+| `bun run brand:generate` | Derives `favicon.svg`, `apple-touch-icon.png`, `og.png`, `email-logo.png` and the email theme from that component |
 | `bun run brand:check` | Fails `bun run ci` when those files no longer match the mark |
 | `/design-system` › Brand mark | The mark at 16–48px, on an inverted ground, next to the generated files |
 
@@ -38,8 +38,8 @@ Construction bullets, and the Color roles table. That section is what the genera
 and what `brand:check` fingerprints; drawing first and documenting after is how the two
 end up describing different logos.
 
-Keep the six role names exactly as they are (`icon-ink`, `icon-ground`, `og-mark`,
-`og-ground`, `og-ink`, `og-muted`) and point each at a concrete `--color-*` token that
+Keep every role name exactly as it is (`icon-ink`, `icon-ground`, `og-mark`,
+`og-ground`, `og-ink`, `og-muted`, the two `manifest-*`, and the eleven `email-*`) and point each at a concrete `--color-*` token that
 `app/assets/css/main.css` or Tailwind defines. A `--ui-*` alias is not valid there: it flips
 with the color mode, and a PNG has to pick one.
 
@@ -82,18 +82,19 @@ element by that attribute, and the header renders the same element the icons are
 ### 4. Compile
 
 ```bash
-bun run brand:generate
+bun run brand:generate && bun run email:build
 ```
 
-It writes `public/favicon.svg`, `public/apple-touch-icon.png`, `public/og.png`, and
-`brand.lock.json`. Read its output: it prints the resolved colors and warns if the display
+`brand:generate` writes `public/favicon.svg`, `public/apple-touch-icon.png`, `public/og.png`,
+`public/email-logo.png`, `emails/theme.generated.css` and `brand.lock.json`; `email:build` then
+recompiles the emails against the new theme. Read its output: it prints the resolved colors and warns if the display
 webfont failed to load, in which case `og.png` fell back to a generic family and should be
 regenerated rather than committed.
 
 ### 5. Verify — do not skip
 
 ```bash
-bun run brand:check && bun run design:check && bun run typecheck
+bun run brand:check && bun run email:check && bun run design:check && bun run typecheck
 ```
 
 Then look at it, in a browser, at real size:

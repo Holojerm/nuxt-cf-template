@@ -1,0 +1,24 @@
+{{#isPass}}
+Your pass is active
+{{/isPass}}
+{{^isPass}}
+Your subscription is active
+{{/isPass}}
+
+Thanks, {{name}}. Your access is live — nothing else to do.
+
+{{#isPass}}
+This is a one-time pass{{#ends}}, good through {{ends}}{{/ends}}. It won't renew, and you won't be charged again.
+{{/isPass}}
+{{^isPass}}
+Your subscription renews automatically{{#ends}}, next on {{ends}}{{/ends}}. You can cancel any time from your account page — no email required.
+{{/isPass}}
+
+Paddle handles the payment, so your receipt and invoice come from them in a separate email.
+
+Go to your account: {{appUrl}}/account
+
+—
+Questions about the charge? Reply to this email.
+
+{{appUrl}}

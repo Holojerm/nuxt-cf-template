@@ -3,6 +3,10 @@
 // Names come from OAuth providers, which means they're attacker-controllable —
 // "Ada <script>" is a valid GitHub display name. These render into HTML that
 // gets delivered to an inbox, so escaping is the security-relevant part.
+//
+// Mustache escapes `/` and `=` along with the markup characters, so a URL in
+// the HTML reads `https:&#x2F;&#x2F;…` — correct, every client decodes it, and
+// the reason these assertions go through `readable()`.
 
 import { describe, expect, it } from 'vitest'
 import {
@@ -15,12 +19,15 @@ import {
 
 const BRAND = { appName: 'My App', appUrl: 'https://example.com' }
 
+/** The HTML as a reader's client sees it: Mustache's `/` and `=` entities undone. */
+const readable = (html: string) => html.replaceAll('&#x2F;', '/').replaceAll('&#x3D;', '=')
+
 describe('welcomeEmail', () => {
   it('addresses the person and links the app', () => {
     const email = welcomeEmail(BRAND, { name: 'Ada' })
     expect(email.subject).toContain('My App')
     expect(email.html).toContain('Ada')
-    expect(email.html).toContain('https://example.com')
+    expect(readable(email.html)).toContain('https://example.com')
   })
 
   it('escapes a hostile display name', () => {
@@ -69,7 +76,7 @@ describe('paymentFailedEmail', () => {
   it('links somewhere the card can actually be fixed', () => {
     const email = paymentFailedEmail(BRAND, { name: 'Ada' })
     expect(email.subject).toContain('Action needed')
-    expect(email.html).toContain('https://example.com/account')
+    expect(readable(email.html)).toContain('https://example.com/account')
   })
 })
 
@@ -85,7 +92,7 @@ describe('accessEndedEmail', () => {
 
   it('points at pricing, because coming back should be one click', () => {
     const email = accessEndedEmail(BRAND, { name: 'Ada', reason: 'canceled' })
-    expect(email.html).toContain('https://example.com/pricing')
+    expect(readable(email.html)).toContain('https://example.com/pricing')
   })
 })
 
@@ -106,7 +113,8 @@ describe('feedbackReplyEmail', () => {
       reply: 'Thanks!',
       originalMessage: '<img src=x onerror="alert(1)">',
     })
-    expect(email.html).not.toContain('<img')
+    // Every email carries the logo as an <img>, so match the attacker's tag.
+    expect(email.html).not.toContain('<img src=x')
     expect(email.html).toContain('&lt;img')
   })
 
@@ -115,8 +123,8 @@ describe('feedbackReplyEmail', () => {
       reply: 'Noted.',
       originalMessage: 'x'.repeat(2000),
     })
-    expect(email.html).toContain('\u2026')
-    expect(email.html.length).toBeLessThan(4000)
+    expect(email.html).toContain(`${'x'.repeat(600)}\u2026`)
+    expect(email.html).not.toContain('x'.repeat(601))
   })
 
   it('ships a plain-text alternative', () => {

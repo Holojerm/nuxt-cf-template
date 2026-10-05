@@ -14,6 +14,9 @@
 //                                    server/routes/manifest.webmanifest.get.ts —
 //                                    a manifest has no color mode either, so
 //                                    these are resolved here, not hand-written.
+//   public/email-logo.png           64x64, transparent — the header of every email
+//   emails/theme.generated.css      Tailwind theme (hex colors, font stacks) for
+//                                    `bun run email:build`; see scripts/brand-email.ts
 //   brand.lock.json                 fingerprint of the inputs, read by brand:check
 //
 // Rasterizing uses the Chromium that Playwright already installs for the a11y
@@ -41,9 +44,12 @@ import {
   ROOT,
   type BrandInputs,
 } from './brand-inputs'
+import { emailThemeCss } from './brand-email'
 import { BRAND_ROLES, markPlacement, markTransform, type BrandRole } from './brand-source'
 
 const OG = { width: 1200, height: 630 }
+/** Rendered at 2x the 32px it is shown at in an email, for retina screens. */
+const EMAIL_LOGO = 64
 const APPLE_TOUCH = 180
 /** Sizes Android/Chrome expect in a web app manifest — the 192 is what shows
  *  on the home screen and app switcher, the 512 is the splash-screen source. */
@@ -121,6 +127,23 @@ for (const size of MANIFEST_ICON_SIZES) {
 }
 
 writeFileSync(join(ROOT, 'shared/utils/brand-colors.generated.ts'), brandColorsTs(palette))
+
+writeFileSync(
+  join(ROOT, 'emails/theme.generated.css'),
+  emailThemeCss({ palette, fonts: inputs.fonts }),
+)
+
+// Gmail drops SVG, so the email header needs a raster; transparent so it sits
+// on the card rather than on a square of its own colour.
+await shoot(
+  page,
+  htmlPage(markSvg(inputs, palette['email-accent'], EMAIL_LOGO)),
+  EMAIL_LOGO,
+  EMAIL_LOGO,
+  'public/email-logo.png',
+  undefined,
+  true,
+)
 
 const fontsLoaded = await shoot(
   page,
@@ -384,6 +407,7 @@ async function shoot(
   height: number,
   target: string,
   fontCheck?: BrandInputs,
+  transparent = false,
 ): Promise<boolean> {
   await page.setViewportSize({ width, height })
   await page.setContent(html, { waitUntil: 'domcontentloaded' })
@@ -401,6 +425,6 @@ async function shoot(
       )
     : true
 
-  await page.screenshot({ path: join(ROOT, target), type: 'png' })
+  await page.screenshot({ path: join(ROOT, target), type: 'png', omitBackground: transparent })
   return loaded
 }

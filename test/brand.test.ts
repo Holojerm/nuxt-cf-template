@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { emailThemeCss } from '../scripts/brand-email'
 import {
   BRAND_ROLES,
   extractMark,
@@ -112,6 +113,32 @@ ${BRAND_ROLES.map((role) => `| \`${role}\` | \`--color-clay-600\` | somewhere |`
 
   it('fails loudly when DESIGN.md has no Brand mark section at all', () => {
     expect(() => parseBrandRoles('## Color\n')).toThrow(/Brand mark/)
+  })
+})
+
+describe('emailThemeCss', () => {
+  const palette = Object.fromEntries(
+    BRAND_ROLES.map((role, i) => [role, `#00000${i % 10}`]),
+  ) as Record<(typeof BRAND_ROLES)[number], string>
+  const css = emailThemeCss({ palette, fonts: { sans: 'Inter', mono: 'JetBrains Mono' } })
+
+  it('turns every email role into a hex Tailwind color, and no other role', () => {
+    for (const name of ['page', 'card', 'rule', 'ink', 'copy', 'muted', 'accent', 'on-accent']) {
+      expect(css).toMatch(new RegExp(`--color-${name}: #[0-9a-f]{6};`))
+    }
+    for (const name of ['bad', 'warn', 'good']) expect(css).toContain(`--color-${name}:`)
+    expect(css).not.toContain('og-')
+    expect(css).not.toContain('var(')
+  })
+
+  it('leads each font stack with the brand family and ends it in names a mail client resolves', () => {
+    expect(css).toContain(`--font-sans: 'Inter', -apple-system`)
+    expect(css).toContain(`--font-mono: 'JetBrains Mono', ui-monospace`)
+    expect(css).not.toContain('system-ui')
+  })
+
+  it('imports the email Tailwind preset it themes', () => {
+    expect(css).toContain(`@import '@maizzle/tailwindcss';`)
   })
 })
 

@@ -16,6 +16,11 @@
     ".github/**",
     "docs/**",
     "server/db/migrations/**",
+    "server/emails/generated.ts",
+    "emails/theme.generated.css",
+    "emails/.maizzle/**",
+    "emails/**/*.vue",
+    ".email-preview/**",
     "**/*.md",
     "**/*.json"
   ]
