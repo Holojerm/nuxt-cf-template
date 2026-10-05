@@ -738,8 +738,8 @@ itself — and this template makes it do so.
   matched no account). It never throws and truncates `detail` to 500 characters — an alerting
   failure must not become the user's problem, and a stack trace is not an email.
 - **The digest.** [`server/tasks/ops/alert.ts`](./server/tasks/ops/alert.ts) runs every 30
-  minutes, groups what is pending by `kind` (loudest first, three examples each), emails one
-  message through the `[[send_email]] ALERT_EMAIL` binding, marks the rows notified, and prunes
+  minutes, groups what is pending by `kind` (loudest first, five examples each), emails one
+  HTML + plain-text message (rendered from `emails/templates/ops-digest.*`) through the `[[send_email]] ALERT_EMAIL` binding, marks the rows notified, and prunes
   anything older than 7 days. Rows are marked **only after the send resolves**: a failed send
   leaves them pending and the next tick retries. Silence is the healthy state — an empty spool
   costs one indexed `SELECT` and one `DELETE` per tick.
