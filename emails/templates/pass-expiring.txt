@@ -1,0 +1,12 @@
+Your access runs until {{date}}
+
+Hi {{name}} — your {{appName}} pass ends on {{date}}. It won't renew, and you won't be charged.
+
+If you want to keep going, you can buy another pass or turn on monthly renewal from your account. If not, there's nothing to do — your account and work stay here either way.
+
+Manage access: {{appUrl}}/account
+
+—
+You're receiving this because your pass is ending. It's sent once per pass.
+
+{{appUrl}}

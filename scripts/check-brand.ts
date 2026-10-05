@@ -1,7 +1,7 @@
 // Brand asset gate — run with `bun run brand:check`, wired into `bun run ci`.
 //
-// The six files GENERATED_ASSETS lists (five in public/, plus
-// shared/utils/brand-colors.generated.ts) are compiled output, and compiled
+// The files GENERATED_ASSETS lists (the icons, the share image and the email logo
+// in public/, plus the color modules for the manifest and for email) are compiled output, and compiled
 // output that nothing verifies goes stale silently. Nothing throws when a
 // favicon is a redesign behind the app, or when og.png still says "My App"
 // three weeks after `bun run rename` — the site builds, the pages render, and

@@ -16,8 +16,8 @@ export interface BrandMark {
 }
 
 /**
- * Colour roles the raster assets — and the web manifest, which has the same
- * problem a PNG does — need, in the order they appear in DESIGN.md › Brand
+ * Colour roles the raster assets — and the web manifest and the email theme,
+ * which have the same problem a PNG does — need, in the order they appear in DESIGN.md › Brand
  * mark. Every one resolves to a concrete ramp token: a PNG (or a JSON file
  * with a `theme_color` key) has no color mode, so `--ui-primary` (which flips
  * between light and dark) cannot be the answer for a file that has to pick one.
@@ -31,6 +31,18 @@ export const BRAND_ROLES = [
   'og-muted',
   'manifest-theme',
   'manifest-ground',
+  // Email has no color mode and no CSS variables either — scripts/brand-email.ts.
+  'email-page',
+  'email-card',
+  'email-rule',
+  'email-ink',
+  'email-body',
+  'email-muted',
+  'email-accent',
+  'email-on-accent',
+  'email-bad',
+  'email-warn',
+  'email-good',
 ] as const
 
 export type BrandRole = (typeof BRAND_ROLES)[number]

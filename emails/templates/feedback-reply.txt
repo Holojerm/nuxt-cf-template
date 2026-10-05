@@ -1,0 +1,12 @@
+Re: your feedback
+
+{{reply}}
+
+—
+
+You wrote: "{{quoted}}"
+
+—
+You're receiving this because you sent feedback through {{appName}}. Replying to this email reaches a person.
+
+{{appUrl}}

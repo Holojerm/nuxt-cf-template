@@ -66,6 +66,11 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # Workers Builds runs `bun run ci` — email:check included — on Linux, and
+      # the committed emails are compiled on whatever machine ran email:build.
+      # This is where a PR proves the two agree before a fork's deploy finds out.
+      - run: bun run email:check
+
       # Succeeds here because the runner is root-capable. This is the exact
       # command that fails on Workers Builds.
       - run: bun run playwright:install

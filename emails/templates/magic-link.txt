@@ -1,0 +1,12 @@
+Sign in to {{appName}}
+
+This link works once and expires in {{expiresMinutes}} minutes.
+
+Or paste this into your browser: {{url}}
+
+Sign in: {{url}}
+
+—
+If you didn't ask to sign in, you can ignore this email — nothing happens until the link is opened, and no account is created by this message.
+
+{{appUrl}}

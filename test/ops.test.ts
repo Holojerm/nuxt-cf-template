@@ -24,6 +24,12 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const NOW = new Date('2026-08-21T12:00:00.000Z')
 const OPTIONS = { appName: 'My App', workerName: 'my-app', now: NOW }
 
+/**
+ * The HTML as a reader sees it: line wraps (the minifier keeps lines under 500
+ * characters for SMTP) folded to single spaces, and Mustache's `/` entity undone.
+ */
+const readable = (html: string) => html.replace(/\s+/g, ' ')
+
 /** Collects digests instead of mailing them. */
 function collector() {
   const sent: OpsDigest[] = []
@@ -80,7 +86,7 @@ describe('buildOpsDigest', () => {
     const digest = buildOpsDigest(rows, OPTIONS)!
     expect(digest.text).toContain('Server error (server_error) ×10')
     expect(digest.text).toContain('…and 5 more')
-    expect(digest.html).toContain('…and 5 more')
+    expect(readable(digest.html)).toContain('…and 5 more')
     expect(digest.ids).toHaveLength(10)
   })
 
@@ -96,7 +102,7 @@ describe('buildOpsDigest', () => {
     await spool('server_error', 1)
     const rows = await db.select().from(schema.opsEvents)
     const linked = buildOpsDigest(rows, { ...OPTIONS, appUrl: 'https://app.example' })!
-    expect(linked.html).toContain('href="https://app.example/api/thing/0"')
+    expect(readable(linked.html)).toContain('href="https://app.example/api/thing/0"')
     expect(buildOpsDigest(rows, OPTIONS)!.html).not.toContain('href="/api')
   })
 
@@ -110,14 +116,33 @@ describe('buildOpsDigest', () => {
     const rows = await db.select().from(schema.opsEvents)
     const html = buildOpsDigest(rows, OPTIONS)!.html
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
-    expect(html).not.toContain('<img')
+    // The logo is an <img> too, so match the attacker's tag rather than any tag.
+    expect(html).not.toContain('<img src=x')
+  })
+
+  it('colours each kind by its tone: failures, recoveries and everything else differ', async () => {
+    const bar = async (kind: string) => {
+      await db.delete(schema.opsEvents)
+      await spool(kind, 1)
+      const rows = await db.select().from(schema.opsEvents)
+      return buildOpsDigest(rows, OPTIONS)!.html.match(
+        /<td style="width:3px;background-color:(#[0-9a-f]{6})/,
+      )?.[1]
+    }
+    const [bad, good, warn] = [
+      await bar('server_error'),
+      await bar('cron_recovered'),
+      await bar('something_odd'),
+    ]
+    expect(bad).toBeDefined()
+    expect(new Set([bad, good, warn]).size).toBe(3)
   })
 
   it('links to the Worker’s logs when it knows the Worker, and not otherwise', async () => {
     await spool('server_error', 1)
     const rows = await db.select().from(schema.opsEvents)
     const digest = buildOpsDigest(rows, OPTIONS)!
-    for (const body of [digest.text, digest.html]) {
+    for (const body of [digest.text, readable(digest.html)]) {
       expect(body).toContain('/workers/services/view/my-app/production/observability')
     }
     const bare = buildOpsDigest(rows, { appName: 'My App', now: NOW })!

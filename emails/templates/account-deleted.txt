@@ -1,0 +1,9 @@
+Your account has been deleted
+
+Hi {{name}} — this confirms your {{appName}} account and everything in it has been deleted, as you asked.
+
+Billing records are kept for as long as tax law requires — that's the only thing this doesn't touch, and it's described in our privacy policy.
+
+If you didn't request this, reply to this email right away.
+
+{{appUrl}}

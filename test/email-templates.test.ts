@@ -106,7 +106,8 @@ describe('feedbackReplyEmail', () => {
       reply: 'Thanks!',
       originalMessage: '<img src=x onerror="alert(1)">',
     })
-    expect(email.html).not.toContain('<img')
+    // Every email carries the logo as an <img>, so match the attacker's tag.
+    expect(email.html).not.toContain('<img src=x')
     expect(email.html).toContain('&lt;img')
   })
 
@@ -115,8 +116,8 @@ describe('feedbackReplyEmail', () => {
       reply: 'Noted.',
       originalMessage: 'x'.repeat(2000),
     })
-    expect(email.html).toContain('\u2026')
-    expect(email.html.length).toBeLessThan(4000)
+    expect(email.html).toContain(`${'x'.repeat(600)}\u2026`)
+    expect(email.html).not.toContain('x'.repeat(601))
   })
 
   it('ships a plain-text alternative', () => {

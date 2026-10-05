@@ -7,6 +7,12 @@
 !.env.example
 dist
 
+# Maizzle dev server (`bun run email:dev`) writes component typings here
+emails/.maizzle
+
+# `bun run email:preview` default output
+.email-preview
+
 # Node
 node_modules
 

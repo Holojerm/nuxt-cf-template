@@ -3,13 +3,10 @@
 // they are the one class of mail that is *load-bearing*: a welcome email that
 // bounces is a missed hello, a sign-in link that bounces is a locked door.
 //
-// It renders through the shared `emailLayout()` rather than a copy of it. The
-// copy was justified while another wave held that file open; it is not
-// justified by anything now, and three literal copies of the palette is three
-// places a rebrand goes wrong. See email-templates.ts for why the markup looks
-// like 2004, and note that DESIGN.md's token layer does not reach here — there
-// is no CSS cascade in an email to hang tokens on, and design:check only scans
-// app/.
+// The wording is emails/templates/magic-link.vue and its .txt sibling, compiled
+// like every other email. Email markup is the one place DESIGN.md's token layer
+// cannot reach directly — there is no CSS cascade in an email to hang tokens
+// on — so the palette is generated from it: see .claude/docs/email.md.
 //
 // ── What stays deliberate about this one ─────────────────────────────────────
 // A sign-in link is the message most likely to be filtered (transactional,
@@ -21,7 +18,7 @@
 // and greeting a stranger by a guessed name would be both wrong and a hint
 // about who is registered.
 
-import { emailLayout, type Branding, type EmailContent } from './email-templates'
+import { composeEmail, type Branding, type EmailContent } from './email-templates'
 
 /**
  * What this email is, in the taxonomy of shared/utils/notifications.ts.
@@ -69,17 +66,8 @@ export interface MagicLinkEmailOptions {
  *      support ticket.
  */
 export function magicLinkEmail(brand: Branding, opts: MagicLinkEmailOptions): EmailContent {
-  const heading = `Sign in to ${brand.appName}`
-  const body = emailLayout(brand.appName, brand.appUrl, {
-    heading,
-    paragraphs: [
-      `This link works once and expires in ${opts.expiresMinutes} minutes.`,
-      // The URL in full, because a gateway that rewrites the button's href
-      // still leaves this readable, and a plain-text client shows only this.
-      `Or paste this into your browser: ${opts.url}`,
-    ],
-    action: { label: 'Sign in', url: opts.url },
-    footnote: `If you didn't ask to sign in, you can ignore this email — nothing happens until the link is opened, and no account is created by this message.`,
+  return composeEmail('magic-link', `Sign in to ${brand.appName}`, brand, {
+    url: opts.url,
+    expiresMinutes: opts.expiresMinutes,
   })
-  return { subject: heading, ...body }
 }

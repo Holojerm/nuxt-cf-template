@@ -129,11 +129,19 @@ asserts the header, so a stale entry there is a silently over-permissive policy.
 as a subprocessor. Leaving that in is a factual misstatement in a legal document —
 it is not cosmetic. [`app/utils/changelog.ts`](app/utils/changelog.ts) mentions it too.
 
-**11. Delete emails that no longer have a trigger** — receipt, payment-failed, and
-access-ended templates in [`server/utils/email-templates.ts`](server/utils/email-templates.ts),
-and their entries in the notification taxonomy in
-[`shared/utils/notifications.ts`](shared/utils/notifications.ts). Keep `security.*`
+**11. Delete emails that no longer have a trigger** — the receipt, payment-failed, and
+access-ended functions in [`server/utils/email-templates.ts`](server/utils/email-templates.ts),
+their `emails/templates/` files (`purchase`, `payment-failed`, `access-ended`, each a `.vue` and
+a `.txt`) and their `emails/samples.ts` entries, then `bun run email:build` and fix the
+`ACTION_URL` table in `test/emails.test.ts`. Delete their entries in the notification
+taxonomy in [`shared/utils/notifications.ts`](shared/utils/notifications.ts). Keep `security.*`
 and the welcome mail.
+
+The same applies to tearing out *all* transactional email: delete the template files you no
+longer send and rebuild. **Keep** `server/utils/render-email.ts`, `emails/components/`,
+`emails/theme.generated.css`, `server/emails/generated.ts` and `emails/templates/ops-digest.*` — the
+ops alert digest ([`server/utils/ops-digest.ts`](server/utils/ops-digest.ts)) renders through
+them, and it imports nothing else from the email stack.
 
 ---
 

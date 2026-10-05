@@ -31,6 +31,8 @@ export const GENERATED_ASSETS = [
   'public/icon-512.png',
   'public/og.png',
   'shared/utils/brand-colors.generated.ts',
+  'public/email-logo.png',
+  'emails/theme.generated.css',
 ] as const
 
 /**
@@ -49,8 +51,11 @@ export const GENERATED_ASSETS = [
  * that had already generated icons under the old value needs this bump to
  * get flagged stale and re-render them — nothing in `fingerprintOf()` below
  * hashes MASKABLE_COVERAGE itself, only this string.
+ *
+ * Bumped to '4' when public/email-logo.png and emails/theme.generated.css
+ * joined the pipeline, and the `email-*` color roles with them.
  */
-export const GENERATOR_VERSION = '3'
+export const GENERATOR_VERSION = '4'
 
 export interface BrandColor {
   /** The `--color-*` token named in DESIGN.md › Brand mark. */

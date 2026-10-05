@@ -20,12 +20,7 @@ import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
 import type { OpsEvent } from '../db/schema'
 
-import {
-  groupOpsRows,
-  opsDigestSubject,
-  renderOpsDigestHtml,
-  renderOpsDigestText,
-} from './ops-digest'
+import { groupOpsRows, opsDigestSubject, renderOpsDigest } from './ops-digest'
 
 export type OpsDb = ReturnType<typeof drizzle<typeof tables>>
 
@@ -100,8 +95,7 @@ export function buildOpsDigest(rows: OpsEvent[], options: OpsDigestOptions): Ops
 
   return {
     subject: opsDigestSubject(options.appName, kinds),
-    html: renderOpsDigestHtml(kinds, rows.length, oldest, render),
-    text: renderOpsDigestText(kinds, rows.length, oldest, render),
+    ...renderOpsDigest(kinds, rows.length, oldest, render),
     ids: rows.map((r) => r.id),
   }
 }

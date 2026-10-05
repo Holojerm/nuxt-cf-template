@@ -1,0 +1,17 @@
+Your access has ended
+
+Hi {{name}} — {{#canceled}}Your subscription has been canceled and your access has ended.{{/canceled}}{{#refunded}}Your payment was refunded, so the access it paid for has ended.{{/refunded}}{{#chargeback}}A chargeback was filed on this payment, so access has been suspended while it's resolved.{{/chargeback}}{{#compRevoked}}The complimentary access on your account has ended.{{/compRevoked}}
+
+Your account and data are still here. Subscribing again turns everything back on where you left it.
+
+See plans: {{appUrl}}/pricing
+
+—
+{{#chargeback}}
+If you didn't file this chargeback, reply to this email and we'll sort it out.
+{{/chargeback}}
+{{^chargeback}}
+If this was a mistake, reply to this email and we'll help.
+{{/chargeback}}
+
+{{appUrl}}

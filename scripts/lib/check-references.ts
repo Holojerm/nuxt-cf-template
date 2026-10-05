@@ -63,7 +63,7 @@ export interface Reference {
   token: string
 }
 
-const SOURCE_DIRS = ['app', 'server', 'shared', 'scripts', 'test']
+const SOURCE_DIRS = ['app', 'server', 'shared', 'scripts', 'test', 'emails']
 const DOC_DIRS = ['.claude/docs', '.claude/commands', '.claude/routines']
 const DOC_FILES = ['AGENTS.md', 'TEARDOWN.md', 'DESIGN.md', 'README.md']
 const CORPUS_EXTRA = [

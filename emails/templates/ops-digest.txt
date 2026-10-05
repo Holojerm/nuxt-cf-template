@@ -1,0 +1,21 @@
+{{! html-only: bad, warn, good, pathUrl }}
+{{summary}}.
+
+{{#kinds}}
+{{label}} ({{kind}}) ×{{count}}
+{{#rows}}
+  • {{time}}{{#path}}  {{path}}{{/path}}
+{{#detail}}
+    {{detail}}
+{{/detail}}
+{{/rows}}
+{{#more}}
+  …and {{more}} more
+{{/more}}
+
+{{/kinds}}
+{{#logsUrl}}
+Logs: {{logsUrl}}
+{{/logsUrl}}
+Runbook: README.md › Ops alerting
+Generated {{generated}}
