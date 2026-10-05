@@ -28,7 +28,7 @@ const OPTIONS = { appName: 'My App', workerName: 'my-app', now: NOW }
  * The HTML as a reader sees it: line wraps (the minifier keeps lines under 500
  * characters for SMTP) folded to single spaces, and Mustache's `/` entity undone.
  */
-const readable = (html: string) => html.replace(/\s+/g, ' ').replaceAll('&#x2F;', '/')
+const readable = (html: string) => html.replace(/\s+/g, ' ')
 
 /** Collects digests instead of mailing them. */
 function collector() {
@@ -115,7 +115,7 @@ describe('buildOpsDigest', () => {
     })
     const rows = await db.select().from(schema.opsEvents)
     const html = buildOpsDigest(rows, OPTIONS)!.html
-    expect(html).toContain('&lt;img src&#x3D;x onerror&#x3D;alert(1)&gt;')
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
     // The logo is an <img> too, so match the attacker's tag rather than any tag.
     expect(html).not.toContain('<img src=x')
   })

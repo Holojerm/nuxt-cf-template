@@ -6,9 +6,10 @@
     <EmailParagraph>
       This link works once and expires in <Raw>{{expiresMinutes}}</Raw> minutes.
     </EmailParagraph>
-    <EmailParagraph>Or paste this into your browser: <Raw>{{url}}</Raw></EmailParagraph>
     <EmailButton href="{{url}}">Sign in</EmailButton>
     <template #footnote>
+      Button not working? Paste this into your browser: <Raw>{{url}}</Raw>
+      <br /><br />
       If you didn't ask to sign in, you can ignore this email — nothing happens until the link is
       opened, and no account is created by this message.
     </template>

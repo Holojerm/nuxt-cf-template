@@ -28,9 +28,6 @@ const ACTION_URL: Record<EmailName, (data: Record<string, unknown>) => string> =
   welcome: (d) => `${d.appUrl}`,
 }
 
-/** The HTML as a client sees it: Mustache's `/` and `=` entities undone. */
-const readable = (html: string) => html.replaceAll('&#x2F;', '/').replaceAll('&#x3D;', '=')
-
 /** Every string in a sample replaced by markup that would break out of its context. */
 function hostile(value: unknown): unknown {
   if (typeof value === 'string') return '"><b id=pwn onmouseover=alert(1)>'
@@ -62,14 +59,14 @@ describe.each(NAMES)('%s', (name) => {
   })
 
   it('links the logo from the app origin, with the app name as its alt text', () => {
-    expect(readable(html)).toContain(`src="${data.appUrl}/email-logo.png"`)
+    expect(html).toContain(`src="${data.appUrl}/email-logo.png"`)
     expect(html).toContain(`alt="${data.appName}"`)
   })
 
   it('ships a plain-text alternative with the action URL in it', () => {
     expect(text.trim().length).toBeGreaterThan(40)
     expect(text).toContain(ACTION_URL[name](data))
-    expect(readable(html)).toContain(ACTION_URL[name](data))
+    expect(html).toContain(ACTION_URL[name](data))
   })
 
   it('keeps the plain text plain — no markup, entities or stray whitespace', () => {
@@ -82,9 +79,10 @@ describe.each(NAMES)('%s', (name) => {
   it('escapes whatever data it is handed', () => {
     const attack = renderEmail(name, hostile(data) as Record<string, unknown>)
     expect(attack.html).not.toContain('<b id=pwn')
-    expect(attack.html).not.toContain('onmouseover=alert')
+    // The payload's text survives as inert text; what must never survive is a
+    // raw quote that would end the attribute it sits in.
     expect(attack.html).not.toMatch(/"\s*onmouseover/)
-    expect(attack.html).toContain('&lt;b id&#x3D;pwn')
+    expect(attack.html).toContain('&lt;b id=pwn')
   })
 })
 

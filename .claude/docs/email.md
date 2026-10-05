@@ -54,12 +54,11 @@ only the HTML needs — a tone flag, a link target — is declared in the `.txt`
 
 - **`{{name}}` escapes, `{{{name}}}` does not.** Mustache never sees an untrusted *template* —
   they are ours, compiled in CI. It only sees untrusted *data* (an OAuth display name, a feedback
-  message, an error string), and the escaping is what makes that safe. Mustache's default escape
-  also encodes `/` and `=`, so a URL in the HTML reads `https:&#x2F;&#x2F;…` — correct, every
-  client decodes it; tests compare through a `readable()` helper.
+  message, an error string), and the escaping is what makes that safe. `renderEmail` escapes
+  only `& < > " '` — Mustache's stock escape also encodes `/` and `=`, which mangles every href.
 - **Triple braces only for markup this code built itself**, never a value that began outside
   it, and each use needs a comment naming where the value comes from. There are none today.
-- **Text renders with escaping off** — there is no markup to break out of, and `&#x2F;` in a
+- **Text renders with escaping off** — there is no markup to break out of, and `&amp;` in a
   plain-text inbox is a bug.
 - **Wrap every tag in `<Raw>` in templates** — `Hi <Raw>{{name}}</Raw>` — or Vue evaluates it and
   renders it blank (the build fails on the warning). Tags inside an *attribute*

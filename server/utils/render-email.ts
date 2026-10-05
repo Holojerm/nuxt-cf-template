@@ -16,8 +16,13 @@
 //                value that began life outside it. Each use needs a comment
 //                saying where the value comes from. Today there are none.
 //
+// Mustache's stock escape also encodes `/`, `=` and backticks, which turns every
+// href into `https:&#x2F;&#x2F;…` — valid, but unreadable in source and a flag
+// for some link scanners. The five characters below are all an HTML text node or
+// a double-quoted attribute needs.
+//
 // Text is the opposite problem: there is no markup to break out of, and
-// escaping would print `&#x2F;` into someone's plain-text inbox. So it renders
+// escaping would print `&amp;` into someone's plain-text inbox. So it renders
 // with escaping off.
 //
 // This file is imported by ops-digest.ts as well as the transactional emails.
@@ -40,10 +45,20 @@ export interface RenderedEmail {
 
 const asIs = (value: unknown): string => String(value)
 
+const HTML_ESCAPES: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+}
+const escapeHtml = (value: unknown): string =>
+  String(value).replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]!)
+
 export function renderEmail(name: EmailName, data: EmailData): RenderedEmail {
   const email = EMAILS[name]
   return {
-    html: Mustache.render(email.html, data),
+    html: Mustache.render(email.html, data, undefined, { escape: escapeHtml }),
     text: Mustache.render(email.text, data, undefined, { escape: asIs }),
   }
 }
