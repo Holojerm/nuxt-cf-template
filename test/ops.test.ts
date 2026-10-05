@@ -56,16 +56,10 @@ describe('buildOpsDigest', () => {
     expect(buildOpsDigest([], OPTIONS)).toBeNull()
   })
 
-  it('names the app, the single kind and the count in the subject', async () => {
-    await spool('server_error', 1)
-    const rows = await db.select().from(schema.opsEvents)
-    expect(buildOpsDigest(rows, OPTIONS)!.subject).toBe('My App: 1 server_error')
-  })
-
-  it('pluralizes', async () => {
+  it('names the app, the kind in words and the count in the subject', async () => {
     await spool('server_error', 3)
     const rows = await db.select().from(schema.opsEvents)
-    expect(buildOpsDigest(rows, OPTIONS)!.subject).toBe('My App: 3 server_errors')
+    expect(buildOpsDigest(rows, OPTIONS)!.subject).toBe('My App alert · Server error ×3')
   })
 
   it('leads with the loudest kind when several are mixed', async () => {
@@ -73,29 +67,62 @@ describe('buildOpsDigest', () => {
     await spool('server_error', 2)
     const rows = await db.select().from(schema.opsEvents)
     const digest = buildOpsDigest(rows, OPTIONS)!
-    expect(digest.subject).toBe('My App: 7 events across 2 kinds (paddle_webhook_rejected loudest)')
-    // Loudest kind's section comes first in the body too.
-    expect(digest.text.indexOf('paddle_webhook_rejected —')).toBeLessThan(
-      digest.text.indexOf('server_error —'),
-    )
+    expect(digest.subject).toBe('My App alert · Paddle webhook rejected ×5 + 2 more')
+    // Loudest kind's section comes first in both bodies.
+    for (const body of [digest.text, digest.html]) {
+      expect(body.indexOf('Paddle webhook rejected')).toBeLessThan(body.indexOf('Server error'))
+    }
   })
 
-  it('samples three examples per kind and counts the rest', async () => {
+  it('samples five examples per kind and counts the rest', async () => {
     await spool('server_error', 10)
     const rows = await db.select().from(schema.opsEvents)
     const digest = buildOpsDigest(rows, OPTIONS)!
-    expect(digest.text).toContain('server_error — 10')
-    expect(digest.text).toContain('…and 7 more')
+    expect(digest.text).toContain('Server error (server_error) ×10')
+    expect(digest.text).toContain('…and 5 more')
+    expect(digest.html).toContain('…and 5 more')
     expect(digest.ids).toHaveLength(10)
+  })
+
+  it('reads times as dates in UTC, not ISO strings', async () => {
+    await spool('server_error', 1)
+    const rows = await db.select().from(schema.opsEvents)
+    const digest = buildOpsDigest(rows, OPTIONS)!
+    expect(digest.text).toContain('Aug 21, 12:00 UTC')
+    expect(digest.text).not.toContain('2026-08-21T')
+  })
+
+  it('links each path to the app when it knows the origin', async () => {
+    await spool('server_error', 1)
+    const rows = await db.select().from(schema.opsEvents)
+    const linked = buildOpsDigest(rows, { ...OPTIONS, appUrl: 'https://app.example' })!
+    expect(linked.html).toContain('href="https://app.example/api/thing/0"')
+    expect(buildOpsDigest(rows, OPTIONS)!.html).not.toContain('href="/api')
+  })
+
+  it('escapes event details in the HTML — they carry error messages', async () => {
+    await db.insert(schema.opsEvents).values({
+      kind: 'server_error',
+      detail: '<img src=x onerror=alert(1)>',
+      createdAt: NOW,
+      updatedAt: NOW,
+    })
+    const rows = await db.select().from(schema.opsEvents)
+    const html = buildOpsDigest(rows, OPTIONS)!.html
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+    expect(html).not.toContain('<img')
   })
 
   it('links to the Worker’s logs when it knows the Worker, and not otherwise', async () => {
     await spool('server_error', 1)
     const rows = await db.select().from(schema.opsEvents)
-    expect(buildOpsDigest(rows, OPTIONS)!.text).toContain(
-      '/workers/services/view/my-app/production/observability',
-    )
-    expect(buildOpsDigest(rows, { appName: 'My App', now: NOW })!.text).not.toContain('Logs:')
+    const digest = buildOpsDigest(rows, OPTIONS)!
+    for (const body of [digest.text, digest.html]) {
+      expect(body).toContain('/workers/services/view/my-app/production/observability')
+    }
+    const bare = buildOpsDigest(rows, { appName: 'My App', now: NOW })!
+    expect(bare.text).not.toContain('Logs:')
+    expect(bare.html).not.toContain('Open logs')
   })
 })
 

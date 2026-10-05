@@ -18,7 +18,13 @@ import type { OpsDigest, OpsMailer } from './ops'
 
 /** The `send_email` binding's shape — only the call we make. */
 interface SendEmailBinding {
-  send(message: { to: string; from: string; subject: string; text: string }): Promise<unknown>
+  send(message: {
+    to: string
+    from: { name: string; email: string }
+    subject: string
+    html: string
+    text: string
+  }): Promise<unknown>
 }
 
 /**
@@ -34,7 +40,15 @@ export function getOpsMailer(env: Record<string, unknown> | undefined): OpsMaile
 
   if (!to || !from || !binding) return null
 
+  // A display name so the inbox shows "My App alerts", not a bare address.
+  const sender = { name: `${config.public.appName} alerts`, email: from }
   return async (digest: OpsDigest) => {
-    await binding.send({ to, from, subject: digest.subject, text: digest.text })
+    await binding.send({
+      to,
+      from: sender,
+      subject: digest.subject,
+      html: digest.html,
+      text: digest.text,
+    })
   }
 }
