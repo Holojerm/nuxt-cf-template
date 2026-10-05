@@ -108,6 +108,13 @@ the transactional stack except `render-email.ts` — forks that tore out transac
 
 ---
 
+### In a repo with bun workspaces
+
+A root with `workspaces` (a `game/` or `mcp/` package, say) makes bun install packages in an
+isolated layout, and `email:build` then cannot resolve Maizzle's own `@maizzle/tailwindcss`
+from `emails/`. Add `@maizzle/tailwindcss` as a direct devDependency of the root. woolholm
+hit this on its first sync.
+
 ## Transactional Email
 
 The functions that build each email are in `server/utils/email-templates.ts`, except the
