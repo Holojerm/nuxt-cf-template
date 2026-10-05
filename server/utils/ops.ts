@@ -20,6 +20,13 @@ import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
 import type { OpsEvent } from '../db/schema'
 
+import {
+  groupOpsRows,
+  opsDigestSubject,
+  renderOpsDigestHtml,
+  renderOpsDigestText,
+} from './ops-digest'
+
 export type OpsDb = ReturnType<typeof drizzle<typeof tables>>
 
 /** How long drained rows stick around before the cron prunes them. */
@@ -65,6 +72,8 @@ export async function recordOpsEvent(db: OpsDb, input: OpsEventInput): Promise<v
 export interface OpsDigestOptions {
   /** Leads the subject line — the product's display name. */
   appName: string
+  /** The app's public origin; turns each event's path into a link. */
+  appUrl?: string
   /** The app Worker's name, for the Observability deep link. Omit to skip the link. */
   workerName?: string
   now?: Date
@@ -72,66 +81,29 @@ export interface OpsDigestOptions {
 
 export interface OpsDigest {
   subject: string
+  html: string
   text: string
   /** Rows this digest accounts for — the ones to mark notified. */
   ids: string[]
 }
 
-function pluralize(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`
-}
-
 /**
  * Turn spooled rows into an email. Pure — no db, no network — so the wording
- * and the grouping are testable without a transport.
+ * and the grouping are testable without a transport. The wording itself lives
+ * in server/utils/ops-digest.ts.
  */
 export function buildOpsDigest(rows: OpsEvent[], options: OpsDigestOptions): OpsDigest | null {
   if (rows.length === 0) return null
-  const now = options.now ?? new Date()
-
-  const byKind = new Map<string, OpsEvent[]>()
-  for (const row of rows) {
-    const bucket = byKind.get(row.kind)
-    if (bucket) bucket.push(row)
-    else byKind.set(row.kind, [row])
-  }
-
-  // Loudest kind first — that's the headline.
-  const kinds = [...byKind.entries()].sort((a, b) => b[1].length - a[1].length)
-  const [topKind, topRows] = kinds[0]!
-
-  const subject =
-    kinds.length === 1
-      ? `${options.appName}: ${pluralize(topRows.length, topKind)}`
-      : `${options.appName}: ${pluralize(rows.length, 'event')} across ${kinds.length} kinds (${topKind} loudest)`
-
+  const render = { ...options, now: options.now ?? new Date() }
+  const kinds = groupOpsRows(rows)
   const oldest = rows.reduce((a, b) => (a.createdAt < b.createdAt ? a : b)).createdAt
 
-  const lines: string[] = [
-    `${rows.length} unreported event${rows.length === 1 ? '' : 's'} since ${oldest.toISOString()}.`,
-    '',
-  ]
-
-  for (const [kind, kindRows] of kinds) {
-    lines.push(`${kind} — ${kindRows.length}`)
-    // Three examples is enough to tell "one broken route" from "everything".
-    for (const row of kindRows.slice(0, 3)) {
-      const where = row.path ? ` ${row.path}` : ''
-      const what = row.detail ? ` — ${row.detail}` : ''
-      lines.push(`  ${row.createdAt.toISOString()}${where}${what}`)
-    }
-    if (kindRows.length > 3) lines.push(`  …and ${kindRows.length - 3} more`)
-    lines.push('')
+  return {
+    subject: opsDigestSubject(options.appName, kinds),
+    html: renderOpsDigestHtml(kinds, rows.length, oldest, render),
+    text: renderOpsDigestText(kinds, rows.length, oldest, render),
+    ids: rows.map((r) => r.id),
   }
-
-  if (options.workerName) {
-    lines.push(
-      `Logs: https://dash.cloudflare.com/?to=/:account/workers/services/view/${options.workerName}/production/observability`,
-    )
-  }
-  lines.push('Runbook: README.md › Ops alerting', `Generated ${now.toISOString()}`)
-
-  return { subject, text: lines.join('\n'), ids: rows.map((r) => r.id) }
 }
 
 /** Transport for the digest. Injected so tests never touch the mail binding. */

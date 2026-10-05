@@ -40,8 +40,10 @@ export default defineTask({
       return { result: { skipped: 'unconfigured' } }
     }
 
+    const { appName, appUrl } = useRuntimeConfig().public
     const outcome = await drainOpsEvents(db, mailer, {
-      appName: useRuntimeConfig().public.appName,
+      appName,
+      appUrl: appUrl || undefined,
       workerName: manifest.workers[0],
     })
     // Quiet ticks stay quiet — only say something when something happened.
