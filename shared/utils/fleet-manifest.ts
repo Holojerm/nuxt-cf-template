@@ -146,6 +146,12 @@ export const FleetManifestSchema = z.strictObject({
      * the API can see.
      */
     syncedSha: gitSha.nullable(),
+    /**
+     * Template files this fork changed on purpose (repo-relative paths). The
+     * dashboard's seam-drift check skips these, so what it reports is drift
+     * nobody has decided about — usually a sync that will conflict.
+     */
+    customized: z.array(z.string().regex(/^[^/]/, 'a repo-relative path')).default([]),
   }),
 
   /** Which optional template modules this app kept. Decides which counters exist. */
