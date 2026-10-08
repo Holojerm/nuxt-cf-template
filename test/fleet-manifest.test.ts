@@ -48,6 +48,15 @@ describe('FleetManifestSchema', () => {
     const parsed = FleetManifestSchema.parse(valid)
     expect(parsed.links).toEqual({})
     expect(parsed.template.syncedSha).toBe('d0b2f48')
+    expect(parsed.template.customized).toEqual([])
+  })
+
+  it('accepts declared template customizations', () => {
+    const parsed = FleetManifestSchema.parse({
+      ...valid,
+      template: { ...valid.template, customized: ['nuxt.config.ts'] },
+    })
+    expect(parsed.template.customized).toEqual(['nuxt.config.ts'])
   })
 
   it('defaults the lists a minimal manifest leaves out', () => {
