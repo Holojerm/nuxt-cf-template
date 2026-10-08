@@ -135,24 +135,27 @@ export const FleetManifestSchema = z.strictObject({
 
   deploy: z.enum(FLEET_DEPLOY_MECHANISMS),
 
-  template: z.strictObject({
-    /** `owner/repo` of the template this app was forked from. */
-    repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/, 'owner/repo'),
-    /**
-     * The template commit this app was last synced to. Written by the
-     * /sync-forks command; null until the first sync. "How far behind the
-     * template is this fork" is computed from here, because the forks are
-     * plain copies rather than GitHub forks and have no other shared ancestor
-     * the API can see.
-     */
-    syncedSha: gitSha.nullable(),
-    /**
-     * Template files this fork changed on purpose (repo-relative paths). The
-     * dashboard's seam-drift check skips these, so what it reports is drift
-     * nobody has decided about — usually a sync that will conflict.
-     */
-    customized: z.array(z.string().regex(/^[^/]/, 'a repo-relative path')).default([]),
-  }),
+  /** Null for an app that was never cut from the template (a static site, a Hono API). */
+  template: z
+    .strictObject({
+      /** `owner/repo` of the template this app was forked from. */
+      repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/, 'owner/repo'),
+      /**
+       * The template commit this app was last synced to. Written by the
+       * /sync-forks command; null until the first sync. "How far behind the
+       * template is this fork" is computed from here, because the forks are
+       * plain copies rather than GitHub forks and have no other shared ancestor
+       * the API can see.
+       */
+      syncedSha: gitSha.nullable(),
+      /**
+       * Template files this fork changed on purpose (repo-relative paths). The
+       * dashboard's seam-drift check skips these, so what it reports is drift
+       * nobody has decided about — usually a sync that will conflict.
+       */
+      customized: z.array(z.string().regex(/^[^/]/, 'a repo-relative path')).default([]),
+    })
+    .nullable(),
 
   /** Which optional template modules this app kept. Decides which counters exist. */
   features: z.strictObject({

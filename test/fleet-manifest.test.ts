@@ -47,8 +47,8 @@ describe('FleetManifestSchema', () => {
   it('accepts a fully populated manifest and fills the optional lists', () => {
     const parsed = FleetManifestSchema.parse(valid)
     expect(parsed.links).toEqual({})
-    expect(parsed.template.syncedSha).toBe('d0b2f48')
-    expect(parsed.template.customized).toEqual([])
+    expect(parsed.template?.syncedSha).toBe('d0b2f48')
+    expect(parsed.template?.customized).toEqual([])
   })
 
   it('accepts declared template customizations', () => {
@@ -56,7 +56,11 @@ describe('FleetManifestSchema', () => {
       ...valid,
       template: { ...valid.template, customized: ['nuxt.config.ts'] },
     })
-    expect(parsed.template.customized).toEqual(['nuxt.config.ts'])
+    expect(parsed.template?.customized).toEqual(['nuxt.config.ts'])
+  })
+
+  it('accepts an app that is not a template fork', () => {
+    expect(FleetManifestSchema.parse({ ...valid, template: null }).template).toBeNull()
   })
 
   it('defaults the lists a minimal manifest leaves out', () => {
