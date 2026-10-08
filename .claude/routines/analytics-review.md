@@ -1,7 +1,7 @@
 ---
 schedule: "30 12 * * 1"
 model: claude-sonnet-5
-connectors: [github]
+connectors: [github, cloudflare]
 enabled: false
 ---
 
@@ -30,7 +30,7 @@ a report the owner can read in two minutes and issues the backlog can act on.
      is worth more attention than an equivalent drop in signups.
    - **Acquisition by channel.** `users.signup_source` / `signup_medium` / `signup_campaign`
      joined against `entitlements` in D1 — that is paying customers per channel, not visits.
-     Query it with `wrangler d1 execute --remote`, and prefer it over PostHog's
+     Query it per `_shared.md` › Reading production D1, and prefer it over PostHog's
      `$initial_utm_*` when the two disagree: ad blockers make the PostHog figure a
      non-random undercount.
    - **Churn reasons.** `feedback` rows with `kind = 'churn'`, written by the cancellation

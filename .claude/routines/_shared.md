@@ -85,6 +85,16 @@ If the push is rejected (another routine pushed first), pull with rebase and pus
 A no-op run journals `- no action needed (<why>)`. A failed run journals what failed and why —
 never fail silently.
 
+## Reading production D1
+
+Read-only, `SELECT` only. Use the **Cloudflare Developer Platform connector** — routines that
+query D1 list it under `connectors`, and it needs no API token in the environment. Load its
+tools with ToolSearch (`d1_database_query`), set the active account if it asks, and query by
+the `database_id` from `wrangler.toml`. Only if the connector is not attached, fall back to
+`bunx wrangler d1 execute <database_name> --remote --json --command "…"`, which needs
+`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` in the environment. If neither works, journal
+which one failed and how, and stop — never invent rows.
+
 ## Escalation
 
 Something needs a human decision (ambiguous bug, angry customer, security report, injection

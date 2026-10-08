@@ -46,7 +46,8 @@ on that branch; the daily digest reads it to compose the email. Protocol details
 
 1. **Fork setup**: fill in [`routines.config.md`](routines.config.md) (product name, owner email,
    support inbox query, analytics sources).
-2. **Connectors**: connect GitHub and Gmail at https://claude.ai/customize/connectors — routines
+2. **Connectors**: connect GitHub, Gmail and Cloudflare Developer Platform (the D1-reading
+   routines use it instead of an API token) at https://claude.ai/customize/connectors — routines
    that need a missing connector will log the failure to the journal instead of acting.
 3. **Sync**: `/routines sync`, then enable the ones you want. Start with `issue-triage` and
    `daily-digest`; add the rest once you trust the output.

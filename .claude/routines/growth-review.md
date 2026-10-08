@@ -1,7 +1,7 @@
 ---
 schedule: "30 13 * * 1"
 model: claude-opus-5-5
-connectors: [github]
+connectors: [github, cloudflare]
 enabled: false
 tier: 2
 ---
@@ -23,7 +23,7 @@ content. It is the one routine that turns numbers into changes; everything else 
    - This week's `ops/reports/` file from `analytics-review` on the `ops-journal` branch. If it
      hasn't landed, journal that and stop. Do not recompute its numbers.
    - The 28-day funnel from D1, with the same query `server/utils/fleet-funnel.ts` runs (signups
-     → activated → paid, top sources), via `wrangler d1 execute --remote`.
+     → activated → paid, top sources), read per `_shared.md` › Reading production D1.
    - Open and recently closed issues labelled `growth-bet`.
 2. **Judge last week's bets.** For each open `growth-bet` whose minimum run length has passed,
    compare the decision metric it declared *before* it ran. Write keep / kill / inconclusive in
