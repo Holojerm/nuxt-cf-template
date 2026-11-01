@@ -63,13 +63,22 @@ trigger deploys.
 **At the end of every run — even a no-op run — append a journal entry:**
 
 ```bash
-git fetch origin ops-journal 2>/dev/null && git checkout ops-journal \
-  || git checkout --orphan ops-journal && git rm -rf --quiet . 2>/dev/null || true
+# Run this verbatim. Do NOT collapse it into an `A && B || C && D` one-liner: shell
+# operators bind left to right, so the `git rm -rf` tail runs on the success path too
+# and deletes the journal you just checked out.
+if ! (git fetch origin ops-journal 2>/dev/null && git checkout ops-journal); then
+  git checkout --orphan ops-journal
+  git rm -rf --quiet .   # only reachable here: clears main's tree off the new branch
+fi
 mkdir -p journal
 # append your entry to journal/$(date -u +%F).md, then:
 git add journal && git commit -m "journal: <routine-name> $(date -u +%FT%H:%MZ)"
 git push origin ops-journal
 ```
+
+Before pushing, check that `git show --stat HEAD` reports insertions only. Deletions under
+`journal/` mean you clobbered history: restore the file from the parent commit
+(`git show HEAD^:journal/<file>`), re-append your entry, and commit the correction.
 
 If the push is rejected (another routine pushed first), pull with rebase and push again.
 
