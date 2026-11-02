@@ -17,8 +17,8 @@
 //
 //   1. The set of cron expressions in wrangler.toml equals the set of keys in
 //      nitro.scheduledTasks. Both directions.
-//   2. Every task name in that map has a file under server/tasks/ — Nitro
-//      resolves `ops:alert` to server/tasks/ops/alert.ts.
+//   2. Every task name in that map has a file under server/tasks/ (the app's
+//      or a layer's) — Nitro resolves `ops:alert` to server/tasks/ops/alert.ts.
 //   3. If any task is scheduled, `nitro.experimental.tasks` is on, or the
 //      preset's scheduled() handler never calls runCronTasks().
 //
@@ -29,7 +29,7 @@
 // scripts/lib/brace-match.ts; anything more dynamic than an object literal of
 // string arrays fails closed with a message saying so.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { findClosing, sliceBalanced } from './lib/brace-match'
@@ -187,12 +187,19 @@ for (const cron of onlyNitro) {
 
 // ── 2. every task has a file ────────────────────────────────────────────────
 
+// A task file may sit in the app or in any layer (layers/<name>/server/tasks).
+const LAYERS_DIR = join(ROOT, 'layers')
+const TASK_ROOTS = [
+  ROOT,
+  ...(existsSync(LAYERS_DIR) ? readdirSync(LAYERS_DIR) : []).map((n) => join(LAYERS_DIR, n)),
+]
+
 for (const name of taskNames) {
   const relativePath = `server/tasks/${name.split(':').join('/')}.ts`
-  if (!existsSync(join(ROOT, relativePath))) {
+  if (!TASK_ROOTS.some((root) => existsSync(join(root, relativePath)))) {
     report(
       'task has no file',
-      `"${name}" is scheduled but ${relativePath} does not exist`,
+      `"${name}" is scheduled but ${relativePath} does not exist in the app or any layer`,
       'Nitro resolves `a:b` to server/tasks/a/b.ts — create it, or fix the name',
     )
   }

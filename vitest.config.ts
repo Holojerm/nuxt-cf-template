@@ -40,6 +40,9 @@ export default defineConfig({
       // Nuxt's alias for the app's server/ dir. Layer code reaches core utils
       // through it, so it resolves against whichever app the layer is in.
       '#server': fileURLToPath(new URL('./server', import.meta.url)),
+      // Nuxt's `#layers/<name>` alias (from each layer's `$meta.name`), for
+      // tests and core code that import a layer's internals by path.
+      '#layers': fileURLToPath(new URL('./layers', import.meta.url)),
     },
   },
   test: {
