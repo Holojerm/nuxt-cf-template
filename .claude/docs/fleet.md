@@ -21,7 +21,9 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   on a bad one (`requireFleetToken()`). `/api/health` stays public for dumb
   uptime checks. Both are allowlisted in `server/middleware/auth.ts` because
   the session guard must not 401 them first. Add a fork-specific counter to `collectFleetCounters()`'s `extra`, not
-  a second endpoint.
+  a second endpoint. An optional feature's counter group (feedback's) is
+  contributed via `registerFleetCounterContributor()` in
+  `server/utils/extensions.ts`, and is absent when the feature is removed.
 - **The `product` block** in `fleet.json` names this product's north-star,
   activation and retention events, so the dashboard can chart any fork's
   funnel without knowing the product. Every name must be registered in

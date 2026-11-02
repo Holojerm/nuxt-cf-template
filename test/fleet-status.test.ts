@@ -10,6 +10,7 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
+import { registerFeedbackExtensions } from '../server/utils/feedback-extensions'
 import {
   collectFleetCounters,
   compareMigrations,
@@ -18,6 +19,10 @@ import {
 } from '../server/utils/fleet-status'
 
 const db = drizzle(env.DB, { schema })
+
+// The feedback feature's reads are contributed, not built in; register them as
+// server/plugins/feedback.ts does in the running app.
+registerFeedbackExtensions()
 
 const NOW = new Date('2026-08-22T12:00:00.000Z')
 const DAY_MS = 24 * 60 * 60 * 1000

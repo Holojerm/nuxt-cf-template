@@ -683,8 +683,8 @@ useSeo({
           </div>
         </UCard>
 
-        <!-- Feedback -->
-        <UCard>
+        <!-- Feedback — absent when the feedback feature isn't registered. -->
+        <UCard v-if="data.feedback">
           <template #header>
             <div class="flex items-center justify-between gap-3">
               <h2 class="text-xl text-highlighted">What they've told us</h2>

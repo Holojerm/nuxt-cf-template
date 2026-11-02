@@ -99,6 +99,17 @@ const users = await db.select().from(schema.users).where(eq(schema.users.role, '
 await db.run(sql`SELECT * FROM users`)
 ```
 
+### Optional features read through extension points
+
+Core code never queries a table that belongs to an optional feature. When account
+deletion/export, the admin one-customer view, `/api/fleet` counters or the onboarding
+checklist need a feature's data, the feature registers a contributor in
+`server/utils/extensions.ts` and core collects whatever is registered. Feedback is the
+worked example: `server/utils/feedback-extensions.ts` augments the section interfaces
+(so responses stay typed) and `server/plugins/feedback.ts` registers it. Tests call the
+same `register…()` function, because Nitro plugins don't run under vitest. Removing a
+feature removes its sections and nothing else; `test/extensions.test.ts` holds core to that.
+
 ---
 
 

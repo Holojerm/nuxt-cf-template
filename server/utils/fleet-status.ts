@@ -28,6 +28,8 @@ import type { drizzle } from 'drizzle-orm/d1'
 import journal from '../db/migrations/meta/_journal.json'
 import * as tables from '../db/schema'
 import { collectFleetFunnel, type FleetFunnel } from './fleet-funnel'
+import { collectSections, getFleetCounterContributors } from './extensions'
+import type { FleetCounterContributor, FleetCounterSections } from './extensions'
 
 /** Same shape as PurgeDb — the Drizzle client, passed in explicitly. */
 export type FleetDb = ReturnType<typeof drizzle<typeof tables>>
@@ -105,14 +107,16 @@ function tagOf(name: string): string {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-export interface FleetCounters {
+export interface FleetCountersCore {
   users: { total: number; last7d: number }
   entitlements: { byStatus: Record<string, number> }
   opsEvents: { pending: number; last24h: number }
-  feedback: { total: number; open: number }
   funnel: FleetFunnel
   extra: Record<string, number>
 }
+
+/** Core counters plus one group per registered feature (e.g. `feedback`). */
+export type FleetCounters = FleetCountersCore & Partial<FleetCounterSections>
 
 export async function collectFleetCounters(db: FleetDb, now = new Date()): Promise<FleetCounters> {
   const weekAgo = new Date(now.getTime() - 7 * DAY_MS)
@@ -140,18 +144,15 @@ export async function collectFleetCounters(db: FleetDb, now = new Date()): Promi
     .from(tables.opsEvents)
     .where(and(gt(tables.opsEvents.createdAt, dayAgo)))
 
-  const [feedbackTotal] = await db.select({ total: count() }).from(tables.feedback)
-  const [feedbackOpen] = await db
-    .select({ total: count() })
-    .from(tables.feedback)
-    .where(sql`${tables.feedback.status} = 'new'`)
-
   return {
     users: { total: users?.total ?? 0, last7d: recentUsers?.total ?? 0 },
     entitlements: { byStatus },
     opsEvents: { pending: pendingOps?.total ?? 0, last24h: recentOps?.total ?? 0 },
-    feedback: { total: feedbackTotal?.total ?? 0, open: feedbackOpen?.total ?? 0 },
     funnel: await collectFleetFunnel(db, now),
     extra: {},
+    ...(await collectSections<FleetCounterContributor, FleetCounterSections>(
+      getFleetCounterContributors(),
+      (c) => c.collect(db, now),
+    )),
   }
 }
