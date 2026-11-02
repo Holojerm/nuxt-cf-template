@@ -77,11 +77,11 @@ simple = { limit = 30, period = 60 }
 
 # ─── Images ──────────────────────────────────────────────────────────────────
 # Resizes a private R2 object INSIDE the worker, after the ownership check in
-# server/api/files/[id].get.ts has already passed. Public images do not use this
+# layers/files/server/api/files/[id].get.ts has already passed. Public images do not use this
 # — they go through `/cdn-cgi/image/` at the edge (@nuxt/image in nuxt.config.ts),
 # which cannot see a session cookie and so cannot serve anything gated.
 #
-# Optional. server/utils/images.ts feature-detects the binding and streams the
+# Optional. layers/files/server/utils/images.ts feature-detects the binding and streams the
 # original when it is absent, so a fork that has not enabled Images serves
 # full-size uploads rather than 500s. Enable Images on the account to turn it on;
 # there is no id to paste.

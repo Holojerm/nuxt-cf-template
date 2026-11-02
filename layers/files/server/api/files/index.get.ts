@@ -1,11 +1,11 @@
 // GET /api/files — the caller's own uploads, newest first.
 //
 // Paid feature, same as the rest of this surface: a lapsed subscriber loses
-// API access to the list (not the data — see server/api/files/[id].delete.ts
+// API access to the list (not the data — see layers/files/server/api/files/[id].delete.ts
 // for why deletion is never automatic on churn).
 //
 // Cursor-paginated over `files_user_id_created_idx`
-// (server/db/schema.ts) — see server/utils/files.ts › listFiles() for why a
+// (server/db/schema.ts) — see layers/files/server/utils/files.ts › listFiles() for why a
 // cursor and not an offset, and why it encodes `(createdAt, id)` rather
 // than a bare row id.
 

@@ -11,7 +11,7 @@
 // edge's own fetch of the source URL carries no session cookie — so it gets a
 // 401, and the transform of a 401 is nothing at all. Making it work would mean
 // giving the object a URL that needs no session, which is the exact property
-// server/api/files/[id].get.ts exists to deny.
+// layers/files/server/api/files/[id].get.ts exists to deny.
 //
 // So private uploads transform INSIDE the Worker, after the access check has
 // already passed, using the Images binding. The order is the whole point:
@@ -34,7 +34,7 @@ import { z } from 'zod'
  * SVG is deliberately absent. It is not a raster image, resizing it is
  * meaningless, and it is the one image type that can carry script — this app
  * already forces a download disposition on the types it will not render
- * inline (see dispositionForMimeType in server/utils/files.ts), and handing an
+ * inline (see dispositionForMimeType in layers/files/server/utils/files.ts), and handing an
  * SVG to a transform pipeline is a second way to be wrong about that.
  */
 const TRANSFORMABLE = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif'])

@@ -127,8 +127,10 @@ hash is the template's.
 - **Why not `extends: ['github:…']`**: NuxtHub's merged schema types leave layers under
   `node_modules` untyped, so a remote layer's tables lose their types.
 - **In the template itself**, layers are authored, not vendored: its lock stays empty.
-  `layers/feedback/` is the first; it reaches core through `#server/utils/…`, reads other
-  tables through `@nuxthub/db/schema`, and carries its own tests in `layers/feedback/test/`.
+  `layers/feedback/` and `layers/files/` are the first two; each reaches core through
+  `#server/utils/…`, reads other tables through `@nuxthub/db/schema`, and carries its own
+  tests in `layers/<name>/test/`. A layer table may reference core's (files → `users`) by
+  importing the app's `server/db/schema.ts` relatively; the path is the same in every app.
 
 ---
 

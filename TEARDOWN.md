@@ -44,12 +44,11 @@ file:
 | Free but sign-in required | Same as above — that *is* what `requireUserSession` means |
 | Invite-only / allowlist | Keep the call sites, reimplement `requireSubscription` against your own table |
 
-**3. Rewrite the call sites** (there are four, all in the files feature):
-
-- [`server/api/files/index.get.ts`](server/api/files/index.get.ts)
-- [`server/api/files/index.post.ts`](server/api/files/index.post.ts)
-- [`server/api/files/[id].get.ts`](server/api/files/[id].get.ts)
-- [`server/api/files/[id].delete.ts`](server/api/files/[id].delete.ts)
+**3. Rewrite the call sites** (there are four, all in the files layer, under
+[`layers/files/server/api/files/`](layers/files/server/api/files/)). In a fork that *vendors*
+that layer, don't edit them (`layers:check` would fail): keep a `requireSubscription(event)` in
+`server/utils/` with the behaviour you chose above — e.g. one that just returns
+`requireUserSession(event)` — and the layer's routes pick it up.
 
 **4. Delete the Paddle adapter and the entitlement layer:**
 
@@ -83,7 +82,7 @@ app/utils/churn.ts
 Then remove the `PastDueBanner` mount from [`app/layouts/default.vue`](app/layouts/default.vue),
 the `['auth', 'subscription']` middleware array in
 [`app/pages/dashboard.vue`](app/pages/dashboard.vue) and
-[`app/pages/files.vue`](app/pages/files.vue) (leave `'auth'`), and the billing
+[`layers/files/app/pages/files.vue`](layers/files/app/pages/files.vue) (leave `'auth'`), and the billing
 sections of [`app/pages/account.vue`](app/pages/account.vue) and
 [`app/pages/admin/users/[id].vue`](app/pages/admin/users/[id].vue).
 
@@ -251,9 +250,9 @@ Nothing in the app depends on it — it is a second Worker that reads the same D
 | Remove | Delete | Also |
 | --- | --- | --- |
 | **Blog** | `content/`, `content.config.ts`, `server/utils/blog.ts`, `shared/utils/blog.ts`, `server/api/blog/`, `app/pages/blog/`, `test/blog.test.ts` | Drop `@nuxt/content` from `package.json` and `modules` in `nuxt.config.ts`; remove the blog enumeration from `sitemap.xml.get.ts` and `llms.txt.get.ts` |
-| **File uploads (R2)** | `server/api/files/`, `server/utils/files.ts`, `shared/utils/files.ts`, `app/pages/files.vue`, `app/components/Upload/FileUpload.vue`, `test/files.test.ts` | Drop the `files` table; remove `blob` from `hub` config in `nuxt.config.ts` and the R2 bucket from `wrangler.toml` |
+| **File uploads (R2)** | `layers/files/` (also holds the image transforms) | Delete its `export *` line at the end of `server/db/schema.ts` and run `bun run db:generate` to drop the `files` table; remove `blob` from `hub` config in `nuxt.config.ts` and the R2 bucket from `wrangler.toml`. Account deletion and the nightly purge drop their upload sweeps on their own |
 | **Feedback loop** | `layers/feedback/` | Delete its `export *` line at the end of `server/db/schema.ts` and run `bun run db:generate` to drop the table; remove `<FeedbackWidget />` from `app/layouts/default.vue` and `app/components/Onboarding/Checklist.vue`, `<FeedbackAdminUserCard>` from `app/pages/admin/users/[id].vue`, the cancel-reason `useFeedback()` call in `app/pages/account.vue`, the step from `shared/utils/onboarding-steps.ts`, `registerFeedbackExtensions()` from `test/onboarding-activation.test.ts`, and the public-path allowlist entry in `server/middleware/auth.ts`; delete `.claude/routines/feedback-triage.md`. Account export/deletion, the admin user view and `/api/fleet` drop their feedback sections on their own |
-| **Image transforms** | `server/utils/images.ts`, `test/images.test.ts` | Remove the transform branch from `server/api/files/[id].get.ts` (leave the `blob.serve()` call), `@nuxt/image` from `package.json` / `modules` / the `image` and `$development` blocks in `nuxt.config.ts`, the `[images]` blocks from `wrangler.toml`, and `.claude/docs/images.md`. Replace every `<NuxtImg>` with `<img>` — a leftover `<NuxtImg>` is a build error, so the typecheck finds them for you |
+| **Image transforms** | `layers/files/server/utils/images.ts`, `layers/files/test/images.test.ts` | Remove the transform branch from `layers/files/server/api/files/[id].get.ts` (leave the `blob.serve()` call), `@nuxt/image` from `package.json` / `modules` / the `image` and `$development` blocks in `nuxt.config.ts`, the `[images]` blocks from `wrangler.toml`, and `.claude/docs/images.md`. Replace every `<NuxtImg>` with `<img>` — a leftover `<NuxtImg>` is a build error, so the typecheck finds them for you |
 | **Turnstile** | `server/utils/turnstile.ts`, `test/turnstile.test.ts` | Remove `<NuxtTurnstile>` from `login.vue` and the feedback widget, `@nuxtjs/turnstile` from `package.json`, and `challenges.cloudflare.com` from the CSP. **You are removing a bot control from two endpoints a stranger can reach** — rate limiting alone is weaker |
 | **Admin panel** | `app/pages/admin/`, `server/api/admin/`, `server/utils/admin.ts`, `server/utils/admin-grants.ts`, `app/utils/admin.ts`, `test/admin-grants.test.ts` | Keep `server/utils/audit.ts` and the `audit_log` table — deletion and grant history are written from non-admin paths too |
 | **PostHog analytics** | `app/plugins/posthog.client.ts`, `server/utils/posthog.ts`, `server/routes/ingest/`, `app/utils/analytics-privacy.ts` | Remove the PostHog CSP entries; the `$exception` branch of `server/plugins/error-logger.ts` (**keep the `console.error` branch** — it is your only error visibility once PostHog is gone) |

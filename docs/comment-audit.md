@@ -586,7 +586,7 @@ I verified how each gate treats comment text:
 | `scripts/seed.ts:18-25` | ~140 tok | The seed-user table. Reference data an agent cannot derive; not prose |
 | `server/utils/email.ts:29-39` | ~200 tok | List-Unsubscribe must never appear on billing/security mail, enforced twice on purpose. Deliverability + security invariant |
 | `server/utils/referral.ts:58-63`, `:648-668` | ~330 tok | Structural idempotency, and "the cap counts revoked rows" — the anti-churn property. Money semantics |
-| `server/utils/entitlements.ts`, `server/utils/files.ts`, `server/utils/users.ts` (all blocks) | ~11k tok | Largest block in each is 18/21/32 lines. Many small comments on specific decisions — the healthy pattern, no essay drift found |
+| `server/utils/entitlements.ts`, `layers/files/server/utils/files.ts`, `server/utils/users.ts` (all blocks) | ~11k tok | Largest block in each is 18/21/32 lines. Many small comments on specific decisions — the healthy pattern, no essay drift found |
 | `app/plugins/00.zod-jitless.client.ts:26-35` | ~200 tok | Why module scope and why the `00.` prefix. Removing the prefix silently reintroduces a CSP violation on every page load |
 | `server/tasks/purge-expired-tokens.ts:1-38` | 550 tok | The two-strings-must-match cron gotcha, which fails with no error and no log line |
 | `server/utils/identity.ts:1-29` | 456 tok | Canonical home for the salt argument. T3 and T5 above make it *more* canonical by pointing here |

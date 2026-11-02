@@ -7,7 +7,7 @@
 // decides the object's key, and the `files` table's invariant (every
 // r2_key starts with `uploads/<user_id>/`) never depends on trusting what
 // the client sends. See server/db/schema.ts › `files` and
-// server/utils/files.ts › buildR2Key().
+// layers/files/server/utils/files.ts › buildR2Key().
 //
 // ── pending -> uploaded ──────────────────────────────────────────────────────
 // The row is written before the object exists in R2, and flipped to
@@ -24,7 +24,11 @@
 // the rate limit could otherwise grow an unbounded number of rows, and a
 // caller under the row cap could still hammer the endpoint in a burst.
 
-import { ALLOWED_FILE_TYPES, MAX_FILE_SIZE_LABEL, MAX_FILES_PER_USER } from '#shared/utils/files'
+import {
+  ALLOWED_FILE_TYPES,
+  MAX_FILE_SIZE_LABEL,
+  MAX_FILES_PER_USER,
+} from '../../../shared/utils/files'
 
 export default defineEventHandler(async (event) => {
   const { user } = await requireSubscription(event)
