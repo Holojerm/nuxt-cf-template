@@ -12,7 +12,9 @@ export default defineEventHandler(async (event) => {
   const session = await getUserSession(event)
   await clearUserSession(event)
 
-  if (session.user) {
+  // `runtimeConfig.captureSignOut` (default true) lets an app that collects as
+  // little analytics as it can leave this one event out.
+  if (session.user && useRuntimeConfig(event).captureSignOut !== false) {
     await captureServerEvent({ distinctId: session.user.id, event: 'user_signed_out' })
   }
 

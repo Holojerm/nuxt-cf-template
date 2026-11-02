@@ -384,6 +384,33 @@ export function getClientIp(event: H3Event): string {
 }
 
 /**
+ * A stable, non-reversible identifier for the caller, for the buckets that live
+ * on public surfaces.
+ *
+ * `/ingest/**` and any other anonymous, busy route would otherwise leave its
+ * counters as a rolling list of visitor IP addresses sitting in KV for the
+ * length of the window. Hashing costs one SHA-256 and removes the question
+ * entirely: the key still separates callers, and nothing readable comes back
+ * out of the namespace.
+ *
+ * Salted with the session password so the digests are useless outside this
+ * deployment, and truncated because 32 hex characters is already far past
+ * collision-relevant for a per-window counter. Pass the result as
+ * `rateLimit()`'s `identifier`.
+ */
+export async function hashedClientIp(event: H3Event): Promise<string> {
+  const salt = useRuntimeConfig(event).sessionPassword
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`${salt}:${getClientIp(event)}`),
+  )
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32)
+}
+
+/**
  * Which backend each call site resolved to, so the line below is emitted once
  * per call site per isolate rather than once per request. Bounded by the number
  * of `rateLimit()` call sites, all of which pass a literal `name`.

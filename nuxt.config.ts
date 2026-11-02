@@ -595,6 +595,10 @@ export default defineNuxtConfig({
     // Server-only secrets (access via useRuntimeConfig().mySecret)
     // Set via NUXT_SESSION_PASSWORD env var — Nuxt reads it automatically
     sessionPassword: '',
+    // Capture the `user_signed_out` analytics event on POST /api/auth/logout.
+    // On by default; an app that collects less analytics sets it to false
+    // (NUXT_CAPTURE_SIGN_OUT=false works too).
+    captureSignOut: true,
     // Absolute cookie lifetime, in seconds. Without it nuxt-auth-utils seals
     // with no TTL and a leaked cookie stays valid until the account is deleted —
     // `sessions_invalid_before` is the per-user revocation lever, this is the
