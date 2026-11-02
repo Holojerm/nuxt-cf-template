@@ -107,7 +107,10 @@ export type OnboardingStatus = z.infer<typeof onboardingStatusSchema>
  */
 export interface OnboardingInputs {
   /**
-   * From buildEntitlementView(...).active (server/utils/entitlement-view.ts).
+   * From buildEntitlementView(...).active (server/utils/entitlement-view.ts),
+   * supplied by the billing feature's onboarding signal. Optional: absent in an
+   * app without billing, where the 'plan' step reads as not done (drop that
+   * step in onboarding-steps.ts).
    *
    * On /dashboard this is always true in practice: `definePageMeta({
    * middleware: ['auth', 'subscription'] })` already redirects anyone
@@ -127,7 +130,7 @@ export interface OnboardingInputs {
    * true` on the step also means this function stays correct if the
    * checklist is ever reused somewhere reachable without an entitlement.
    */
-  entitlementActive: boolean
+  entitlementActive?: boolean
   /**
    * Whether this user has saved at least one row in
    * `notification_preferences` — i.e. visited /account and made an explicit

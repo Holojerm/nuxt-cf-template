@@ -7,6 +7,9 @@
 
 import type { H3Event } from 'h3'
 import type { Entitlement } from '../db/schema'
+// Explicit, so billing's registration (billing-extensions.ts) and its tests can
+// load this file without Nitro's auto-imports.
+import { findActiveEntitlement } from './entitlements'
 
 /**
  * The user's granting entitlement for a product, or null.

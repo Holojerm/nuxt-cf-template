@@ -6,7 +6,7 @@
 // `url` on the BlobObject this app ever gets back from `blob.put()`), so the
 // worker binding used here — reachable only from server code — is the only
 // way any request ever reaches the bytes. That makes this endpoint itself
-// the access-control boundary: `requireSubscription()` for "paying
+// the access-control boundary: `requireAccess()` for "paying
 // customer," then an ownership check scoped to `userId` for "your own
 // file." No signed URL or short-lived token is layered on top, because
 // there is no direct path to the object that either would be protecting
@@ -36,7 +36,7 @@ import { z } from 'zod'
 const paramsSchema = z.object({ id: z.uuid() })
 
 export default defineEventHandler(async (event) => {
-  const { user } = await requireSubscription(event)
+  const { user } = await requireAccess(event)
   const { id } = await getValidatedRouterParams(event, paramsSchema.parse)
 
   const file = await getFileById(db, id, user.id)

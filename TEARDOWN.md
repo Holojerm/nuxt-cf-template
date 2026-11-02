@@ -27,10 +27,11 @@ worker depends on both. If you are removing more than one, go: **referrals → M
 
 ## Remove billing entirely (free product, no payments)
 
-The seam is `requireSubscription(event)`. Everything upstream of it is Paddle; every
-call site of it is your product asking "may this account use the paid thing." Removing
-billing means answering that question a different way — usually "yes, always" — not
-deleting the call sites blindly.
+The seam is `requireAccess(event)` ([`server/utils/access-gate.ts`](server/utils/access-gate.ts)),
+which every paywalled route calls (the files layer's four routes today). Billing registers
+the real check, `requireSubscription`; with nothing registered it falls back to a stand-in
+that is just `requireUserSession(event)`: free, but sign-in required. Removing billing
+therefore means choosing what *replaces* the gate, not deleting call sites.
 
 **1. Remove referrals first** (they grant entitlements) — see the next section. Skip
 only if you already have.
@@ -40,15 +41,15 @@ file:
 
 | You want | Do this |
 | --- | --- |
-| Everything free | Delete every `requireSubscription(event)` call, replace with `requireUserSession(event)` |
-| Free but sign-in required | Same as above — that *is* what `requireUserSession` means |
-| Invite-only / allowlist | Keep the call sites, reimplement `requireSubscription` against your own table |
+| Everything free | Nothing: with billing gone `requireAccess` is the stand-in, `requireUserSession` |
+| Free but sign-in required | Same: that *is* the stand-in |
+| Invite-only / allowlist | `registerAccessGate(fn)` from a Nitro plugin, with your own check; routes keep calling `requireAccess` |
 
-**3. Rewrite the call sites** (there are four, all in the files layer, under
-[`layers/files/server/api/files/`](layers/files/server/api/files/)). In a fork that *vendors*
-that layer, don't edit them (`layers:check` would fail): keep a `requireSubscription(event)` in
-`server/utils/` with the behaviour you chose above — e.g. one that just returns
-`requireUserSession(event)` — and the layer's routes pick it up.
+**3. Call sites** need no edit, including the files layer's (vendored copies are never
+edited): they call `requireAccess`. Your own paywalled routes should too; if they call
+`requireSubscription` directly, switch them. The client-side `subscription` route
+middleware is billing's; the files page and `app/pages/dashboard.vue` name it, so keep a
+no-op `app/middleware/subscription.ts` (or shadow those pages) unless you edit them.
 
 **4. Delete the Paddle adapter and the entitlement layer:**
 
@@ -62,9 +63,20 @@ server/utils/billing-state.ts
 server/utils/billing-notifications.ts
 server/utils/entitlements.ts
 server/utils/entitlement-view.ts
+server/utils/billing-extensions.ts
+server/utils/billing-lifecycle.ts
+server/plugins/billing.ts
 server/api/billing/entitlement.get.ts
 server/api/billing/portal.post.ts
 ```
+
+Those last three registration files are how billing reaches core (deletion guard,
+export section, admin views, `entitlements` fleet counter, `paid` funnel stage, onboarding
+signal, paddle-event purge, `pass_expiring` lifecycle step, the paywall gate). Core imports
+none of them, so nothing else in core needs editing: account deletion is unguarded, the data
+export drops `entitlements`, `/api/fleet` drops its `entitlements` group and reports
+`funnel.paid` as 0, the lifecycle run drops `pass_expiring`, and `shared/utils/onboarding-steps.ts`
+loses its `entitlementActive` input (drop the `plan` step there).
 
 **5. Delete the billing UI:**
 
@@ -104,7 +116,7 @@ Remember production and preview are separate and nothing applies migrations for 
 
 **8. Delete the tests.** `test/paddle.test.ts`, `test/entitlements.test.ts`,
 `test/entitlement-view.test.ts`, `test/billing-state.test.ts`,
-`test/billing-notifications.test.ts`, `test/checkout.test.ts`, and the three e2e specs
+`test/billing-notifications.test.ts`, `test/billing-extensions.test.ts`, `test/checkout.test.ts`, and the three e2e specs
 `test/e2e/purchase-access.spec.ts`, `test/e2e/cancel-lose-access.spec.ts`,
 `test/e2e/webhook-signing.spec.ts` (plus `test/e2e/webhook-secret.ts`).
 

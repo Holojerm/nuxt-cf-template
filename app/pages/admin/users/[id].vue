@@ -17,9 +17,23 @@ const route = useRoute()
 const toast = useToast()
 const userId = computed(() => String(route.params.id))
 
-const { data, error, status, refresh } = await useFetch(() => `/api/admin/users/${userId.value}`, {
+const {
+  data: response,
+  error,
+  status,
+  refresh,
+} = await useFetch(() => `/api/admin/users/${userId.value}`, {
   key: `admin-user-${route.params.id}`,
 })
+
+// `billing` is the section the billing feature contributes to this payload
+// (server/utils/extensions.ts › AdminUserContributor), so it is optional in the
+// route's type. This page is the billing UI (comp grants, history), so it reads
+// the section as present; an app without billing deletes those parts.
+type Contributed<T, K extends keyof T> = T & { [P in K]-?: NonNullable<T[P]> }
+const data = computed(
+  () => response.value as Contributed<NonNullable<typeof response.value>, 'billing'> | null,
+)
 
 const forbidden = computed(() => isForbidden(error.value))
 const missing = computed(() => error.value?.statusCode === 404)
@@ -197,7 +211,8 @@ function fetchViewAs() {
   return $fetch(`/api/admin/users/${userId.value}/view-as`)
 }
 
-const viewAs = ref<Awaited<ReturnType<typeof fetchViewAs>> | null>(null)
+// `entitlement` is billing's contribution to the view-as payload; see `data` above.
+const viewAs = ref<Contributed<Awaited<ReturnType<typeof fetchViewAs>>, 'entitlement'> | null>(null)
 const viewAsPending = ref(false)
 const viewAsFailed = ref(false)
 
@@ -207,7 +222,7 @@ async function loadViewAs() {
   viewAsPending.value = true
   viewAsFailed.value = false
   try {
-    viewAs.value = await fetchViewAs()
+    viewAs.value = (await fetchViewAs()) as NonNullable<typeof viewAs.value>
   } catch {
     viewAsFailed.value = true
   } finally {

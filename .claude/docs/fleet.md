@@ -25,7 +25,10 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   `server/utils/extensions.ts`. `registerFleetExtraContributor({ key, collect })` returns plain
   numbers that are merged into `extra`, which is the shape the dashboard already renders;
   `registerFleetCounterContributor()` adds a typed group beside `users` and `funnel`
-  (feedback's). With nothing registered the response is unchanged (`extra` stays `{}`).
+  (feedback's, and billing's `entitlements: { byStatus }`). The funnel's `paid` stage is the one
+  number core cannot count itself: billing registers it with `registerFunnelStageContributor({ key: 'paid', count })`,
+  and with no contributor `funnel.paid` reads 0, so the funnel keeps its shape. With nothing
+  registered the response carries only `users`, `opsEvents`, `funnel` and `extra` (`{}`).
 - **`app-owned.json`** (template root) lists the template paths every app owns by
   design: brand, home page and layout, generated email and colour output, the
   schema composition root, the seed and the fork's own event and lifecycle

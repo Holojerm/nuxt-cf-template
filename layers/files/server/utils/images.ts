@@ -7,7 +7,7 @@
 // transforming it before the request ever reaches this Worker.
 //
 // That mechanism cannot serve this feature. Every object here sits behind
-// `requireSubscription()` plus an ownership check scoped to `userId`, and the
+// `requireAccess()` plus an ownership check scoped to `userId`, and the
 // edge's own fetch of the source URL carries no session cookie — so it gets a
 // 401, and the transform of a 401 is nothing at all. Making it work would mean
 // giving the object a URL that needs no session, which is the exact property

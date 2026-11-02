@@ -16,7 +16,6 @@ import * as tables from '../db/schema'
 import { deriveOnboardingSteps } from '#shared/utils/onboarding'
 import type { OnboardingInputs, OnboardingLayoutVariant } from '#shared/utils/onboarding'
 import { withAudit } from './audit'
-import { buildEntitlementView } from './entitlement-view'
 import { captureServerEvent } from './posthog'
 import { getOnboardingSignalContributors } from './extensions'
 
@@ -25,16 +24,15 @@ export type OnboardingDb = ReturnType<typeof drizzle<typeof tables>>
 
 /**
  * Gather the signals the checklist is built from, in one `Promise.all`:
- * the entitlement view (already its own small, bounded number of reads — see
- * server/utils/entitlement-view.ts) plus one indexed exists-style query per
- * remaining step. Nothing here is a table scan.
+ * the notification-preference row plus one read per registered feature signal
+ * (billing's `entitlementActive` is one — see server/utils/billing-extensions.ts).
+ * Nothing here is a table scan.
  */
 export async function computeOnboardingInputs(
   db: OnboardingDb,
   userId: string,
 ): Promise<OnboardingInputs> {
-  const [entitlement, notificationRow, ...signals] = await Promise.all([
-    buildEntitlementView(db, userId),
+  const [notificationRow, ...signals] = await Promise.all([
     db.query.notificationPreferences.findFirst({
       where: eq(tables.notificationPreferences.userId, userId),
       columns: { id: true },
@@ -45,7 +43,6 @@ export async function computeOnboardingInputs(
   ])
 
   const inputs: OnboardingInputs = {
-    entitlementActive: entitlement.active,
     hasNotificationPreference: Boolean(notificationRow),
   }
   for (const signal of signals) Object.assign(inputs, signal)

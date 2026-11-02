@@ -36,7 +36,7 @@ import { z } from 'zod'
 const paramsSchema = z.object({ id: z.uuid() })
 
 export default defineEventHandler(async (event) => {
-  const { user } = await requireSubscription(event)
+  const { user } = await requireAccess(event)
   const { id } = await getValidatedRouterParams(event, paramsSchema.parse)
 
   const file = await getFileById(db, id, user.id)

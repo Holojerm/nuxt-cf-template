@@ -28,7 +28,7 @@ export const ONBOARDING_STEPS: readonly OnboardingStepDefinition[] = [
     id: 'plan',
     label: 'Pick a plan',
     action: { label: 'View plans', to: '/pricing' },
-    done: (inputs) => inputs.entitlementActive,
+    done: (inputs) => Boolean(inputs.entitlementActive),
   },
   {
     id: 'notifications',

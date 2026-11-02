@@ -1,6 +1,6 @@
 // POST /api/files — upload a file into the caller's own R2 prefix.
 //
-// Paid feature: requireSubscription gates it before anything else runs, the
+// Paid feature: requireAccess gates it before anything else runs, the
 // same boundary every other paid route uses (server/utils/billing.ts). The
 // upload is server-mediated — the client posts multipart form data here
 // rather than straight to R2 — so this handler is the one place that
@@ -17,7 +17,7 @@
 // actually in the bucket.
 //
 // ── Two independent abuse controls ───────────────────────────────────────────
-// requireSubscription only answers "may this account upload at all" — it
+// requireAccess only answers "may this account upload at all" — it
 // says nothing about how often or how much. rateLimit() below bounds the
 // former (bursts), isFilesQuotaExceeded() bounds the latter (accumulation).
 // Neither substitutes for the other: a caller patient enough to stay under
@@ -31,7 +31,7 @@ import {
 } from '../../../shared/utils/files'
 
 export default defineEventHandler(async (event) => {
-  const { user } = await requireSubscription(event)
+  const { user } = await requireAccess(event)
 
   // 20/60s does NOT match NATIVE_LIMITER's (30, 60) (server/utils/rate-limit.ts),
   // so chooseBackend() routes this to the KV fallback rather than Cloudflare's

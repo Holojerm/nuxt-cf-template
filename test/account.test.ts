@@ -13,14 +13,27 @@
 import { env } from 'cloudflare:test'
 import { and, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
 import { deleteAccount, exportAccount, revokeSessions } from '../server/utils/account'
 import { checkSession } from '../server/utils/session-guard'
+import { registerBillingExtensions } from '../server/utils/billing-extensions'
 import { getBillingOverview } from '../server/utils/entitlements'
 
 const db = drizzle(env.DB, { schema })
+
+// Billing registers the deletion guard and the entitlements export section;
+// Nitro plugins do not run under vitest, so the suite registers them itself.
+beforeAll(() => registerBillingExtensions())
+
+/** What a refusal by billing's guard looks like to deleteAccount()'s caller. */
+const blockedBySubscription = (subscriptionId: string) => ({
+  outcome: 'blocked' as const,
+  code: 'live_subscription',
+  message: expect.stringContaining('Cancel it from the billing portal first'),
+  data: { subscriptionId },
+})
 
 const USER = 'user-1'
 const OTHER = 'user-2'
@@ -203,7 +216,7 @@ describe('deleteAccount', () => {
     })
 
     const outcome = await deleteAccount(db, USER)
-    expect(outcome).toEqual({ outcome: 'live_subscription', subscriptionId: 'sub_live123' })
+    expect(outcome).toEqual(blockedBySubscription('sub_live123'))
 
     // Untouched: no anonymization happened.
     const row = await db.query.users.findFirst({ where: eq(schema.users.id, USER) })
@@ -233,10 +246,7 @@ describe('deleteAccount', () => {
         currentPeriodEnd: new Date(Date.now() - 1000),
       })
 
-      expect(await deleteAccount(db, USER)).toEqual({
-        outcome: 'live_subscription',
-        subscriptionId: `sub_${status}`,
-      })
+      expect(await deleteAccount(db, USER)).toEqual(blockedBySubscription(`sub_${status}`))
     },
   )
 
@@ -291,7 +301,7 @@ describe('deleteAccount', () => {
     })
 
     const outcome = await deleteAccount(db, USER)
-    expect(outcome).toEqual({ outcome: 'live_subscription', subscriptionId: 'sub_other_product' })
+    expect(outcome).toEqual(blockedBySubscription('sub_other_product'))
   })
 })
 
@@ -409,7 +419,7 @@ describe('exportAccount', () => {
     expect(result.user).not.toHaveProperty('referredBy')
 
     expect(result.entitlements).toHaveLength(1)
-    expect(result.entitlements[0]).toMatchObject({ id: 'ent-1', status: 'active' })
+    expect(result.entitlements?.[0]).toMatchObject({ id: 'ent-1', status: 'active' })
 
     // Every optional type appears — welcome/referral default-on since neither
     // was ever toggled, product_updates reflects the row above.
@@ -479,7 +489,7 @@ describe('billing liveness agrees across the deletion guard and the cancel count
     const overview = await getBillingOverview(db, USER)
     expect(overview.cancellableSubscriptionIds.length > 0, 'cancellable count').toBe(testCase.live)
 
-    const blocksDeletion = (await deleteAccount(db, USER)).outcome === 'live_subscription'
+    const blocksDeletion = (await deleteAccount(db, USER)).outcome === 'blocked'
     expect(blocksDeletion, 'deletion guard').toBe(testCase.live)
   })
 })
