@@ -24,6 +24,12 @@ import { deriveBillingState } from '../server/utils/billing-state'
 
 const db = drizzle(env.DB, { schema })
 
+/** Does this app's `entitlements` table carry the `user_id` foreign key? */
+async function hasUserForeignKey(): Promise<boolean> {
+  const { results } = await env.DB.prepare('PRAGMA foreign_key_list(entitlements)').all()
+  return results.length > 0
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000
 const USER = 'user-1'
 
@@ -272,7 +278,10 @@ describe('a multi-pass grant is all-or-nothing', () => {
     expect(result.endsAt!.getTime()).toBe(daysFrom(NOW, 4 * PASS_DAYS))
   })
 
-  it('writes nothing when the batch cannot land', async () => {
+  it('writes nothing when the batch cannot land', async (ctx) => {
+    // Skipped for an app whose table has no such key: nothing else here can make
+    // a statement of the batch fail, and the route checks the account first.
+    if (!(await hasUserForeignKey())) ctx.skip()
     // `entitlements.user_id` is a real foreign key, so the whole batch fails.
     // The property under test is the one the console's error copy rests on: a
     // failed grant leaves no partial access behind. A loop of N independent

@@ -132,6 +132,9 @@ Referral stays in core and registers itself with billing (below).
 | What follows money arriving | `registerBillingOutcomeHandler(key, async ({ db, event, outcome }) => …)` from a Nitro plugin. Awaited in registration order, after the email and before the log lines; a throwing handler is logged and skipped, never a 500. The referral reward is one |
 | Own account-deletion flow | `runtimeConfig.billing.guardDeletion: false` drops the `live_subscription` guard. For an app whose deletion cancels the subscription at Paddle itself and fails closed: the guard would refuse first, because a row only turns `canceled` when Paddle's webhook arrives |
 | A missing-account event that is expected | `registerUnknownUserExpectation(key, (event) => boolean)`. Such an event is a `paddle_webhook_after_deletion` info log, not a `paddle_webhook_unknown_user` ops alert. Keep the check as narrow as the thing expected (e.g. a `subscription.*` with status `canceled`) |
+| No customer email | `runtimeConfig.billing.notify: false`. The webhook and the comp routes then send nothing and log nothing for email. The layer still imports core's email and lifecycle modules, so they must exist in the app; `pass_expiring` is sent only by core's lifecycle task |
+| No `paddle_*` PostHog events | `runtimeConfig.billing.analytics: false`. The webhook then sends none of the layer's own events (subscription lifecycle, transaction completed, access revoked); an app that records its own plan events does it from `registerBillingOutcomeHandler`, which still runs |
+| Keep the overlap of a late pass | `runtimeConfig.billing.stackAtBilledAt: true`. A pass stacks on the access that was running when it was **bought**, not when the webhook was processed. Only differs when delivery lagged past the old pass's end (Paddle retries for days); default is the wall clock, as before |
 | Extra fields on the billing view | `registerEntitlementViewFields({ key, view?, history? })` from a Nitro plugin (below). Typed by augmenting `EntitlementViewFields` / `EntitlementHistoryFields` |
 | Who may use the paid thing | `requireAccess(event)` (core), backed by billing's `requireSubscription`; `findActiveEntitlement(db, userId, productKey, now?)` for anything finer |
 
@@ -179,6 +182,11 @@ its own account.
 
 Duplicates, stale and reordered events, and another product's sale are log lines only: Paddle
 retries and reorders by design.
+
+**No foreign key on `user_id`.** A fork whose `entitlements` table predates the key keeps working: the
+webhook asks `users` itself before it writes a new row and answers `unknown_user` (acknowledged, alerted)
+without a row, with or without the constraint. The key stays the backstop for a race. The layer's schema
+still declares it, so such a fork hand-edits the generated migration down to its additive statements.
 
 **Vendoring and collisions.** `bun run layers:pull billing` copies it. A layer's `server/utils`
 export always wins over an app file with the same name and cannot be shadowed, so a fork whose own

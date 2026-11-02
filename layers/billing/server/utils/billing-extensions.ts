@@ -12,10 +12,11 @@
 import { and, count, countDistinct, desc, eq, inArray, like, lt, or } from 'drizzle-orm'
 import * as tables from '../db/schema'
 import { requireSubscription } from './billing'
+import { setBillingNotify } from './billing-notifications'
 import { passExpiringStep } from './billing-lifecycle'
 import { buildEntitlementView } from './entitlement-view'
 import type { EntitlementView } from './entitlement-view'
-import { isBillingLive, setPassDays } from './entitlements'
+import { isBillingLive, setPassDays, setStackAtBilled } from './entitlements'
 import {
   registerAccountContributor,
   registerAdminUserContributor,
@@ -111,10 +112,26 @@ export interface BillingOptions {
    * when Paddle's webhook arrives.
    */
   guardDeletion?: boolean
+  /**
+   * Send the customer emails (purchase, payment failed, access ended, comp
+   * granted and revoked). Default true. An app that sends no customer email
+   * sets it false; the pass-expiring lifecycle step is only ever sent by
+   * core's lifecycle task, so an app without that task needs nothing else.
+   */
+  notify?: boolean
+  /**
+   * Stack a new pass on the access that was running when it was BOUGHT, not
+   * when the webhook was processed. Default false (the wall clock). Only differs
+   * when delivery lagged past the old pass's end; true keeps the customer's
+   * overlap. See setStackAtBilled in entitlements.ts.
+   */
+  stackAtBilledAt?: boolean
 }
 
 export function registerBillingExtensions(options: BillingOptions = {}): void {
   if (options.passDays !== undefined) setPassDays(options.passDays)
+  if (options.notify !== undefined) setBillingNotify(options.notify)
+  if (options.stackAtBilledAt !== undefined) setStackAtBilled(options.stackAtBilledAt)
 
   // Deleting the `users` row does not touch Paddle, which owns the
   // subscription's billing lifecycle independently: refusing up front, and

@@ -23,6 +23,18 @@ import type { EntitlementDb as Db } from './entitlements'
 import type { PaddleEventOutcome } from './entitlements'
 import type { EmailContent } from '#server/utils/email-templates'
 
+// ── The off switch ──────────────────────────────────────────────────────────
+// `runtimeConfig.billing.notify` (applied at startup by registerBillingExtensions).
+// An app that sends no customer email at all turns it off: every function below
+// then returns before it looks up a user, builds a template or calls sendEmail,
+// so nothing is sent, skipped-and-logged, or warned about. Default on.
+let notifyEnabled = true
+
+/** Turn the customer emails below on or off. Called once at startup. */
+export function setBillingNotify(enabled: boolean): void {
+  notifyEnabled = enabled
+}
+
 /** Statuses that mean "the customer has access right now". */
 const GRANTING = new Set(['active', 'trialing'])
 
@@ -92,6 +104,7 @@ async function sendToUser(
   build: (user: { name: string }) => EmailContent,
   kind: string,
 ): Promise<void> {
+  if (!notifyEnabled) return
   try {
     const user = await findUserById(db, userId)
     if (!user) {
@@ -136,6 +149,7 @@ export async function notifyBillingOutcome(
   outcome: PaddleEventOutcome,
   opts: { userId?: string; currentPeriodEnd?: Date | null } = {},
 ): Promise<void> {
+  if (!notifyEnabled) return
   const decision = decideNotification(outcome, opts.currentPeriodEnd ?? null)
   if (decision.email === 'none') return
 
