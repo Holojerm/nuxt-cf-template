@@ -68,7 +68,7 @@ import type { drizzle } from 'drizzle-orm/d1'
 import type { H3Event } from 'h3'
 import * as tables from '../db/schema'
 import type { AuditLogEntry, AuditMetadata } from '../db/schema'
-import { hashIp } from './feedback'
+import { saltedHash } from './hash'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type AuditDb = ReturnType<typeof drizzle<typeof tables>>
@@ -347,5 +347,5 @@ export function toAuditView(row: AuditLogEntry): AuditView {
  */
 export async function auditIpHash(event: H3Event): Promise<string | null> {
   const ip = getHeader(event, 'cf-connecting-ip') ?? getRequestIP(event, { xForwardedFor: true })
-  return hashIp(ip, useRuntimeConfig(event).sessionPassword)
+  return saltedHash(ip, useRuntimeConfig(event).sessionPassword)
 }

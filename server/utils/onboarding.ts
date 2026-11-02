@@ -18,6 +18,7 @@ import type { OnboardingInputs, OnboardingLayoutVariant } from '#shared/utils/on
 import { withAudit } from './audit'
 import { buildEntitlementView } from './entitlement-view'
 import { captureServerEvent } from './posthog'
+import { getOnboardingSignalContributors } from './extensions'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type OnboardingDb = ReturnType<typeof drizzle<typeof tables>>
@@ -32,23 +33,23 @@ export async function computeOnboardingInputs(
   db: OnboardingDb,
   userId: string,
 ): Promise<OnboardingInputs> {
-  const [entitlement, notificationRow, feedbackRow] = await Promise.all([
+  const [entitlement, notificationRow, ...signals] = await Promise.all([
     buildEntitlementView(db, userId),
     db.query.notificationPreferences.findFirst({
       where: eq(tables.notificationPreferences.userId, userId),
       columns: { id: true },
     }),
-    db.query.feedback.findFirst({
-      where: eq(tables.feedback.userId, userId),
-      columns: { id: true },
-    }),
+    // Signals owned by optional features (e.g. feedback's hasSentFeedback),
+    // registered in server/utils/extensions.ts.
+    ...getOnboardingSignalContributors().map((c) => c.read(db, userId)),
   ])
 
-  return {
+  const inputs: OnboardingInputs = {
     entitlementActive: entitlement.active,
     hasNotificationPreference: Boolean(notificationRow),
-    hasSentFeedback: Boolean(feedbackRow),
   }
+  for (const signal of signals) Object.assign(inputs, signal)
+  return inputs
 }
 
 /**

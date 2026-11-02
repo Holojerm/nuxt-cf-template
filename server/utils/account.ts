@@ -18,15 +18,11 @@
 // personally-identifying column on the `users` row in place, and hard-delete
 // everything that exists only to serve this person directly.
 //
-// ── What "contents" means for feedback ───────────────────────────────────────
-// A feedback row's `message` is product feedback the person chose to leave —
-// content ABOUT the app, not content IN it, the same distinction that keeps an
-// audit row about them from being erasable. So the message stays; what gets
-// scrubbed is the PII riding alongside it — `email`, `user_agent`, `ip_hash`.
-// `feedback.user_id` is deliberately not touched: it was never a foreign key
-// (see schema.ts), so once the `users` row above is anonymized it already
-// points at nobody identifiable, and leaving it is what keeps "how many
-// distinct people gave feedback" answerable without keeping a name attached.
+// ── Optional features ────────────────────────────────────────────────────────
+// Tables owned by an optional feature (feedback today) are not read here. The
+// feature registers an AccountContributor (server/utils/extensions.ts) that
+// counts, scrubs and exports its own rows, so deletion and export stay complete
+// when the feature is there and correct when it is not.
 
 import { and, count, desc, eq } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
@@ -36,6 +32,8 @@ import type { AuditMetadata } from '../db/schema'
 import { isBillingLive } from './entitlements'
 import { isSubscriptionRef } from './paddle-refs'
 import { withAudit, writeAudit } from './audit'
+import { collectSections, getAccountContributors } from './extensions'
+import type { AccountExportSections } from './extensions'
 import { OPTIONAL_NOTIFICATION_EVENT_TYPES } from '#shared/utils/notifications'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
@@ -131,7 +129,8 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
   if (liveSubscriptionId)
     return { outcome: 'live_subscription', subscriptionId: liveSubscriptionId }
 
-  const [files, [connectCodeTotal], [magicLinkTotal], [notificationTotal], [feedbackTotal]] =
+  const contributors = getAccountContributors()
+  const [files, [connectCodeTotal], [magicLinkTotal], [notificationTotal], contributorCounts] =
     await Promise.all([
       db
         .select({ id: tables.files.id, r2Key: tables.files.r2Key })
@@ -151,7 +150,7 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
         .select({ total: count() })
         .from(tables.notificationPreferences)
         .where(eq(tables.notificationPreferences.userId, userId)),
-      db.select({ total: count() }).from(tables.feedback).where(eq(tables.feedback.userId, userId)),
+      Promise.all(contributors.map((c) => c.countForDeletion(db, userId))),
     ])
 
   const metadata: AuditMetadata = {
@@ -159,8 +158,10 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
     connectCodesCount: connectCodeTotal?.total ?? 0,
     magicLinkTokensCount: magicLinkTotal?.total ?? 0,
     notificationPreferencesCount: notificationTotal?.total ?? 0,
-    feedbackCount: feedbackTotal?.total ?? 0,
   }
+  contributors.forEach((c, i) => {
+    metadata[`${c.key}Count`] = contributorCounts[i] ?? 0
+  })
 
   return withAudit(
     db,
@@ -191,7 +192,7 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
         }
       }
 
-      // One batch, not five awaited statements. D1 runs a batch as a single
+      // One batch, not a run of awaited statements. D1 runs a batch as a single
       // transaction and a single round trip, which matters twice here: the
       // latency of five sequential trips is paid by a person watching a spinner
       // on the most anxious button in the app, and — more importantly — a
@@ -218,12 +219,7 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
           .delete(tables.notificationPreferences)
           .where(eq(tables.notificationPreferences.userId, userId)),
 
-        // See the file header for why the message survives and only these three
-        // columns are scrubbed.
-        db
-          .update(tables.feedback)
-          .set({ email: null, userAgent: null, ipHash: null })
-          .where(eq(tables.feedback.userId, userId)),
+        ...contributors.flatMap((c) => c.deletionStatements(db, userId)),
 
         db
           .update(tables.users)
@@ -321,16 +317,6 @@ export interface AccountExportEntitlement {
   createdAt: string
 }
 
-export interface AccountExportFeedback {
-  id: string
-  kind: string
-  message: string
-  rating: number | null
-  path: string | null
-  status: string
-  createdAt: string
-}
-
 /**
  * The EFFECTIVE state of one optional email type — not a raw row. Absence of
  * a `notification_preferences` row means default-on (see schema.ts), so a
@@ -358,15 +344,17 @@ export interface AccountExportLifecycleEmail {
   sentAt: string
 }
 
-export interface AccountExport {
+export interface AccountExportCore {
   exportedAt: string
   user: AccountExportUser
   entitlements: AccountExportEntitlement[]
-  feedback: AccountExportFeedback[]
   notificationPreferences: AccountExportNotificationPreference[]
   lifecycleEmails: AccountExportLifecycleEmail[]
   auditEntries: AccountExportAuditEntry[]
 }
+
+/** Core fields plus one key per registered feature (e.g. `feedback`). */
+export type AccountExport = AccountExportCore & Partial<AccountExportSections>
 
 /**
  * Everything /privacy promises a "copy of your data" means, as one document.
@@ -382,35 +370,34 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
   const user = await db.query.users.findFirst({ where: eq(tables.users.id, userId) })
   if (!user) return null
 
-  const [entitlementRows, feedbackRows, preferenceRows, lifecycleRows, auditRows] =
-    await Promise.all([
-      db.query.entitlements.findMany({
-        where: eq(tables.entitlements.userId, userId),
-        orderBy: desc(tables.entitlements.createdAt),
-      }),
-      db.query.feedback.findMany({
-        where: eq(tables.feedback.userId, userId),
-        orderBy: desc(tables.feedback.createdAt),
-      }),
-      // One read for every optional type, not one read each. isNotificationEnabled
-      // is a point lookup per event type, so calling it in a loop meant three
-      // round trips to answer a question about three rows in one table. The
-      // default-on rule (absence of a row means enabled — see schema.ts) is
-      // applied here, over whatever the single query returned.
-      db.query.notificationPreferences.findMany({
-        where: eq(tables.notificationPreferences.userId, userId),
-        columns: { eventType: true, enabled: true },
-      }),
-      db.query.lifecycleSends.findMany({
-        where: eq(tables.lifecycleSends.userId, userId),
-        orderBy: desc(tables.lifecycleSends.sentAt),
-        columns: { stepId: true, sentAt: true },
-      }),
-      db.query.auditLog.findMany({
-        where: and(eq(tables.auditLog.targetType, 'user'), eq(tables.auditLog.targetId, userId)),
-        orderBy: desc(tables.auditLog.createdAt),
-      }),
-    ])
+  const [entitlementRows, preferenceRows, lifecycleRows, auditRows, sections] = await Promise.all([
+    db.query.entitlements.findMany({
+      where: eq(tables.entitlements.userId, userId),
+      orderBy: desc(tables.entitlements.createdAt),
+    }),
+    // One read for every optional type, not one read each. isNotificationEnabled
+    // is a point lookup per event type, so calling it in a loop meant three
+    // round trips to answer a question about three rows in one table. The
+    // default-on rule (absence of a row means enabled — see schema.ts) is
+    // applied here, over whatever the single query returned.
+    db.query.notificationPreferences.findMany({
+      where: eq(tables.notificationPreferences.userId, userId),
+      columns: { eventType: true, enabled: true },
+    }),
+    db.query.lifecycleSends.findMany({
+      where: eq(tables.lifecycleSends.userId, userId),
+      orderBy: desc(tables.lifecycleSends.sentAt),
+      columns: { stepId: true, sentAt: true },
+    }),
+    db.query.auditLog.findMany({
+      where: and(eq(tables.auditLog.targetType, 'user'), eq(tables.auditLog.targetId, userId)),
+      orderBy: desc(tables.auditLog.createdAt),
+    }),
+    collectSections<ReturnType<typeof getAccountContributors>[number], AccountExportSections>(
+      getAccountContributors(),
+      (c) => c.exportSection(db, userId),
+    ),
+  ])
 
   const overrides = new Map(preferenceRows.map((row) => [row.eventType, row.enabled]))
   const notificationPreferences = OPTIONAL_NOTIFICATION_EVENT_TYPES.map((eventType) => ({
@@ -444,15 +431,6 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
       currentPeriodEnd: entitlement.currentPeriodEnd?.toISOString() ?? null,
       createdAt: entitlement.createdAt.toISOString(),
     })),
-    feedback: feedbackRows.map((row) => ({
-      id: row.id,
-      kind: row.kind,
-      message: row.message,
-      rating: row.rating,
-      path: row.path,
-      status: row.status,
-      createdAt: row.createdAt.toISOString(),
-    })),
     notificationPreferences,
     lifecycleEmails: lifecycleRows.map((row) => ({
       step: row.stepId,
@@ -463,5 +441,6 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
       actorType: row.actorType,
       createdAt: row.createdAt.toISOString(),
     })),
+    ...sections,
   }
 }

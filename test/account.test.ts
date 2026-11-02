@@ -16,11 +16,16 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
+import { registerFeedbackExtensions } from '../server/utils/feedback-extensions'
 import { deleteAccount, exportAccount, revokeSessions } from '../server/utils/account'
 import { checkSession } from '../server/utils/session-guard'
 import { getBillingOverview } from '../server/utils/entitlements'
 
 const db = drizzle(env.DB, { schema })
+
+// The feedback feature's reads are contributed, not built in; register them as
+// server/plugins/feedback.ts does in the running app.
+registerFeedbackExtensions()
 
 const USER = 'user-1'
 const OTHER = 'user-2'

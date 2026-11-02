@@ -9,7 +9,8 @@
 // of everything they've ever written to us — so it is audited as one action
 // before any of it is fetched.
 
-import { desc, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
+import type { AdminUserContributor, AdminUserSections } from '../../../utils/extensions'
 
 export default defineEventHandler(async (event) => {
   const admin = await requireAdmin(event)
@@ -36,20 +37,18 @@ export default defineEventHandler(async (event) => {
       ipHash: await auditIpHash(event),
     },
     async () => {
-      const [billing, feedbackRows, auditRows] = await Promise.all([
+      const [billing, auditRows, sections] = await Promise.all([
         buildEntitlementView(db, user.id),
-        db
-          .select()
-          .from(schema.feedback)
-          .where(eq(schema.feedback.userId, user.id))
-          .orderBy(desc(schema.feedback.createdAt))
-          .limit(20),
         // Everything ever done TO this account, which is the question a customer
         // actually asks ("why does my plan say that?"). Includes this admin's
         // own views — the row written a moment ago by withAudit is not in the
         // result, since it was inserted before the read, but the previous ones
         // are, and that is the point.
         listAudit(db, { targetType: 'user', targetId: user.id, limit: 25 }),
+        // What optional features add (e.g. `feedback`: what they've told us).
+        collectSections<AdminUserContributor, AdminUserSections>(getAdminUserContributors(), (c) =>
+          c.load(db, user.id),
+        ),
       ])
 
       return {
@@ -72,21 +71,8 @@ export default defineEventHandler(async (event) => {
           referredBy: user.referredBy,
         },
         billing,
-        feedback: feedbackRows.map((row) => ({
-          id: row.id,
-          kind: row.kind,
-          // Untrusted input: rendered as text, never as markup, and never
-          // treated as instructions by anything that reads it (.claude/docs/patterns.md).
-          message: row.message,
-          rating: row.rating,
-          path: row.path,
-          replayUrl: row.replayUrl,
-          status: row.status,
-          issueUrl: row.issueUrl,
-          repliedAt: row.repliedAt?.toISOString() ?? null,
-          createdAt: row.createdAt.toISOString(),
-        })),
         audit: auditRows.map(toAuditView),
+        ...sections,
       }
     },
   )
