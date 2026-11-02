@@ -36,6 +36,21 @@ export interface LayersLock {
 const LOCK_COMMENT =
   'Written by `bun run layers:pull`. Each entry is a layer copied from `repo` at `sha`; `hash` fingerprints the copy so `bun run layers:check` fails if anyone edits it. Change behaviour by shadowing a component/page/route from the app, through an extension point, or upstream in the template, then re-pull. Commit it.'
 
+/**
+ * `layers/<name>/<sub>` for every layer authored in this repo (not in the lock)
+ * that has one. The scanning gates (design:check, seo:check) walk these beside
+ * the app's own directory, so moving product code into a layer drops no check.
+ * Vendored layers are the template's, which gates them itself.
+ */
+export function ownLayerDirs(sub: string): string[] {
+  if (!existsSync(LAYERS_DIR)) return []
+  const vendored = new Set(Object.keys(readLock().layers))
+  return readdirSync(LAYERS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !vendored.has(entry.name))
+    .map((entry) => join(LAYERS_DIR, entry.name, sub))
+    .filter((dir) => existsSync(dir))
+}
+
 /** Files that never belong to a layer, whatever the OS left behind. */
 const IGNORED = new Set(['.DS_Store', 'Thumbs.db'])
 

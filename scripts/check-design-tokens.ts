@@ -4,8 +4,9 @@
 // and humans drift back to `text-gray-900` and `rounded-lg` around feature #4
 // and the app's design personality quietly dissolves into Tailwind defaults.
 //
-// Scans app/ for values that bypass the token layer. Everything flagged here
-// has a semantic equivalent declared in DESIGN.md.
+// Scans app/, and the app/ of each layer authored in this repo, for values that
+// bypass the token layer. Everything flagged here has a semantic equivalent
+// declared in DESIGN.md.
 //
 // Escape hatch: put `design-check-ignore` in a comment on the same line or the
 // line directly above. Use it for genuine exceptions (a third-party brand
@@ -14,8 +15,10 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
+import { ownLayerDirs } from './lib/layers'
+
 const ROOT = resolve(import.meta.dir, '..')
-const SCAN_DIR = join(ROOT, 'app')
+const SCAN_DIRS = [join(ROOT, 'app'), ...ownLayerDirs('app')]
 const SCAN_EXTENSIONS = ['.vue', '.ts', '.css']
 
 // Generated from DESIGN.md — these are where raw values are supposed to live.
@@ -193,7 +196,7 @@ const violations: Violation[] = []
 /** Multi-line matches are unreadable in a one-line report. */
 const collapse = (text: string) => text.trim().replace(/\s+/g, ' ')
 
-for (const file of walk(SCAN_DIR)) {
+for (const file of SCAN_DIRS.flatMap((dir) => walk(dir))) {
   const relativePath = relative(ROOT, file)
   if (EXEMPT_FILES.includes(relativePath)) continue
 
