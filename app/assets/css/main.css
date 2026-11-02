@@ -139,6 +139,12 @@
  * declarations here also guarantee @nuxt/fonts detects all three families. */
 
 @layer base {
+  /* The header is sticky, so an in-page jump (skip link, blog heading anchor)
+   * would otherwise land its target underneath it. */
+  html {
+    scroll-padding-top: var(--ui-header-height);
+  }
+
   body {
     font-family: var(--font-sans);
     font-synthesis-weight: none;
