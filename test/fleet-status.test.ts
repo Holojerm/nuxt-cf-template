@@ -10,7 +10,6 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import { registerFeedbackExtensions } from '../server/utils/feedback-extensions'
 import {
   collectFleetCounters,
   compareMigrations,
@@ -19,10 +18,6 @@ import {
 } from '../server/utils/fleet-status'
 
 const db = drizzle(env.DB, { schema })
-
-// The feedback feature's reads are contributed, not built in; register them as
-// server/plugins/feedback.ts does in the running app.
-registerFeedbackExtensions()
 
 const NOW = new Date('2026-08-22T12:00:00.000Z')
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -95,7 +90,6 @@ describe('collectFleetCounters', () => {
   beforeEach(async () => {
     await env.DB.exec('DELETE FROM entitlements')
     await env.DB.exec('DELETE FROM audit_log')
-    await env.DB.exec('DELETE FROM feedback')
     await env.DB.exec('DELETE FROM ops_events')
     await env.DB.exec('DELETE FROM users')
   })
@@ -105,7 +99,6 @@ describe('collectFleetCounters', () => {
       users: { total: 0, last7d: 0 },
       entitlements: { byStatus: {} },
       opsEvents: { pending: 0, last24h: 0 },
-      feedback: { total: 0, open: 0 },
       funnel: { cohortDays: 28, signups: 0, activated: 0, paid: 0, sources: {} },
       extra: {},
     })
@@ -135,17 +128,11 @@ describe('collectFleetCounters', () => {
         notifiedAt: twoDaysAgo,
       },
     ])
-    await db.insert(schema.feedback).values([
-      { message: 'love it', status: 'new' },
-      { message: 'broken', status: 'new' },
-      { message: 'fixed now', status: 'closed' },
-    ])
 
     const counters = await collectFleetCounters(db, NOW)
     expect(counters.users).toEqual({ total: 2, last7d: 1 })
     expect(counters.entitlements.byStatus).toEqual({ active: 2, canceled: 1 })
     expect(counters.opsEvents).toEqual({ pending: 1, last24h: 2 })
-    expect(counters.feedback).toEqual({ total: 3, open: 2 })
 
     // The payload is stored for months in someone else's database: it must be
     // numbers all the way down.

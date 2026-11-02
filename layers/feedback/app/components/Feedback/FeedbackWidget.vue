@@ -33,7 +33,7 @@ const { loggedIn } = useUserSession()
 const { submit, pending } = useFeedback()
 
 // Turnstile, for signed-out submitters only — matching what the server
-// enforces (server/api/feedback.post.ts). Gated on the site key rather than on
+// enforces (layers/feedback/server/api/feedback.post.ts). Gated on the site key rather than on
 // the module being installed, so a fork without a Turnstile account renders no
 // widget and fetches no challenge script. `challengeRequired` is what the
 // template branches on; both halves of that condition matter.
@@ -60,7 +60,7 @@ function resetChallenge() {
   turnstile.value?.reset()
 }
 
-// Mirrors server/utils/feedback.ts — the server re-validates either way.
+// Mirrors layers/feedback/server/utils/feedback.ts — the server re-validates either way.
 const schema = z.object({
   kind: z.enum(['bug', 'confusion', 'idea', 'praise']),
   message: z.string().trim().min(3, 'A few more words would help').max(2000),

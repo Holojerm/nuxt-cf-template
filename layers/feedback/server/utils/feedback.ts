@@ -1,19 +1,21 @@
 // Feedback capture — the "what did they say" half of the feedback loop.
 // (PostHog, wired in app/plugins/posthog.client.ts, is the "what did they do"
-// half. Both fire on every submission; see server/api/feedback.post.ts.)
+// half. Both fire on every submission; see layers/feedback/server/api/feedback.post.ts.)
 //
 // Like server/utils/entitlements.ts, every function takes the Drizzle client as
 // its first argument rather than reaching for the auto-imported `db`, so the
-// workerd vitest suite (test/feedback.test.ts) can drive it against a real D1
+// workerd vitest suite (layers/feedback/test/feedback.test.ts) can drive it against a real D1
 // binding without booting Nitro.
 
 import { and, count, desc, eq, gt } from 'drizzle-orm'
 import { z } from 'zod'
 import type { drizzle } from 'drizzle-orm/d1'
-import * as tables from '../db/schema'
+// The merged schema (every layer's tables plus core's), so this layer reads
+// core's users table without importing an app path.
+import * as tables from '@nuxthub/db/schema'
 import type { Feedback } from '../db/schema'
-import { saltedHash } from './hash'
-import { turnstileTokenSchema } from './turnstile'
+import { saltedHash } from '#server/utils/hash'
+import { turnstileTokenSchema } from '#server/utils/turnstile'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type FeedbackDb = ReturnType<typeof drizzle<typeof tables>>
@@ -58,7 +60,7 @@ export const feedbackSubmissionSchema = z.object({
    * a site key is configured. Nullish here rather than required because the
    * decision about whether it is *needed* belongs to the route (which knows
    * whether the submitter is signed in), not to the body shape — see
-   * server/api/feedback.post.ts. Never stored: it is single-use and worthless
+   * layers/feedback/server/api/feedback.post.ts. Never stored: it is single-use and worthless
    * once verified.
    */
   turnstileToken: turnstileTokenSchema.nullish(),

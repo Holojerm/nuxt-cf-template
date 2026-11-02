@@ -85,7 +85,7 @@ export default defineEventHandler(async (event) => {
 
 ## Database (Drizzle + D1)
 
-- **Schema lives in `server/db/schema.ts`** — one file, all tables.
+- **Schema lives in `server/db/schema.ts`**, plus one `server/db/schema.ts` per layer. The app's file re-exports each layer's at the end, which is what puts layer tables into the typed `db` and into drizzle-kit's view; migrations stay in `server/db/migrations`.
 - **Always export inferred types**: `export type User = typeof users.$inferSelect`
 - **`db` and `schema` are auto-imported** by `@nuxthub/core` Nitro-wide — they work in `server/api/`, `server/utils/`, `server/middleware/`, `server/plugins/`, `server/routes/`. Never import or instantiate Drizzle manually.
 - **Migrations**: Run `bun db:generate` after schema changes, commit migration files.
@@ -105,8 +105,8 @@ Core code never queries a table that belongs to an optional feature. When accoun
 deletion/export, the admin one-customer view, `/api/fleet` counters or the onboarding
 checklist need a feature's data, the feature registers a contributor in
 `server/utils/extensions.ts` and core collects whatever is registered. Feedback is the
-worked example: `server/utils/feedback-extensions.ts` augments the section interfaces
-(so responses stay typed) and `server/plugins/feedback.ts` registers it. Tests call the
+worked example: `layers/feedback/server/utils/feedback-extensions.ts` augments the section interfaces
+(so responses stay typed) and `layers/feedback/server/plugins/feedback.ts` registers it. Tests call the
 same `register…()` function, because Nitro plugins don't run under vitest. Removing a
 feature removes its sections and nothing else; `test/extensions.test.ts` holds core to that.
 
@@ -127,6 +127,8 @@ hash is the template's.
 - **Why not `extends: ['github:…']`**: NuxtHub's merged schema types leave layers under
   `node_modules` untyped, so a remote layer's tables lose their types.
 - **In the template itself**, layers are authored, not vendored: its lock stays empty.
+  `layers/feedback/` is the first; it reaches core through `#server/utils/…`, reads other
+  tables through `@nuxthub/db/schema`, and carries its own tests in `layers/feedback/test/`.
 
 ---
 

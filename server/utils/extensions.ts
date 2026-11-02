@@ -7,7 +7,7 @@
 // Every consumer below takes the Drizzle client as an argument so the workerd
 // test suite can drive it without booting Nitro. Nitro runtime hooks only exist
 // inside a running Nitro app, so they would vanish exactly where the tests run.
-// Features register from a Nitro plugin (see server/plugins/feedback.ts) and
+// Features register from a Nitro plugin (see layers/feedback/server/plugins/feedback.ts) and
 // tests call the same register function directly.
 //
 // ── Typing ───────────────────────────────────────────────────────────────────

@@ -1,16 +1,15 @@
-// Core with no optional features registered — what a fork that removes
-// feedback (or, later, doesn't extend its layer) runs. Each consumer must
-// still work and simply omit the feature's section.
+// Core with no optional features registered — what a fork that drops the
+// feedback layer runs. Each consumer must still work and simply omit the
+// feature's section. The feedback layer's own test covers it registering.
 
 import { env } from 'cloudflare:test'
 import { drizzle } from 'drizzle-orm/d1'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
 import { deleteAccount, exportAccount } from '../server/utils/account'
 import { listAudit } from '../server/utils/audit'
 import { clearExtensionsForTest } from '../server/utils/extensions'
-import { registerFeedbackExtensions } from '../server/utils/feedback-extensions'
 import { collectFleetCounters } from '../server/utils/fleet-status'
 import { computeOnboardingInputs } from '../server/utils/onboarding'
 
@@ -18,15 +17,11 @@ const db = drizzle(env.DB, { schema })
 const USER = 'user-ext'
 
 beforeAll(() => clearExtensionsForTest())
-afterAll(() => registerFeedbackExtensions())
 
 beforeEach(async () => {
   await db.delete(schema.auditLog)
-  await db.delete(schema.feedback)
   await db.delete(schema.users)
   await db.insert(schema.users).values({ id: USER, email: 'ext@example.com', name: 'Ext' })
-  // A feedback row exists, but nothing is registered to read it.
-  await db.insert(schema.feedback).values({ userId: USER, kind: 'idea', message: 'Hello' })
 })
 
 describe('core without feature contributors', () => {
@@ -48,13 +43,5 @@ describe('core without feature contributors', () => {
 
   it('computes onboarding inputs without the feedback signal', async () => {
     expect(await computeOnboardingInputs(db, USER)).not.toHaveProperty('hasSentFeedback')
-  })
-
-  it('adds every section back once feedback registers', async () => {
-    registerFeedbackExtensions()
-    expect((await exportAccount(db, USER))?.feedback).toHaveLength(1)
-    expect((await collectFleetCounters(db)).feedback).toEqual({ total: 1, open: 1 })
-    expect(await computeOnboardingInputs(db, USER)).toMatchObject({ hasSentFeedback: true })
-    clearExtensionsForTest()
   })
 })

@@ -59,7 +59,7 @@ export default defineNuxtPlugin((nuxtApp) => {
     // Surveys (NPS, CSAT, "why did you cancel?") are on by default and fetch
     // their config + surveys.js through the same /ingest proxy — create one in
     // the PostHog dashboard and it appears with no deploy. Surveys are the
-    // *asking* half of feedback; app/components/Feedback/FeedbackWidget.vue →
+    // *asking* half of feedback; layers/feedback/app/components/Feedback/FeedbackWidget.vue →
     // POST /api/feedback is the *telling* half, and lands in your own D1.
 
     // `session_recording` is set by ANALYTICS_PRIVACY_OPTIONS above — masking

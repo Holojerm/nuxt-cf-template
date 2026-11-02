@@ -3,7 +3,7 @@
 //
 // decideTurnstile takes its verifier as an argument so this suite can drive
 // every branch without a network call and without a Cloudflare account — the
-// same reason server/utils/feedback.ts takes its Drizzle client as one.
+// same reason layers/feedback/server/utils/feedback.ts takes its Drizzle client as one.
 //
 // What is deliberately NOT tested here: the HTTP shape of siteverify. That
 // belongs to @nuxtjs/turnstile, and re-asserting it would only pin this repo to

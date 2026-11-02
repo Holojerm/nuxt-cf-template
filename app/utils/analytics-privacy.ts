@@ -30,7 +30,7 @@
 //      autocapture reads `location.href` directly and neither 1 nor 2 can reach
 //      that.
 //
-// `scrubUrl` is also used outside analytics, by app/composables/useFeedback.ts:
+// `scrubUrl` is also used outside analytics, by layers/feedback/app/composables/useFeedback.ts:
 // the feedback widget is on every page and records the URL it was opened from
 // into D1. Anywhere a current URL is about to be *stored* rather than just
 // followed, it goes through here first.
