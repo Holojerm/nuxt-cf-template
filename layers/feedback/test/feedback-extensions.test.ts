@@ -13,6 +13,7 @@ import { deleteAccount, exportAccount } from '~~/server/utils/account'
 import { clearExtensionsForTest, getAdminUserContributors } from '~~/server/utils/extensions'
 import { collectFleetCounters } from '~~/server/utils/fleet-status'
 import { computeOnboardingInputs } from '~~/server/utils/onboarding'
+import { isPublicApiRequest } from '~~/server/utils/public-routes'
 import { registerFeedbackExtensions } from '../server/utils/feedback-extensions'
 
 const db = drizzle(env.DB, { schema })
@@ -142,5 +143,14 @@ describe('onboarding', () => {
     expect(await computeOnboardingInputs(db, USER)).toMatchObject({ hasSentFeedback: false })
     await db.insert(schema.feedback).values({ userId: USER, message: 'hi' })
     expect(await computeOnboardingInputs(db, USER)).toMatchObject({ hasSentFeedback: true })
+  })
+})
+
+describe('public routes', () => {
+  it('lets signed-out visitors POST feedback, and nothing else on the path', () => {
+    expect(isPublicApiRequest('/api/feedback', 'POST')).toBe(true)
+    expect(isPublicApiRequest('/api/feedback', 'GET')).toBe(false)
+    expect(isPublicApiRequest('/api/feedback/fb-1', 'PATCH')).toBe(false)
+    expect(isPublicApiRequest('/api/feedback/fb-1/reply', 'POST')).toBe(false)
   })
 })

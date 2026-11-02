@@ -123,8 +123,7 @@ than database access, which is exactly why nothing secret may travel there.
 ## Public API surface
 
 `server/middleware/auth.ts` 401s every `/api/*` request without a valid session
-except this allowlist — the real one, not the three-item summary that used to
-appear in the README:
+except the allowlist in `server/utils/public-routes.ts`. Core ships:
 
 - `/api/health` — liveness, public.
 - `/api/auth/*`, `/api/_auth/*` — sign-in start, OAuth callbacks, the session
@@ -133,11 +132,29 @@ appear in the README:
   `requireFleetToken()`: **404** when `NUXT_FLEET_TOKEN` is unset, **401** on a
   bad bearer. `/api/status` carries the build sha, migration tags and cron
   schedules — a deployment fingerprint, hence the token.
-- `POST /api/feedback` — signed-out visitors may leave feedback; the handler
-  rate-limits by IP hash.
+- `/api/_nuxt_icon/*` — `@nuxt/icon`'s endpoint, called by the browser for any
+  icon the client bundle missed; static icon JSON.
 - `GET /api/blog`, `GET /api/blog/*` — the blog is public content.
 - `GET|POST /api/email/unsubscribe` — reached from a mail footer on a device
   that may not be signed in.
+
+Features and forks add their own from a Nitro plugin; **never edit the
+middleware**:
+
+```typescript
+registerPublicApiRoutes([
+  { path: '/api/problems', match: 'prefix', methods: ['GET'] }, // a public catalogue
+  { path: '/api/join/', match: 'prefix', methods: ['POST'] },   // an invite link
+])
+registerSessionGatedPrefixes(['/posters/']) // private media served outside /api/
+```
+
+`methods` scopes a rule (omit for all methods), `match` is `exact` (default) or
+`prefix` (`startsWith`; end a directory prefix with `/` so `/api/join/` does not
+admit `/api/joinery`). The feedback layer registers `POST /api/feedback` this way
+— signed-out visitors may leave feedback; the handler rate-limits by IP hash — so
+removing the layer removes the route. `registerSessionGatedPrefixes` makes the
+middleware require a session for a non-`/api/` prefix too.
 
 Everything else, including every paid route, is behind the session guard and
 then its own `requireSubscription()` / `requireAdmin()`.

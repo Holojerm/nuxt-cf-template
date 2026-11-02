@@ -5,22 +5,8 @@
 // /api/ that isn't explicitly public.
 
 export default defineEventHandler(async (event) => {
-  // Only protect /api routes that aren't public. Strip the query string —
-  // the feedback rule below matches an exact path.
+  // Strip the query string — public-route rules match the bare path.
   const path = event.path.split('?')[0] ?? ''
-
-  // Public routes — no auth needed.
-  // - /api/health: liveness probe
-  // - /api/auth/: sign-in start + OAuth callbacks, provider list, logout.
-  //   The session doesn't exist yet on these, so the guard below must not run.
-  // - /api/_auth/: session endpoint nuxt-auth-utils calls from useUserSession()
-  //   (fetch + clear); blocking this 401s sign-out and breaks session refresh
-  // - /api/status, /api/fleet: for the portfolio dashboard; both do their own
-  //   bearer check (requireFleetToken) and 404 when no token is configured, so
-  //   the session guard must not 401 first. The full allowlist — these plus
-  //   POST /api/feedback, GET /api/blog*, GET|POST /api/email/unsubscribe below
-  //   — is documented in .claude/docs/auth.md › Public API surface.
-  const publicRoutes = ['/api/health', '/api/status', '/api/fleet', '/api/auth/', '/api/_auth/']
 
   // Throttle the whole auth surface from one place. Doing it here rather than
   // inside each handler is what makes it cover the OAuth routes at all:
@@ -90,44 +76,22 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  if (publicRoutes.some((route) => path.startsWith(route))) {
+  // Public routes — no auth needed. The list lives in
+  // server/utils/public-routes.ts: core's own (health, status/fleet, sign-in,
+  // the blog, unsubscribe) plus whatever a feature or fork registered from a
+  // Nitro plugin (feedback registers POST /api/feedback). Rules are
+  // method-scoped, so a public GET never makes a later POST public with it.
+  // The full list is documented in .claude/docs/auth.md › Public API surface.
+  if (isPublicApiRequest(path, event.method)) {
     return
   }
 
-  // Anonymous feedback: submitting is public, reading and triaging are not.
-  // Method-scoped so GET /api/feedback and PATCH /api/feedback/:id stay gated.
-  //
-  // No rateLimit() call here on purpose — the handler counts prior rows by
-  // ip_hash in D1 (5/hour), which is exact rather than eventually consistent and
-  // reuses a write it was making anyway. A second KV window on top would just be
-  // two different limits to reason about.
-  if (path === '/api/feedback' && event.method === 'POST') {
-    return
-  }
-
-  // The blog. Reading it must not require an account — that is the entire
-  // point of publishing it, and the readers who matter most (Googlebot,
-  // GPTBot, ClaudeBot) cannot sign in at all. Method-scoped like the rules
-  // above: there is no write endpoint here today, and if one is ever added it
-  // should have to opt out of the guard deliberately rather than inherit it.
-  if ((path === '/api/blog' || path.startsWith('/api/blog/')) && event.method === 'GET') {
-    return
-  }
-
-  // One-click unsubscribe: mail providers POST here with no session (RFC 8058
-  // List-Unsubscribe-Post) and people click the same URL from an email's
-  // footer, which is a GET. Method-scoped like the feedback rule above — a
-  // PUT or DELETE to this path still 404s at the router, this just stops the
-  // auth guard from turning it into a 401 first. Auth would defeat the whole
-  // point: nobody signed into anything is on the other end of either request.
-  if (path === '/api/email/unsubscribe' && (event.method === 'GET' || event.method === 'POST')) {
-    return
-  }
-
-  // All other /api routes require a valid session. Already read above, so this
-  // costs nothing beyond the check itself.
-  if (path.startsWith('/api/')) {
-    if (!session?.user) {
+  // All other /api routes, and any non-API prefix an app registered with
+  // registerSessionGatedPrefixes(), require a valid session. /api/ was read
+  // above; a gated prefix is the only case that reads it here.
+  if (isSessionGatedPath(path)) {
+    const gateSession = session ?? (await getUserSession(event))
+    if (!gateSession.user) {
       throw createError({
         statusCode: 401,
         message: 'Unauthorized',

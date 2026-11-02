@@ -155,6 +155,14 @@ code, and a sync never touches product code.
   - `@pinia/nuxt` resolves `storesDirs` against the app only; a layer with stores sets
     `pinia: { storesDirs: ['stores'] }` in its own config.
 
+### Public API routes and gated paths
+
+The auth middleware's allowlist is data, not code. A fork or layer with a public endpoint
+registers it from a Nitro plugin with `registerPublicApiRoutes()` (and
+`registerSessionGatedPrefixes()` for private non-API paths); it never edits
+`server/middleware/auth.ts`. Rules, matching and the core list: `.claude/docs/auth.md ›
+Public API surface`. The feedback layer is the worked example.
+
 ---
 
 

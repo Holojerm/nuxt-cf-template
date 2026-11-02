@@ -1,5 +1,6 @@
 // What the feedback feature contributes to core: account deletion and export,
-// the admin one-customer view, fleet counters and the onboarding checklist.
+// the admin one-customer view, fleet counters, the onboarding checklist and the
+// public POST /api/feedback route.
 // Registered once per isolate by layers/feedback/server/plugins/feedback.ts; tests call
 // registerFeedbackExtensions() directly. See server/utils/extensions.ts.
 //
@@ -23,6 +24,7 @@ import {
   registerFleetCounterContributor,
   registerOnboardingSignalContributor,
 } from '#server/utils/extensions'
+import { registerPublicApiRoutes } from '#server/utils/public-routes'
 
 /** One feedback row as the data export shows it — no reply, address or hash. */
 export interface AccountExportFeedback {
@@ -157,4 +159,13 @@ export function registerFeedbackExtensions(options: FeedbackExtensionOptions = {
       return { hasSentFeedback: Boolean(row) }
     },
   })
+
+  // Anonymous feedback: submitting is public, reading and triaging are not.
+  // Method-scoped so GET /api/feedback and PATCH /api/feedback/:id stay gated.
+  //
+  // No rateLimit() in the middleware on purpose — the handler counts prior rows
+  // by ip_hash in D1 (5/hour), which is exact rather than eventually consistent
+  // and reuses a write it was making anyway. A second KV window on top would
+  // just be two different limits to reason about.
+  registerPublicApiRoutes([{ path: '/api/feedback', methods: ['POST'] }])
 }
