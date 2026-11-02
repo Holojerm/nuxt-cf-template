@@ -161,6 +161,12 @@ export default defineEventHandler(async (event) => {
         },
       })
     }
+  } else if (outcome.reason === 'unknown_user' && isUnknownUserExpected(paddleEvent)) {
+    // The app said this is expected (registerUnknownUserExpectation: e.g. the
+    // echo of its own cancel-then-delete). Acknowledged, logged, not alerted.
+    console.info(
+      JSON.stringify({ kind: 'paddle_webhook_after_deletion', eventType, id: paddleEvent.data.id }),
+    )
   } else if (outcome.reason === 'unknown_user') {
     // custom_data.userId names no account. Acknowledged (a 500 on the foreign
     // key would have Paddle retry forever), but alerted: money arriving for an

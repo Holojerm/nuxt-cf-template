@@ -15,6 +15,7 @@ import { requireAccess } from '~~/server/utils/access-gate'
 import { registerBillingExtensions } from '../server/utils/billing-extensions'
 import {
   clearExtensionsForTest,
+  getAccountContributors,
   getDeletionGuards,
   registerDeletionGuard,
 } from '~~/server/utils/extensions'
@@ -69,6 +70,18 @@ describe('requireAccess with billing registered', () => {
 describe('deletion guards', () => {
   it('registers billing’s guard under one key, and registering twice replaces it', () => {
     registerBillingExtensions()
+    expect(getDeletionGuards().map((g) => g.key)).toEqual(['billing'])
+  })
+
+  it('registers no guard when the app turns it off (its own flow cancels first)', () => {
+    clearExtensionsForTest()
+    registerBillingExtensions({ guardDeletion: false })
+    expect(getDeletionGuards()).toEqual([])
+    // Everything else is still registered.
+    expect(getAccountContributors().map((c) => c.key)).toContain('entitlements')
+
+    clearExtensionsForTest()
+    registerBillingExtensions({ guardDeletion: true })
     expect(getDeletionGuards().map((g) => g.key)).toEqual(['billing'])
   })
 

@@ -130,6 +130,8 @@ Referral stays in core and registers itself with billing (below).
 | Plan copy and amounts | Shadow the layer's `layers/billing/app/utils/plans.ts`, or its `layers/billing/app/pages/pricing.vue` for a bespoke page, or its past-due alert component for wording, by putting a file at the same path under the app's `app/`. These are client files, so an app copy wins over the layer's |
 | CSP | The Paddle hosts stay in the app's `nuxt.config.ts` (the policy is one header string, not mergeable per layer) |
 | What follows money arriving | `registerBillingOutcomeHandler(key, async ({ db, event, outcome }) => …)` from a Nitro plugin. Awaited in registration order, after the email and before the log lines; a throwing handler is logged and skipped, never a 500. The referral reward is one |
+| Own account-deletion flow | `runtimeConfig.billing.guardDeletion: false` drops the `live_subscription` guard. For an app whose deletion cancels the subscription at Paddle itself and fails closed: the guard would refuse first, because a row only turns `canceled` when Paddle's webhook arrives |
+| A missing-account event that is expected | `registerUnknownUserExpectation(key, (event) => boolean)`. Such an event is a `paddle_webhook_after_deletion` info log, not a `paddle_webhook_unknown_user` ops alert. Keep the check as narrow as the thing expected (e.g. a `subscription.*` with status `canceled`) |
 | Extra fields on the billing view | `registerEntitlementViewFields({ key, view?, history? })` from a Nitro plugin (below). Typed by augmenting `EntitlementViewFields` / `EntitlementHistoryFields` |
 | Who may use the paid thing | `requireAccess(event)` (core), backed by billing's `requireSubscription`; `findActiveEntitlement(db, userId, productKey, now?)` for anything finer |
 

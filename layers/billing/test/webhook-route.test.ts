@@ -19,7 +19,9 @@ import { recordOpsEvent } from '~~/server/utils/ops'
 import { paddleSubscriptionEvent } from '#shared/utils/analytics-events'
 import {
   clearBillingOutcomeHandlersForTest,
+  isUnknownUserExpected,
   registerBillingOutcomeHandler,
+  registerUnknownUserExpectation,
   runBillingOutcomeHandlers,
 } from '../server/utils/billing-outcome'
 import {
@@ -82,6 +84,7 @@ beforeEach(async () => {
   vi.stubGlobal('isForeignProduct', isForeignProduct)
   vi.stubGlobal('adjustmentMatchedNothing', adjustmentMatchedNothing)
   vi.stubGlobal('runBillingOutcomeHandlers', runBillingOutcomeHandlers)
+  vi.stubGlobal('isUnknownUserExpected', isUnknownUserExpected)
   vi.stubGlobal('paddleSubscriptionEvent', paddleSubscriptionEvent)
   vi.stubGlobal('notifyBillingOutcome', async () => {})
   vi.stubGlobal('captureServerEvent', async (e: { event: string }) => void captured.push(e))
@@ -196,6 +199,45 @@ describe('what it acknowledges but flags', () => {
     expect((await deliver(purchase(PRICE_PASS, null, 'user-ghost'))).status).toBe(200)
     expect((await deliver(purchase(PRICE_PASS, null, null))).status).toBe(200)
     expect(await opsKinds()).toEqual(['paddle_webhook_no_user', 'paddle_webhook_unknown_user'])
+  })
+
+  describe('an unknown user the app says to expect', () => {
+    const canceled = (userId: string) =>
+      paddleEvent('subscription.canceled', {
+        id: 'sub_route_gone',
+        status: 'canceled',
+        custom_data: { userId },
+        items: [{ price: { id: PRICE_MONTHLY, product_id: OWN_PRODUCT } }],
+      })
+
+    it('alerts as before when nothing is registered', async () => {
+      await deliver(canceled('user-ghost'))
+      expect(await opsKinds()).toEqual(['paddle_webhook_unknown_user'])
+    })
+
+    it('acknowledges with an info log, not an alert, when a check claims it', async () => {
+      registerUnknownUserExpectation('deletion', (e) => e.data.status === 'canceled')
+
+      expect((await deliver(canceled('user-ghost'))).status).toBe(200)
+
+      expect(await opsKinds()).toEqual([])
+      expect(logs.info).toHaveBeenCalledWith(
+        expect.stringContaining('"kind":"paddle_webhook_after_deletion"'),
+      )
+      // Only what the check names: a purchase for a missing account still alerts.
+      await deliver(purchase(PRICE_PASS, null, 'user-ghost'))
+      expect(await opsKinds()).toEqual(['paddle_webhook_unknown_user'])
+    })
+
+    it('treats a check that throws as not expected, so the alert is never lost', async () => {
+      registerUnknownUserExpectation('broken', () => {
+        throw new Error('boom')
+      })
+
+      await deliver(canceled('user-ghost'))
+
+      expect(await opsKinds()).toEqual(['paddle_webhook_unknown_user'])
+    })
   })
 
   it('does not alert on duplicates or out-of-order events (expected traffic)', async () => {

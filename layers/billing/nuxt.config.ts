@@ -57,6 +57,10 @@ export default defineNuxtConfig({
       // id, so neither app can tell the other's refunds from its own, and every
       // foreign refund would page this one. The warn log line stays either way.
       alertUnmatchedAdjustments: true,
+      // Refuse account deletion (409 `live_subscription`) while a subscription
+      // can still bill. Turn it off only when the app's own deletion flow
+      // cancels the subscription at Paddle itself and fails closed.
+      guardDeletion: true,
     },
     public: {
       // Paddle client-side token (public by design) + environment. Empty
