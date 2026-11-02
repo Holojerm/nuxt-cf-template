@@ -106,11 +106,15 @@ export function hashLayer(dir: string): string {
 }
 
 /** Resolve a branch, tag or sha to a full commit sha. Public repo, no token. */
+/** Without one, a stalled connection hangs `layers:pull` / `layers:check --remote` forever. */
+const FETCH_TIMEOUT_MS = 60_000
+
 export async function resolveRef(repo: string, ref: string): Promise<string> {
   const response = await fetch(
     `https://api.github.com/repos/${repo}/commits/${encodeURIComponent(ref)}`,
     {
       headers: { accept: 'application/vnd.github.sha', 'user-agent': 'layers-pull' },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     },
   )
   if (!response.ok) throw new Error(`Could not resolve ${repo}@${ref}: HTTP ${response.status}`)
@@ -123,10 +127,16 @@ export async function resolveRef(repo: string, ref: string): Promise<string> {
  * gzip) so no dependency is needed.
  */
 export async function downloadRepo(repo: string, sha: string, into: string): Promise<string> {
-  const response = await fetch(`https://codeload.github.com/${repo}/tar.gz/${sha}`)
+  const response = await fetch(`https://codeload.github.com/${repo}/tar.gz/${sha}`, {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  })
   if (!response.ok) throw new Error(`Could not download ${repo}@${sha}: HTTP ${response.status}`)
   const archive = join(into, 'repo.tar.gz')
-  await Bun.write(archive, response)
+  // Buffered, not `Bun.write(archive, response)`: streaming a Response body to
+  // disk stalls at 100% CPU on a second download in one process (reproduced on
+  // Bun 1.4.0, 2026-11-02), and `--all` or `--remote` downloads more than once.
+  // The archive is a few MB.
+  await Bun.write(archive, await response.arrayBuffer())
   const tar = Bun.spawnSync(['tar', '-xzf', archive, '-C', into])
   if (tar.exitCode !== 0) throw new Error(`tar failed: ${tar.stderr.toString()}`)
   const top = readdirSync(into, { withFileTypes: true }).find((entry) => entry.isDirectory())
