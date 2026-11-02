@@ -221,8 +221,8 @@ function openDeleteModal(): void {
 async function confirmDelete(): Promise<void> {
   deletePending.value = true
   try {
-    await $fetch('/api/account', {
-      method: 'DELETE',
+    await $fetch('/api/account/delete', {
+      method: 'POST',
       body: { confirmEmail: confirmEmailInput.value },
     })
     deleteOpen.value = false
