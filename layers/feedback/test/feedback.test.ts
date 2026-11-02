@@ -64,6 +64,15 @@ describe('feedbackSubmissionSchema', () => {
     expect(parsed.email).toBe('someone@example.com')
     expect(parsed.rating).toBe(2)
   })
+
+  it('accepts only an https replay link, since the admin console renders it as one', () => {
+    const base = { message: 'hello there' }
+    for (const replayUrl of ['javascript:alert(1)', 'data:text/html,x', 'http://posthog.com/r']) {
+      expect(() => feedbackSubmissionSchema.parse({ ...base, replayUrl })).toThrow()
+    }
+    const ok = 'https://us.posthog.com/project/1/replay/abc'
+    expect(feedbackSubmissionSchema.parse({ ...base, replayUrl: ok }).replayUrl).toBe(ok)
+  })
 })
 
 describe('recordFeedback', () => {

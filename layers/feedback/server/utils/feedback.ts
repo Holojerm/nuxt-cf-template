@@ -52,8 +52,19 @@ export const feedbackSubmissionSchema = z.object({
   /** Reply-to address — only meaningful for signed-out submitters. */
   email: z.email().max(320).nullish(),
   path: z.string().max(512).nullish(),
-  /** PostHog session replay deep link, from useFeedback() on the client. */
-  replayUrl: z.string().max(1000).nullish(),
+  /**
+   * PostHog session replay deep link, from useFeedback() on the client.
+   *
+   * https only: this is a public endpoint, so the body is whatever a stranger
+   * sends, and the admin console renders this value as a link — a
+   * `javascript:` URI here would run in the operator's session on click. Not
+   * pinned to `posthogHost`, which is the ingest host, not the dashboard host
+   * replay links point at.
+   */
+  replayUrl: z
+    .url({ protocol: /^https$/ })
+    .max(1000)
+    .nullish(),
   posthogDistinctId: z.string().max(200).nullish(),
   /**
    * Solved Turnstile challenge, sent only by anonymous submitters and only when
