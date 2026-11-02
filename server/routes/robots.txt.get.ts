@@ -5,8 +5,10 @@
 // to stay away without a second static file to keep in sync.
 //
 // The body — including the named AI-crawler policy — is built by
-// buildRobotsTxt() in server/utils/seo.ts, which is unit-tested.
+// buildRobotsTxt() in server/utils/seo.ts, which is unit-tested. An app's own
+// private paths are added with registerRobotsDisallow() (server/utils/public-pages.ts).
 
+import { getRobotsDisallow } from '../utils/public-pages'
 import { buildRobotsTxt } from '../utils/seo'
 
 export default defineEventHandler((event) => {
@@ -16,6 +18,7 @@ export default defineEventHandler((event) => {
     appUrl: config.public.appUrl,
     indexable: config.public.indexable !== false,
     allowAiCrawlers: config.public.allowAiCrawlers !== false,
+    disallow: getRobotsDisallow(),
   })
 
   setResponseHeader(event, 'Content-Type', 'text/plain; charset=utf-8')

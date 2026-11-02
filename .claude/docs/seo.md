@@ -18,10 +18,17 @@ The `useSeo()` one-call-per-page contract, how `publicPage` meta feeds both `sit
   there is no list to update. A page without it is in neither, which is the right
   default. `noindex: true` and `publicPage` are mutually exclusive and the gate enforces it.
 - **A dynamic route cannot reach either file that way.** The collecting hook skips any path
-  containing `:`, because `/blog/[slug]` is one pattern rather than N URLs. Enumerate those
-  server-side in `sitemap.xml.get.ts` / `llms.txt.get.ts` — see `server/utils/blog.ts`. The
-  page still declares `publicPage` (the gate's invariant is per-page), with a comment saying
-  the values are inert.
+  containing `:`, because `/blog/[slug]` is one pattern rather than N URLs. The blog is
+  enumerated server-side from content (`server/utils/blog.ts`); **any other set of URLs an app
+  owns is registered, not hand-added to the routes**: from a Nitro plugin,
+  `registerPublicPageSource({ key, list(db, { buildDate }), llmsHeading?, defaults? })`
+  (`server/utils/public-pages.ts`) puts each returned `{ path, title?, description?, lastmod? }`
+  in `sitemap.xml`, and in `llms.txt` under `llmsHeading` when it names one. A source that throws
+  is logged, skipped, and makes both documents `no-store`, like a failed blog query.
+  `registerRobotsDisallow(['/sessions'])` adds private paths to `robots.txt` (wildcard group
+  and every named AI crawler). The page still declares `publicPage` (the gate's invariant is
+  per-page), with a comment saying the values are inert. The three routes stay identical in
+  every fork.
 - **Never write FAQ (or any) JSON-LD for content that isn't rendered.** `/pricing`
   builds its `FAQPage` from the same `PRICING_FAQ` array it renders — see
   `app/utils/faq.ts`. Structured data describing invisible content is a manual-action
