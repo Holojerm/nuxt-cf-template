@@ -134,6 +134,13 @@
       "when": 1790440006467,
       "tag": "0018_ancient_supreme_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1793631864357,
+      "tag": "0019_late_diamondback",
+      "breakpoints": true
     }
   ]
 }
