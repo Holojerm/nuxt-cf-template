@@ -24,6 +24,14 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   a second endpoint. An optional feature's counter group (feedback's) is
   contributed via `registerFleetCounterContributor()` in
   `server/utils/extensions.ts`, and is absent when the feature is removed.
+- **`app-owned.json`** (template root) lists the template paths every app owns by
+  design: brand, home page and layout, generated email and colour output, the
+  schema composition root, the seed and the fork's own event and lifecycle
+  registries. Syncs leave them alone and fleet's drift view excludes them. A
+  fork's *other* deliberate differences from template-owned files go in its own
+  `fleet.json` › `template.customized` (exact paths, or directory prefixes ending
+  in `/`, which also declare template files the fork removed); everything else
+  that differs is the convergence backlog fleet reports as `core_undeclared`.
 - **The `product` block** in `fleet.json` names this product's north-star,
   activation and retention events, so the dashboard can chart any fork's
   funnel without knowing the product. Every name must be registered in
