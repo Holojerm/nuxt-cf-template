@@ -120,15 +120,64 @@ export interface NativeRateLimiter {
  * the only two periods the platform accepts. Wrangler rejects anything else at
  * deploy; this makes `bun typecheck` reject it first.
  */
-export const NATIVE_LIMITER: {
+export interface NativeLimiterSpec {
   /** Binding name — must match `name` in the wrangler.toml block. */
   binding: string
   limit: number
   windowSeconds: 10 | 60
-} = {
+}
+
+export const NATIVE_LIMITER: NativeLimiterSpec = {
   binding: 'RATE_LIMITER',
   limit: 30,
   windowSeconds: 60,
+}
+
+// ── More than one native budget ──────────────────────────────────────────────
+// The binding's (limit, period) is fixed at deploy, so a second budget (a
+// stricter one for an expensive create endpoint, a looser one for a status
+// route) is a second `[[ratelimits]]` block with its own name and namespace_id.
+// An app declares it here instead of editing this file:
+//
+//   registerNativeLimiter({ binding: 'GAME_CREATE_LIMITER', limit: 5, windowSeconds: 60 })
+//
+// from a Nitro plugin, next to the `[[ratelimits]]` block that names it. Call
+// sites need no change: a `rateLimit()` whose numbers equal a registered spec's
+// goes native, anything else stays on KV, exactly as for NATIVE_LIMITER. Keyed
+// by binding, so registering twice (plugin + test, dev reload) replaces.
+const nativeLimiters = new Map<string, NativeLimiterSpec>([
+  [NATIVE_LIMITER.binding, NATIVE_LIMITER],
+])
+
+export function registerNativeLimiter(spec: NativeLimiterSpec): void {
+  if (spec.binding === NATIVE_LIMITER.binding) {
+    throw new Error(`registerNativeLimiter: ${spec.binding} is core's own limiter`)
+  }
+  for (const other of nativeLimiters.values()) {
+    if (
+      other.binding !== spec.binding &&
+      other.limit === spec.limit &&
+      other.windowSeconds === spec.windowSeconds
+    ) {
+      // Two bindings with one budget make "which one serves this call site" a
+      // coin toss, and the loser's counters silently stop being used.
+      throw new Error(
+        `registerNativeLimiter: ${spec.binding} duplicates ${other.binding} ` +
+          `(${spec.limit}/${spec.windowSeconds}s)`,
+      )
+    }
+  }
+  nativeLimiters.set(spec.binding, spec)
+}
+
+export function getNativeLimiters(): NativeLimiterSpec[] {
+  return [...nativeLimiters.values()]
+}
+
+/** Test-only: drop every registered limiter, leaving core's. */
+export function clearNativeLimitersForTest(): void {
+  nativeLimiters.clear()
+  nativeLimiters.set(NATIVE_LIMITER.binding, NATIVE_LIMITER)
 }
 
 /**
@@ -160,6 +209,9 @@ export type BackendChoice =
   | { backend: 'native'; native: NativeRateLimiter }
   | { backend: 'kv'; reason: KvFallbackReason }
 
+/** Resolved native bindings, by binding name. */
+export type NativeLimiters = Readonly<Record<string, NativeRateLimiter>>
+
 /**
  * Which backend may serve this request.
  *
@@ -171,20 +223,37 @@ export type BackendChoice =
  * the same flaw pointed the other way: /api/health would silently become 30/60s
  * with a header still claiming 60.
  *
- * So: match, or use KV. To move another call site onto the binding, give it the
- * same numbers as NATIVE_LIMITER, or add a second `[[ratelimits]]` block with
- * its own namespace_id and a second entry here.
+ * So: match, or use KV. To move another call site onto a binding, give it the
+ * same numbers as a registered spec (NATIVE_LIMITER, or one added with
+ * `registerNativeLimiter()`).
+ *
+ * `natives` are the bindings this Worker actually has, by name. A request that
+ * matches a registered spec whose binding is missing falls back to KV with
+ * `binding-absent`; with none resolved at all that is the answer outright.
  */
+export function chooseBackendAmong(
+  natives: NativeLimiters | undefined,
+  opts: Pick<RateLimitOptions, 'limit' | 'windowSeconds'>,
+): BackendChoice {
+  if (!natives || Object.keys(natives).length === 0) {
+    return { backend: 'kv', reason: 'binding-absent' }
+  }
+  const specs = getNativeLimiters()
+  const match = specs.find((s) => s.windowSeconds === opts.windowSeconds && s.limit === opts.limit)
+  if (match) {
+    const native = natives[match.binding]
+    return native ? { backend: 'native', native } : { backend: 'kv', reason: 'binding-absent' }
+  }
+  const sameWindow = specs.some((s) => s.windowSeconds === opts.windowSeconds)
+  return { backend: 'kv', reason: sameWindow ? 'limit-mismatch' : 'window-mismatch' }
+}
+
+/** Single-binding form of `chooseBackendAmong`: `native` is NATIVE_LIMITER's binding. */
 export function chooseBackend(
   native: NativeRateLimiter | undefined,
   opts: Pick<RateLimitOptions, 'limit' | 'windowSeconds'>,
 ): BackendChoice {
-  if (!native) return { backend: 'kv', reason: 'binding-absent' }
-  if (opts.windowSeconds !== NATIVE_LIMITER.windowSeconds) {
-    return { backend: 'kv', reason: 'window-mismatch' }
-  }
-  if (opts.limit !== NATIVE_LIMITER.limit) return { backend: 'kv', reason: 'limit-mismatch' }
-  return { backend: 'native', native }
+  return chooseBackendAmong(native ? { [NATIVE_LIMITER.binding]: native } : undefined, opts)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -206,13 +275,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * older wrangler, a non-Cloudflare preset, or a `wrangler.toml` someone trimmed
  * all land here and get KV instead of a TypeError.
  */
-export function resolveNativeLimiter(event: H3Event): NativeRateLimiter | undefined {
+export function resolveNativeLimiters(event: H3Event): NativeLimiters | undefined {
   const cloudflare: unknown = event.context.cloudflare
   if (!isRecord(cloudflare) || !isRecord(cloudflare.env)) return undefined
 
-  const binding = cloudflare.env[NATIVE_LIMITER.binding]
-  if (!isRecord(binding) || typeof binding.limit !== 'function') return undefined
-  return binding as unknown as NativeRateLimiter
+  const found: Record<string, NativeRateLimiter> = {}
+  for (const { binding: name } of getNativeLimiters()) {
+    const binding = cloudflare.env[name]
+    if (isRecord(binding) && typeof binding.limit === 'function') {
+      found[name] = binding as unknown as NativeRateLimiter
+    }
+  }
+  return Object.keys(found).length > 0 ? found : undefined
+}
+
+/** NATIVE_LIMITER's binding alone — kept for callers that predate the registry. */
+export function resolveNativeLimiter(event: H3Event): NativeRateLimiter | undefined {
+  return resolveNativeLimiters(event)?.[NATIVE_LIMITER.binding]
 }
 
 /** What actually happened, once a backend has been picked and run. */
@@ -243,11 +322,20 @@ export interface RateLimitVerdict {
  * broken, the request goes through and the log says so.
  */
 export async function consumeRateLimitWithFallback(
-  backends: { native?: NativeRateLimiter; store: RateLimitStore },
+  backends: { native?: NativeRateLimiter; natives?: NativeLimiters; store: RateLimitStore },
   opts: RateLimitOptions,
   now: number = Date.now(),
 ): Promise<RateLimitVerdict> {
-  const choice = chooseBackend(backends.native, opts)
+  // `native` is NATIVE_LIMITER's binding (the form that predates the registry);
+  // `natives` carries every registered binding. Either, or both, may be given.
+  const natives: NativeLimiters | undefined =
+    backends.native || backends.natives
+      ? {
+          ...backends.natives,
+          ...(backends.native ? { [NATIVE_LIMITER.binding]: backends.native } : {}),
+        }
+      : undefined
+  const choice = chooseBackendAmong(natives, opts)
 
   try {
     if (choice.backend === 'native') {
@@ -349,7 +437,7 @@ export async function rateLimit(
   const identifier = opts.identifier ?? getClientIp(event)
 
   const verdict = await consumeRateLimitWithFallback(
-    { native: resolveNativeLimiter(event), store: kv },
+    { natives: resolveNativeLimiters(event), store: kv },
     {
       key: `${opts.name}:${identifier}`,
       limit: opts.limit,

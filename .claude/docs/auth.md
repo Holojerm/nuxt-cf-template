@@ -174,6 +174,15 @@ key — so `chooseBackend` delegates to it **only when both numbers match**
 20/60s handler through a 30/60s binding enforces 30 while `X-RateLimit-Limit: 20`
 goes out on the response, and nothing fails. `period` may only be **10 or 60**.
 
+- **A second native budget** (a stricter limit for an expensive create endpoint) is a second
+  `[[ratelimits]]` block (own `name`, own `namespace_id`, in `[env.preview]` too) plus one line
+  in a Nitro plugin, never an edit to `rate-limit.ts`:
+  `registerNativeLimiter({ binding: 'GAME_CREATE_LIMITER', limit: 5, windowSeconds: 60 })`.
+  A `rateLimit()` whose numbers equal a registered spec goes native; any other stays on KV.
+  Two bindings with the same budget are refused. A fork's named budgets
+  (`const INGEST_LIMITER = { name, limit, windowSeconds }`, passed straight to `rateLimit()`
+  like `UNSUBSCRIBE_LIMITER`) belong in a file of the fork's own,
+  not in `rate-limit.ts`.
 - Changing the auth limit means changing `NATIVE_LIMITER` **and** `wrangler.toml`.
   `test/rate-limit.test.ts` drives the real binding and fails when they drift.
 - Both backends **fail open** (an outage in the abuse-control layer must not take

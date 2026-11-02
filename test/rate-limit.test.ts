@@ -6,12 +6,16 @@
 // takes the native binding the same way, for the same reason.
 
 import { env } from 'cloudflare:test'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   chooseBackend,
+  chooseBackendAmong,
+  clearNativeLimitersForTest,
   consumeRateLimit,
   consumeRateLimitWithFallback,
+  getNativeLimiters,
   NATIVE_LIMITER,
+  registerNativeLimiter,
   type NativeRateLimiter,
   type RateLimitStore,
 } from '../server/utils/rate-limit'
@@ -277,5 +281,88 @@ describe('the deployed binding', () => {
       `request ${NATIVE_LIMITER.limit + 1} was allowed — wrangler.toml's simple.limit is higher ` +
         'than NATIVE_LIMITER.limit, so the auth surface is enforcing a number nobody wrote down',
     ).toBe(false)
+  })
+})
+
+describe('registerNativeLimiter', () => {
+  const GAME_CREATE = { binding: 'GAME_CREATE_LIMITER', limit: 5, windowSeconds: 60 } as const
+
+  afterEach(() => clearNativeLimitersForTest())
+
+  it("starts with core's limiter only, so nothing changes until an app registers", () => {
+    expect(getNativeLimiters()).toEqual([NATIVE_LIMITER])
+  })
+
+  it('routes a call site matching the registered budget to its own binding', () => {
+    registerNativeLimiter(GAME_CREATE)
+    const auth = makeNative([])
+    const create = makeNative([])
+    const natives = { [NATIVE_LIMITER.binding]: auth, [GAME_CREATE.binding]: create }
+
+    expect(chooseBackendAmong(natives, MATCHED)).toEqual({ backend: 'native', native: auth })
+    expect(chooseBackendAmong(natives, { limit: 5, windowSeconds: 60 })).toEqual({
+      backend: 'native',
+      native: create,
+    })
+  })
+
+  it('still refuses a budget no binding was deployed for', () => {
+    registerNativeLimiter(GAME_CREATE)
+    const natives = { [NATIVE_LIMITER.binding]: makeNative([]) }
+    expect(chooseBackendAmong(natives, { limit: 20, windowSeconds: 60 })).toEqual({
+      backend: 'kv',
+      reason: 'limit-mismatch',
+    })
+    expect(chooseBackendAmong(natives, { limit: 10, windowSeconds: 300 })).toEqual({
+      backend: 'kv',
+      reason: 'window-mismatch',
+    })
+  })
+
+  it('falls back to KV when the matching spec has no binding on this Worker', () => {
+    // Registered by the app, but the wrangler.toml block for it is missing (a
+    // preview env that forgot to repeat it): KV, said out loud, not a TypeError.
+    registerNativeLimiter(GAME_CREATE)
+    const natives = { [NATIVE_LIMITER.binding]: makeNative([]) }
+    expect(chooseBackendAmong(natives, { limit: 5, windowSeconds: 60 })).toEqual({
+      backend: 'kv',
+      reason: 'binding-absent',
+    })
+  })
+
+  it('spends the request against the binding that matches', async () => {
+    registerNativeLimiter(GAME_CREATE)
+    const auth = makeNative([])
+    const create = makeNative([true, false])
+    const backends = {
+      natives: { [NATIVE_LIMITER.binding]: auth, [GAME_CREATE.binding]: create },
+      store: makeStore(),
+    }
+    const opts = { key: 'game-create:1.2.3.4', limit: 5, windowSeconds: 60 }
+
+    expect((await consumeRateLimitWithFallback(backends, opts)).allowed).toBe(true)
+    const blocked = await consumeRateLimitWithFallback(backends, opts)
+    expect(blocked).toMatchObject({ allowed: false, backend: 'native', remaining: 0 })
+    expect(create.keys).toEqual([opts.key, opts.key])
+    expect(auth.keys).toEqual([])
+  })
+
+  it("refuses core's binding and a duplicate budget under another name", () => {
+    expect(() => registerNativeLimiter({ ...GAME_CREATE, binding: 'RATE_LIMITER' })).toThrow(
+      /core's own/,
+    )
+    expect(() =>
+      registerNativeLimiter({
+        binding: 'ANOTHER',
+        limit: NATIVE_LIMITER.limit,
+        windowSeconds: NATIVE_LIMITER.windowSeconds,
+      }),
+    ).toThrow(/duplicates RATE_LIMITER/)
+  })
+
+  it('replaces rather than duplicates a spec registered twice', () => {
+    registerNativeLimiter(GAME_CREATE)
+    registerNativeLimiter(GAME_CREATE)
+    expect(getNativeLimiters()).toHaveLength(2)
   })
 })

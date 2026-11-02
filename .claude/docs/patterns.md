@@ -125,6 +125,13 @@ registerFleetExtraContributor({
 The numbers land in `extra` on `GET /api/fleet`. A typed, nested group goes through
 `registerFleetCounterContributor` instead (see the feedback layer). Counts only.
 
+### Extra native rate-limit budgets
+
+`rateLimit()` delegates to Cloudflare's native binding only when a call site's numbers equal
+a registered budget. Core registers `NATIVE_LIMITER`; an app adds another with
+`registerNativeLimiter({ binding, limit, windowSeconds })` from a Nitro plugin, next to its
+`[[ratelimits]]` block. See `.claude/docs/auth.md › Rate Limiting`.
+
 ### Vendored layers
 
 A fork takes a template feature that has moved into `layers/<name>/` by vendoring it:
