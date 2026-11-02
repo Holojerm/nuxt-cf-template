@@ -110,7 +110,7 @@ const completedSteps = computed(() => props.progress?.completed ?? 0)
       <!-- One primary action per view — the next incomplete step, and
            nothing else. The 'feedback' step isn't a plain link: it embeds
            the same widget every other page uses floating
-           (app/components/Feedback/FeedbackWidget.vue), inline instead.
+           (layers/feedback/app/components/Feedback/FeedbackWidget.vue), inline instead.
            Identical for both arms. Forwarding its `submitted` event is what
            lets app/pages/dashboard.vue know to refresh the checklist —
            without it, finishing the LAST step this way never reflects

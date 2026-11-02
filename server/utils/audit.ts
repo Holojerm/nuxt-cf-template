@@ -341,7 +341,7 @@ export function toAuditView(row: AuditLogEntry): AuditView {
 
 /**
  * Salted hash of the caller's IP for an audit row, built exactly the way
- * server/api/feedback.post.ts builds the one on a feedback row — same salt,
+ * layers/feedback/server/api/feedback.post.ts builds the one on a feedback row — same salt,
  * same construction, so the two are comparable in an investigation and neither
  * is an identifier on its own.
  */

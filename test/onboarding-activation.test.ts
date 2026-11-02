@@ -15,7 +15,7 @@ import { drizzle } from 'drizzle-orm/d1'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import { registerFeedbackExtensions } from '../server/utils/feedback-extensions'
+import { registerFeedbackExtensions } from '../layers/feedback/server/utils/feedback-extensions'
 import { listAudit } from '../server/utils/audit'
 import {
   activateIfComplete,
@@ -26,8 +26,8 @@ import {
 
 const db = drizzle(env.DB, { schema })
 
-// The feedback feature's reads are contributed, not built in; register them as
-// server/plugins/feedback.ts does in the running app.
+// The checklist's 'feedback' step (shared/utils/onboarding-steps.ts) reads a
+// signal the feedback layer contributes; register it as its plugin does.
 registerFeedbackExtensions()
 
 const USER_ID = 'user-onboarding-1'

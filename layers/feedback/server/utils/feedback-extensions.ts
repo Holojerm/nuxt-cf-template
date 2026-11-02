@@ -1,6 +1,6 @@
 // What the feedback feature contributes to core: account deletion and export,
 // the admin one-customer view, fleet counters and the onboarding checklist.
-// Registered once per isolate by server/plugins/feedback.ts; tests call
+// Registered once per isolate by layers/feedback/server/plugins/feedback.ts; tests call
 // registerFeedbackExtensions() directly. See server/utils/extensions.ts.
 //
 // ── What "contents" means for feedback on deletion ───────────────────────────
@@ -20,7 +20,7 @@ import {
   registerAdminUserContributor,
   registerFleetCounterContributor,
   registerOnboardingSignalContributor,
-} from './extensions'
+} from '#server/utils/extensions'
 
 /** One feedback row as the data export shows it — no reply, address or hash. */
 export interface AccountExportFeedback {
@@ -48,7 +48,7 @@ export interface AdminUserFeedback {
   createdAt: string
 }
 
-declare module './extensions' {
+declare module '#server/utils/extensions' {
   interface AccountExportSections {
     feedback: AccountExportFeedback[]
   }

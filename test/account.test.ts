@@ -16,16 +16,11 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import { registerFeedbackExtensions } from '../server/utils/feedback-extensions'
 import { deleteAccount, exportAccount, revokeSessions } from '../server/utils/account'
 import { checkSession } from '../server/utils/session-guard'
 import { getBillingOverview } from '../server/utils/entitlements'
 
 const db = drizzle(env.DB, { schema })
-
-// The feedback feature's reads are contributed, not built in; register them as
-// server/plugins/feedback.ts does in the running app.
-registerFeedbackExtensions()
 
 const USER = 'user-1'
 const OTHER = 'user-2'
@@ -33,7 +28,6 @@ const OTHER = 'user-2'
 beforeEach(async () => {
   await db.delete(schema.lifecycleSends)
   await db.delete(schema.auditLog)
-  await db.delete(schema.feedback)
   await db.delete(schema.notificationPreferences)
   await db.delete(schema.files)
   await db.delete(schema.mcpConnectCodes)
@@ -189,29 +183,6 @@ describe('deleteAccount', () => {
     expect(remaining.map((row) => row.id)).toEqual(['link-other'])
   })
 
-  it('scrubs PII off a feedback row but keeps the message itself', async () => {
-    await db.insert(schema.feedback).values({
-      id: 'fb-1',
-      userId: USER,
-      kind: 'bug',
-      message: 'The export button did nothing on Safari',
-      email: 'ada@example.com',
-      userAgent: 'Mozilla/5.0',
-      ipHash: 'abc123',
-    })
-
-    expect((await deleteAccount(db, USER)).outcome).toBe('deleted')
-
-    const row = await db.query.feedback.findFirst({ where: eq(schema.feedback.id, 'fb-1') })
-    expect(row?.message).toBe('The export button did nothing on Safari')
-    expect(row?.email).toBeNull()
-    expect(row?.userAgent).toBeNull()
-    expect(row?.ipHash).toBeNull()
-    // Never a foreign key (schema.ts) — left pointing at the now-anonymized
-    // account rather than nulled, so "how many people gave feedback" survives.
-    expect(row?.userId).toBe(USER)
-  })
-
   it('writes an account.deleted audit row, actor and target both the deleting user', async () => {
     await db.insert(schema.files).values({
       id: 'file-1',
@@ -241,7 +212,6 @@ describe('deleteAccount', () => {
       filesCount: 1,
       connectCodesCount: 0,
       notificationPreferencesCount: 0,
-      feedbackCount: 0,
     })
   })
 
@@ -413,15 +383,6 @@ describe('exportAccount', () => {
       status: 'active',
       currentPeriodEnd: new Date('2026-01-01T00:00:00Z'),
     })
-    await db.insert(schema.feedback).values({
-      id: 'fb-1',
-      userId: USER,
-      kind: 'idea',
-      message: 'Add dark mode',
-      status: 'new',
-      email: 'ada@example.com',
-      repliedBy: 'admin-1',
-    })
     // Only one optional type is overridden — the export should still report
     // the EFFECTIVE state of every optional type, not just the rows that
     // happen to exist (see AccountExportNotificationPreference).
@@ -472,12 +433,6 @@ describe('exportAccount', () => {
 
     expect(result.entitlements).toHaveLength(1)
     expect(result.entitlements[0]).toMatchObject({ id: 'ent-1', status: 'active' })
-
-    expect(result.feedback).toHaveLength(1)
-    expect(result.feedback[0]).toMatchObject({ id: 'fb-1', message: 'Add dark mode' })
-    expect(result.feedback[0]).not.toHaveProperty('email')
-    expect(result.feedback[0]).not.toHaveProperty('repliedBy')
-    expect(result.feedback[0]).not.toHaveProperty('ipHash')
 
     // Every optional type appears — welcome/referral default-on since neither
     // was ever toggled, product_updates reflects the row above.
