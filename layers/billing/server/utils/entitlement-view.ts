@@ -14,8 +14,16 @@ import { deriveBillingState } from './billing-state'
 import type { BillingState } from './billing-state'
 import { ACTIVE_STATUSES, getBillingOverview } from './entitlements'
 import type { EntitlementDb } from './entitlements'
+import {
+  applyEntitlementHistoryFields,
+  applyEntitlementViewFields,
+} from './entitlement-view-fields'
+import type { EntitlementHistoryFields, EntitlementViewFields } from './entitlement-view-fields'
 
-export interface EntitlementHistoryView {
+// The fields this util builds itself. The exported EntitlementHistoryView /
+// EntitlementView add whatever an app registered (entitlement-view-fields.ts),
+// so a registered field is typed all the way to the page that reads it.
+interface EntitlementHistoryBase {
   ref: string
   kind: 'pass' | 'subscription'
   /** True when this row was comped by an admin rather than paid for. */
@@ -39,7 +47,7 @@ export interface EntitlementHistoryView {
   purchasedAt: string
 }
 
-export interface EntitlementView {
+interface EntitlementViewBase {
   active: boolean
   /**
    * The one word every surface branches on — customer and admin console alike.
@@ -87,6 +95,12 @@ export interface EntitlementView {
    * to avoid).
    */
   portalAvailable: boolean
+  history: EntitlementHistoryBase[]
+}
+
+export interface EntitlementHistoryView extends EntitlementHistoryBase, EntitlementHistoryFields {}
+
+export interface EntitlementView extends EntitlementViewBase, EntitlementViewFields {
   history: EntitlementHistoryView[]
 }
 
@@ -127,7 +141,7 @@ export async function buildEntitlementView(
     ) ?? null
   const describing = liveSubscription ?? overview.active
 
-  return {
+  const view: EntitlementViewBase & { history: EntitlementHistoryView[] } = {
     // Still keyed on the access query: "do they get in" is a different question
     // from "what should we call their plan", and only the former gates anything.
     active: Boolean(overview.active),
@@ -143,14 +157,23 @@ export async function buildEntitlementView(
         : null,
     cancellable: overview.cancellableSubscriptionIds.length,
     portalAvailable: Boolean(overview.paddleCustomerId),
-    history: overview.history.map((entitlement) => ({
-      ref: entitlement.paddleSubscriptionId,
-      kind: isPass(entitlement.paddleSubscriptionId) ? 'pass' : 'subscription',
-      comped: isCompRef(entitlement.paddleSubscriptionId),
-      referral: isReferralRef(entitlement.paddleSubscriptionId),
-      status: entitlement.status,
-      currentPeriodEnd: entitlement.currentPeriodEnd?.toISOString() ?? null,
-      purchasedAt: entitlement.createdAt.toISOString(),
-    })),
+    history: overview.history.map((entitlement) =>
+      applyEntitlementHistoryFields(
+        {
+          ref: entitlement.paddleSubscriptionId,
+          kind: isPass(entitlement.paddleSubscriptionId) ? 'pass' : 'subscription',
+          comped: isCompRef(entitlement.paddleSubscriptionId),
+          referral: isReferralRef(entitlement.paddleSubscriptionId),
+          status: entitlement.status,
+          currentPeriodEnd: entitlement.currentPeriodEnd?.toISOString() ?? null,
+          purchasedAt: entitlement.createdAt.toISOString(),
+        },
+        entitlement,
+      ),
+    ),
   }
+
+  // Fields an app or another feature registered (entitlement-view-fields.ts).
+  // Nothing registered: `view` comes back untouched.
+  return applyEntitlementViewFields(view, { db, userId, overview, describing })
 }

@@ -103,6 +103,14 @@ export async function findLiveSubscriptionRef(
 export interface BillingOptions {
   /** Days one pass buys. Default 30. */
   passDays?: number
+  /**
+   * Register the deletion guard (refuse while a live subscription exists).
+   * Default true. An app whose own deletion flow cancels the subscription at
+   * Paddle first, and fails closed itself, sets this false: the guard would
+   * refuse before that cancel could run, because the row only turns `canceled`
+   * when Paddle's webhook arrives.
+   */
+  guardDeletion?: boolean
 }
 
 export function registerBillingExtensions(options: BillingOptions = {}): void {
@@ -112,20 +120,22 @@ export function registerBillingExtensions(options: BillingOptions = {}): void {
   // subscription's billing lifecycle independently: refusing up front, and
   // pointing at the portal, is the one place friction protects the customer.
   // The wire contract (409, data.code) is read by app/pages/account.vue.
-  registerDeletionGuard({
-    key: 'billing',
-    async check(db, userId) {
-      const subscriptionId = await findLiveSubscriptionRef(db, userId)
-      if (!subscriptionId) return null
-      return {
-        code: 'live_subscription',
-        message:
-          'Deleting your account would not stop the charges — Paddle owns the subscription, ' +
-          'not this account. Cancel it from the billing portal first, then delete your account.',
-        data: { subscriptionId },
-      }
-    },
-  })
+  if (options.guardDeletion !== false) {
+    registerDeletionGuard({
+      key: 'billing',
+      async check(db, userId) {
+        const subscriptionId = await findLiveSubscriptionRef(db, userId)
+        if (!subscriptionId) return null
+        return {
+          code: 'live_subscription',
+          message:
+            'Deleting your account would not stop the charges — Paddle owns the subscription, ' +
+            'not this account. Cancel it from the billing portal first, then delete your account.',
+          data: { subscriptionId },
+        }
+      },
+    })
+  }
 
   // Export-only: entitlements are retained on deletion (billing records kept
   // as tax law requires; the `users` row survives as a tombstone), so there is

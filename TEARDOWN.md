@@ -56,8 +56,8 @@ the Paddle adapter (webhook, signature check, portal call), the entitlement mode
 tests, billing state and notifications, comp grants, the `/pricing` page with `plans.ts`,
 `usePaddle()`/`useEntitlement()`, the past-due banner and alert, the `subscription` route
 middleware, the replay fixtures, and the Nitro plugin inside it that registers billing
-with core. Also delete `server/plugins/referral.ts` and `server/utils/referral-billing.ts`
-if referrals are still there (step 1 should have removed them).
+with core. Also delete `server/plugins/referral.ts`, `server/utils/referral-billing.ts` and
+`server/utils/referral-view.ts` if referrals are still there (step 1 should have removed them).
 
 Core imports none of it, so nothing else in core needs editing: account deletion is
 unguarded, the data export drops `entitlements`, `/api/fleet` drops its `entitlements` group
@@ -191,10 +191,12 @@ Referrals grant entitlements, so remove them **before** billing.
    [`app/components/Referral/ShareCard.vue`](app/components/Referral/ShareCard.vue),
    and `test/referral.test.ts` / `test/referral-billing.test.ts`.
 2. Remove the `ShareCard` mount from [`app/pages/account.vue`](app/pages/account.vue).
-3. Delete [`server/plugins/referral.ts`](server/plugins/referral.ts) and
-   [`server/utils/referral-billing.ts`](server/utils/referral-billing.ts): they are the
-   referral loop's two handlers on the billing webhook (the first-paid reward and the
-   clawback paperwork). The webhook runs without them.
+3. Delete [`server/plugins/referral.ts`](server/plugins/referral.ts),
+   [`server/utils/referral-billing.ts`](server/utils/referral-billing.ts) and
+   [`server/utils/referral-view.ts`](server/utils/referral-view.ts) (with
+   `test/referral-view.test.ts`): they are the referral loop's registrations with billing
+   (the first-paid reward and the clawback paperwork on the webhook, and `referralKind` on
+   each billing-history row). The webhook and the entitlement view run without them.
 4. In [`server/utils/auth.ts`](server/utils/auth.ts), drop the `referred_by`
    resolution from the INSERT branch of `upsertOAuthUser`, and in
    [`server/utils/magic-link.ts`](server/utils/magic-link.ts) drop the
