@@ -27,7 +27,7 @@ import {
 } from '#shared/utils/referral'
 import * as tables from '../db/schema'
 import type { User } from '../db/schema'
-import type { EntitlementDb as Db } from './entitlements'
+import type { ExtensionDb as Db } from './extensions'
 
 /** The normalized profile an OAuth callback hands over. */
 export interface OAuthProfile {

@@ -110,6 +110,26 @@ worked example: `layers/feedback/server/utils/feedback-extensions.ts` augments t
 same `register…()` function, because Nitro plugins don't run under vitest. Removing a
 feature removes its sections and nothing else; `test/extensions.test.ts` holds core to that.
 
+### Other seams core offers a feature
+
+Beyond the contributors above, `server/utils/extensions.ts` and `server/utils/access-gate.ts`
+hold the places a feature steps into a core flow. Each is a plain registry, behaves as
+documented with nothing registered, and is registered from a Nitro plugin (tests call the same
+function). Billing registers all of them (`server/utils/billing-extensions.ts`).
+
+| Seam | Register with | Core does | With nothing registered |
+| --- | --- | --- | --- |
+| Deletion guard | `registerDeletionGuard({ key, check })` | `deleteAccount()` asks every guard first; the first `{ code, message, data }` it gets back becomes outcome `blocked` and the route's 409 (`data.code`) | Deletion is unguarded |
+| Paywall gate | `registerAccessGate(fn)` | Paywalled routes call `requireAccess(event, productKey?)` | `requireUserSession(event)`: free, sign-in required |
+| Lifecycle step | `registerLifecycleStep(step)` | `server/tasks/lifecycle-email.ts` runs template steps, then registered ones, then the app's. Never rename a step id | Only the template and app steps |
+| Funnel `paid` stage | `registerFunnelStageContributor({ key: 'paid', count })` | `collectFleetFunnel()` reports its count | `funnel.paid` is 0 |
+| View-as section | `registerAdminViewAsContributor({ key, load })` | The admin "view as" payload spreads each section and ANDs the gates each returns into `gates`/`dashboardReachable` | Only `gates.auth` |
+| Export section only | `registerAccountContributor({ key, exportSection })` | `countForDeletion` is optional: omit it and the audit row gains no count | n/a |
+
+Entitlement-shaped data reaches the rest of core through the same contributors:
+`AdminUserContributor` (key `billing`), `OnboardingSignalContributor` (`entitlementActive`),
+`FleetCounterContributor` (`entitlements`) and `PurgeContributor` (`paddleEvents`).
+
 ### Fork-specific fleet counters
 
 A fork reports its own numbers (sessions run, plans created) by registering them, not by

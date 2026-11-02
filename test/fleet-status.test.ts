@@ -10,6 +10,7 @@ import { drizzle } from 'drizzle-orm/d1'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
+import { registerBillingExtensions } from '../server/utils/billing-extensions'
 import { clearExtensionsForTest, registerFleetExtraContributor } from '../server/utils/extensions'
 import {
   collectFleetCounters,
@@ -89,6 +90,9 @@ describe('compareMigrations', () => {
 
 describe('collectFleetCounters', () => {
   beforeEach(async () => {
+    // The `entitlements` group is billing's contribution; the extra-contributor
+    // tests below clear the registry after each case, so register per test.
+    registerBillingExtensions()
     await env.DB.exec('DELETE FROM entitlements')
     await env.DB.exec('DELETE FROM audit_log')
     await env.DB.exec('DELETE FROM ops_events')
@@ -132,6 +136,14 @@ describe('collectFleetCounters', () => {
     })
   })
 
+  it('omits the entitlements group and reports no paid stage without billing', async () => {
+    clearExtensionsForTest()
+    const counters = await collectFleetCounters(db, NOW)
+    expect(counters).not.toHaveProperty('entitlements')
+    expect(Object.keys(counters).sort()).toEqual(['extra', 'funnel', 'opsEvents', 'users'])
+    expect(counters.funnel.paid).toBe(0)
+  })
+
   it('counts, and only counts — no rows, no ids, no addresses leave', async () => {
     const recent = new Date(NOW.getTime() - 2 * DAY_MS)
     const old = new Date(NOW.getTime() - 30 * DAY_MS)
@@ -159,7 +171,7 @@ describe('collectFleetCounters', () => {
 
     const counters = await collectFleetCounters(db, NOW)
     expect(counters.users).toEqual({ total: 2, last7d: 1 })
-    expect(counters.entitlements.byStatus).toEqual({ active: 2, canceled: 1 })
+    expect(counters.entitlements?.byStatus).toEqual({ active: 2, canceled: 1 })
     expect(counters.opsEvents).toEqual({ pending: 1, last24h: 2 })
 
     // The payload is stored for months in someone else's database: it must be

@@ -7,7 +7,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import * as schema from '../server/db/schema'
 import type { SendEmailOptions, SendEmailResult } from '../server/utils/email'
 import { runLifecycle, type LifecycleDeps } from '../server/utils/lifecycle'
-import { activationNudgeStep, passExpiringStep } from '../server/utils/lifecycle-steps'
+import { passExpiringStep } from '../server/utils/billing-lifecycle'
+import { registerBillingExtensions } from '../server/utils/billing-extensions'
+import { clearExtensionsForTest, getRegisteredLifecycleSteps } from '../server/utils/extensions'
+import { TEMPLATE_LIFECYCLE_STEPS, activationNudgeStep } from '../server/utils/lifecycle-steps'
 
 const db = drizzle(env.DB, { schema })
 
@@ -78,6 +81,20 @@ describe('activationNudgeStep.due', () => {
       .insert(schema.lifecycleSends)
       .values({ userId: 'stuck', stepId: 'activation_nudge', subjectKey: '' })
     expect(await activationNudgeStep.due(db, NOW, 100)).toEqual([])
+  })
+})
+
+describe('lifecycle step registry', () => {
+  it('keeps pass_expiring out of core and adds it when billing registers', () => {
+    clearExtensionsForTest()
+    expect(TEMPLATE_LIFECYCLE_STEPS.map((s) => s.id)).toEqual(['activation_nudge'])
+    expect(getRegisteredLifecycleSteps()).toEqual([])
+
+    registerBillingExtensions()
+    // The id is stored in lifecycle_sends; renaming it re-sends to everyone.
+    expect(getRegisteredLifecycleSteps().map((s) => s.id)).toEqual(['pass_expiring'])
+    expect(getRegisteredLifecycleSteps()[0]).toBe(passExpiringStep)
+    clearExtensionsForTest()
   })
 })
 

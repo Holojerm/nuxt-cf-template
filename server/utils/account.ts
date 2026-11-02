@@ -26,10 +26,8 @@ import { and, count, desc, eq } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
 import type { AuditMetadata } from '../db/schema'
-import { isBillingLive } from './entitlements'
-import { isSubscriptionRef } from './paddle-refs'
 import { withAudit, writeAudit } from './audit'
-import { collectSections, getAccountContributors } from './extensions'
+import { collectSections, getAccountContributors, getDeletionGuards } from './extensions'
 import type { AccountExportSections } from './extensions'
 import { OPTIONAL_NOTIFICATION_EVENT_TYPES } from '#shared/utils/notifications'
 
@@ -46,46 +44,14 @@ function tombstoneEmail(userId: string): string {
   return `deleted-${userId}@deleted.invalid`
 }
 
-/**
- * Is there a subscription behind this account that Paddle might still bill —
- * across every product it might have bought, not just `'default'`.
- *
- * Deliberately NOT `getBillingOverview(db, userId)`, which scopes to one
- * `productKey`. A deployment that sells more than one product could have a
- * live subscription on a non-default key, and the one guard in this file that
- * exists to stop a customer getting billed after deletion must not miss it.
- * Per-account row counts are small, so one unfiltered read plus an in-memory
- * scan is simpler and safer than threading every product key through here.
- *
- * ── Billing-liveness, not access ─────────────────────────────────────────────
- * This used to key on ACTIVE_STATUSES, which is the rule for "does this grant
- * access". Wrong question, and wrong in the expensive direction: `past_due` and
- * `paused` grant no access and are exactly the two states that go on to charge
- * a card — one when a dunning retry succeeds, one when the customer unpauses.
- * A `past_due` account could therefore delete itself, and then renew. See
- * isBillingLive() in server/utils/entitlements.ts.
- */
-async function findLiveSubscriptionRef(db: AccountDb, userId: string): Promise<string | null> {
-  const rows = await db
-    .select({
-      paddleSubscriptionId: tables.entitlements.paddleSubscriptionId,
-      status: tables.entitlements.status,
-      // Both columns isBillingLive reads. Without the scheduled change, an
-      // already-cancelled subscription reads as live for its whole notice
-      // period and blocks deletion for months.
-      scheduledChangeAction: tables.entitlements.scheduledChangeAction,
-    })
-    .from(tables.entitlements)
-    .where(eq(tables.entitlements.userId, userId))
-
-  const live = rows.find((row) => isSubscriptionRef(row.paddleSubscriptionId) && isBillingLive(row))
-  return live?.paddleSubscriptionId ?? null
-}
-
 export type DeleteAccountOutcome =
   | { outcome: 'not_found' }
-  /** Refused — see the policy note on deleteAccount() for why this one guard exists. */
-  | { outcome: 'live_subscription'; subscriptionId: string }
+  /**
+   * Refused by a registered DeletionGuard (server/utils/extensions.ts); see the
+   * policy note on deleteAccount(). `code`, `message` and `data` are the
+   * guard's, passed through to the 409 unchanged (billing: `live_subscription`).
+   */
+  | { outcome: 'blocked'; code: string; message: string; data: Record<string, unknown> }
   /**
    * Done. Deliberately carries no tally: what was deleted is recorded on the
    * audit row, which is the copy that outlives the request and the one an
@@ -99,7 +65,9 @@ export type DeleteAccountOutcome =
  * Delete a self-serve account.
  *
  * ── Refusing a live subscription is the one justified guard ─────────────────
- * Every other exit from this app is deliberately frictionless (see
+ * It lives with billing, which registers it as a DeletionGuard
+ * (server/utils/billing-extensions.ts); the reasoning stays here because it is
+ * the case for having a guard seam at all. Every other exit from this app is deliberately frictionless (see
  * app/utils/churn.ts) — but deleting the `users` row does not touch Paddle,
  * which owns the subscription's billing lifecycle independently of whether
  * that row still exists. Anonymizing it out from under a live subscription
@@ -122,9 +90,10 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
   const user = await db.query.users.findFirst({ where: eq(tables.users.id, userId) })
   if (!user) return { outcome: 'not_found' }
 
-  const liveSubscriptionId = await findLiveSubscriptionRef(db, userId)
-  if (liveSubscriptionId)
-    return { outcome: 'live_subscription', subscriptionId: liveSubscriptionId }
+  for (const guard of getDeletionGuards()) {
+    const block = await guard.check(db, userId)
+    if (block) return { outcome: 'blocked', ...block, data: block.data ?? {} }
+  }
 
   const contributors = getAccountContributors()
   const [[connectCodeTotal], [magicLinkTotal], [notificationTotal], contributorCounts] =
@@ -143,7 +112,7 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
         .select({ total: count() })
         .from(tables.notificationPreferences)
         .where(eq(tables.notificationPreferences.userId, userId)),
-      Promise.all(contributors.map((c) => c.countForDeletion(db, userId))),
+      Promise.all(contributors.map((c) => c.countForDeletion?.(db, userId))),
     ])
 
   const metadata: AuditMetadata = {
@@ -152,7 +121,7 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
     notificationPreferencesCount: notificationTotal?.total ?? 0,
   }
   contributors.forEach((c, i) => {
-    metadata[c.countKey ?? `${c.key}Count`] = contributorCounts[i] ?? 0
+    if (c.countForDeletion) metadata[c.countKey ?? `${c.key}Count`] = contributorCounts[i] ?? 0
   })
 
   return withAudit(
@@ -286,15 +255,6 @@ export interface AccountExportUser {
   updatedAt: string
 }
 
-export interface AccountExportEntitlement {
-  id: string
-  paddleSubscriptionId: string
-  productKey: string
-  status: string
-  currentPeriodEnd: string | null
-  createdAt: string
-}
-
 /**
  * The EFFECTIVE state of one optional email type — not a raw row. Absence of
  * a `notification_preferences` row means default-on (see schema.ts), so a
@@ -325,7 +285,6 @@ export interface AccountExportLifecycleEmail {
 export interface AccountExportCore {
   exportedAt: string
   user: AccountExportUser
-  entitlements: AccountExportEntitlement[]
   notificationPreferences: AccountExportNotificationPreference[]
   lifecycleEmails: AccountExportLifecycleEmail[]
   auditEntries: AccountExportAuditEntry[]
@@ -348,11 +307,7 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
   const user = await db.query.users.findFirst({ where: eq(tables.users.id, userId) })
   if (!user) return null
 
-  const [entitlementRows, preferenceRows, lifecycleRows, auditRows, sections] = await Promise.all([
-    db.query.entitlements.findMany({
-      where: eq(tables.entitlements.userId, userId),
-      orderBy: desc(tables.entitlements.createdAt),
-    }),
+  const [preferenceRows, lifecycleRows, auditRows, sections] = await Promise.all([
     // One read for every optional type, not one read each. isNotificationEnabled
     // is a point lookup per event type, so calling it in a loop meant three
     // round trips to answer a question about three rows in one table. The
@@ -401,14 +356,6 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
     },
-    entitlements: entitlementRows.map((entitlement) => ({
-      id: entitlement.id,
-      paddleSubscriptionId: entitlement.paddleSubscriptionId,
-      productKey: entitlement.productKey,
-      status: entitlement.status,
-      currentPeriodEnd: entitlement.currentPeriodEnd?.toISOString() ?? null,
-      createdAt: entitlement.createdAt.toISOString(),
-    })),
     notificationPreferences,
     lifecycleEmails: lifecycleRows.map((row) => ({
       step: row.stepId,

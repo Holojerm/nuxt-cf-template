@@ -11,6 +11,7 @@ import { db } from '@nuxthub/db'
 import { captureServerEvent } from '../utils/posthog'
 import { emailBranding } from '../utils/email-templates'
 import { sendEmail } from '../utils/email'
+import { getRegisteredLifecycleSteps } from '../utils/extensions'
 import { runLifecycle } from '../utils/lifecycle'
 import { APP_LIFECYCLE_STEPS } from '../utils/lifecycle-app-steps'
 import { TEMPLATE_LIFECYCLE_STEPS } from '../utils/lifecycle-steps'
@@ -31,7 +32,13 @@ export default defineTask({
     }
 
     const started = Date.now()
-    const reports = await runLifecycle(db, [...TEMPLATE_LIFECYCLE_STEPS, ...APP_LIFECYCLE_STEPS], {
+    // Template steps, then features' (billing's pass_expiring), then the app's.
+    const steps = [
+      ...TEMPLATE_LIFECYCLE_STEPS,
+      ...getRegisteredLifecycleSteps(),
+      ...APP_LIFECYCLE_STEPS,
+    ]
+    const reports = await runLifecycle(db, steps, {
       brand: emailBranding(),
       send: sendEmail,
       unsubscribeUrl: (userId, eventType) =>

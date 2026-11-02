@@ -3,7 +3,7 @@
 // ── Why D1 and not PostHog ──────────────────────────────────────────────────
 // PostHog has the richer funnel, but it loses the visitors who block it, and
 // those are not a random sample. Signups, activation (the `onboarding.activated`
-// audit row) and payment (an `entitlements` row) are all first-party facts in
+// audit row) and payment (a billing entitlement) are all first-party facts in
 // this database, so the dashboard gets a funnel that exists even for an app
 // with no PostHog project yet, and that agrees with the money.
 //
@@ -13,9 +13,10 @@
 // A user who signed up 40 days ago and paid yesterday is not in it; that is
 // what makes "activated / signups" a rate.
 
-import { and, count, countDistinct, desc, eq, gt, inArray, or, like, sql } from 'drizzle-orm'
+import { and, count, countDistinct, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 
 import * as tables from '../db/schema'
+import { getFunnelStageContributor } from './extensions'
 import type { FleetDb } from './fleet-status'
 
 export const FUNNEL_COHORT_DAYS = 28
@@ -28,7 +29,10 @@ export interface FleetFunnel {
   cohortDays: number
   signups: number
   activated: number
-  /** Bought something. Comps and referral grants are access nobody paid for. */
+  /**
+   * Bought something. Comps and referral grants are access nobody paid for.
+   * Counted by the billing feature's funnel contributor; 0 without it.
+   */
   paid: number
   /** Signups by first-touch source, top few; `direct` when none was recorded. */
   sources: Record<string, number>
@@ -56,20 +60,9 @@ export async function collectFleetFunnel(db: FleetDb, now = new Date()): Promise
       ),
     )
 
-  // `txn_` passes and `sub_` subscriptions are Paddle's ids; `comp_` and the
-  // referral grants are minted here and must not read as revenue.
-  const [paid] = await db
-    .select({ total: countDistinct(tables.entitlements.userId) })
-    .from(tables.entitlements)
-    .where(
-      and(
-        inArray(tables.entitlements.userId, cohort),
-        or(
-          like(tables.entitlements.paddleSubscriptionId, 'txn_%'),
-          like(tables.entitlements.paddleSubscriptionId, 'sub_%'),
-        ),
-      ),
-    )
+  // Only a feature knows what "paid" means (billing counts Paddle-minted
+  // entitlements); with none registered the stage reads 0 and the shape holds.
+  const paid = (await getFunnelStageContributor('paid')?.count(db, cohort)) ?? 0
 
   const source = sql<string | null>`lower(${tables.users.signupSource})`
   const sourceRows = await db
@@ -90,7 +83,7 @@ export async function collectFleetFunnel(db: FleetDb, now = new Date()): Promise
     cohortDays: FUNNEL_COHORT_DAYS,
     signups: signups?.total ?? 0,
     activated: activated?.total ?? 0,
-    paid: paid?.total ?? 0,
+    paid,
     sources,
   }
 }

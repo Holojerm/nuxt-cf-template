@@ -37,15 +37,15 @@ export default defineEventHandler(async (event) => {
       ipHash: await auditIpHash(event),
     },
     async () => {
-      const [billing, auditRows, sections] = await Promise.all([
-        buildEntitlementView(db, user.id),
+      const [auditRows, sections] = await Promise.all([
         // Everything ever done TO this account, which is the question a customer
         // actually asks ("why does my plan say that?"). Includes this admin's
         // own views — the row written a moment ago by withAudit is not in the
         // result, since it was inserted before the read, but the previous ones
         // are, and that is the point.
         listAudit(db, { targetType: 'user', targetId: user.id, limit: 25 }),
-        // What optional features add (e.g. `feedback`: what they've told us).
+        // What optional features add: `billing` (what they've paid, the same view
+        // /account renders) and `feedback` (what they've told us).
         collectSections<AdminUserContributor, AdminUserSections>(getAdminUserContributors(), (c) =>
           c.load(db, user.id),
         ),
@@ -70,7 +70,6 @@ export default defineEventHandler(async (event) => {
           referralCode: user.referralCode,
           referredBy: user.referredBy,
         },
-        billing,
         audit: auditRows.map(toAuditView),
         ...sections,
       }

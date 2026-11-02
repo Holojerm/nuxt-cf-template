@@ -17,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as schema from '../server/db/schema'
 import { registerFeedbackExtensions } from '../layers/feedback/server/utils/feedback-extensions'
 import { listAudit } from '../server/utils/audit'
+import { registerBillingExtensions } from '../server/utils/billing-extensions'
+import { clearExtensionsForTest } from '../server/utils/extensions'
 import {
   activateIfComplete,
   computeOnboardingInputs,
@@ -29,6 +31,8 @@ const db = drizzle(env.DB, { schema })
 // The checklist's 'feedback' step (shared/utils/onboarding-steps.ts) reads a
 // signal the feedback layer contributes; register it as its plugin does.
 registerFeedbackExtensions()
+// …and the `entitlementActive` signal is billing's.
+registerBillingExtensions()
 
 const USER_ID = 'user-onboarding-1'
 
@@ -167,6 +171,24 @@ describe('hasActivated', () => {
 
     expect(await hasActivated(db, USER_ID)).toBe(true)
     expect(await hasActivated(db, OTHER_USER)).toBe(false)
+  })
+})
+
+describe('computeOnboardingInputs without billing', () => {
+  it('leaves entitlementActive out, so the plan step reads as not done', async () => {
+    clearExtensionsForTest()
+    try {
+      await db.insert(schema.entitlements).values({
+        userId: USER_ID,
+        paddleSubscriptionId: 'sub_1',
+        status: 'active',
+      })
+      const inputs = await computeOnboardingInputs(db, USER_ID)
+      expect(inputs).toEqual({ hasNotificationPreference: false })
+    } finally {
+      registerBillingExtensions()
+      registerFeedbackExtensions()
+    }
   })
 })
 

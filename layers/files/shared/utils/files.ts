@@ -40,7 +40,7 @@ export const MAX_FILE_SIZE_LABEL = '8MB'
 /**
  * Per-user cap on the number of `files` rows, checked by the POST route
  * before it writes anything (layers/files/server/utils/files.ts › `isFilesQuotaExceeded()`).
- * `requireSubscription` alone bounds who can upload, not how much — without
+ * `requireAccess` alone bounds who can upload, not how much — without
  * this, one subscriber can loop 8 MB uploads indefinitely, since neither
  * `MAX_FILE_SIZE_BYTES` nor the rate limit caps the total. 200 is generous
  * for the kind of files this feature accepts (documents and images, not a

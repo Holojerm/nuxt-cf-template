@@ -116,7 +116,6 @@ const DAY_MS = 24 * 60 * 60 * 1000
 
 export interface FleetCountersCore {
   users: { total: number; last7d: number }
-  entitlements: { byStatus: Record<string, number> }
   opsEvents: { pending: number; last24h: number }
   funnel: FleetFunnel
   extra: Record<string, number>
@@ -135,13 +134,6 @@ export async function collectFleetCounters(db: FleetDb, now = new Date()): Promi
     .from(tables.users)
     .where(gt(tables.users.createdAt, weekAgo))
 
-  const entitlementRows = await db
-    .select({ status: tables.entitlements.status, total: count() })
-    .from(tables.entitlements)
-    .groupBy(tables.entitlements.status)
-  const byStatus: Record<string, number> = {}
-  for (const row of entitlementRows) byStatus[row.status] = row.total
-
   const [pendingOps] = await db
     .select({ total: count() })
     .from(tables.opsEvents)
@@ -158,7 +150,6 @@ export async function collectFleetCounters(db: FleetDb, now = new Date()): Promi
 
   return {
     users: { total: users?.total ?? 0, last7d: recentUsers?.total ?? 0 },
-    entitlements: { byStatus },
     opsEvents: { pending: pendingOps?.total ?? 0, last24h: recentOps?.total ?? 0 },
     funnel: await collectFleetFunnel(db, now),
     extra,

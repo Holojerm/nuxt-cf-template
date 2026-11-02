@@ -6,7 +6,7 @@
 // routing deletion through a support inbox is friction at the exact same exit
 // door. The mechanics (what "contents" means, why the users row survives as a
 // tombstone, why a live subscription is the one refusal) live in
-// server/utils/account.ts.
+// server/utils/account.ts and server/utils/billing-extensions.ts.
 //
 // `confirmEmail` is a typed-confirmation safeguard, not an obstacle: it stops
 // a stray click on a destructive button, and unlike an "are you sure?" dialog
@@ -38,13 +38,14 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, message: 'Account not found' })
   }
 
-  if (outcome.outcome === 'live_subscription') {
+  // A DeletionGuard refused (billing: a live subscription, code
+  // `live_subscription`). The guard owns the code, text and data; the 409 and
+  // `data.code` are what the account page's modal reads.
+  if (outcome.outcome === 'blocked') {
     throw createError({
       statusCode: 409,
-      message:
-        'Deleting your account would not stop the charges — Paddle owns the subscription, ' +
-        'not this account. Cancel it from the billing portal first, then delete your account.',
-      data: { code: 'live_subscription', subscriptionId: outcome.subscriptionId },
+      message: outcome.message,
+      data: { code: outcome.code, ...outcome.data },
     })
   }
 

@@ -20,7 +20,7 @@ const querySchema = z.object({
 })
 
 export default defineEventHandler(async (event) => {
-  const { user } = await requireSubscription(event)
+  const { user } = await requireAccess(event)
   const query = await getValidatedQuery(event, querySchema.parse)
 
   let cursor: FilesCursor | undefined

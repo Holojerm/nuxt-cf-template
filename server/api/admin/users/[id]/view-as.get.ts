@@ -49,6 +49,7 @@
 // changes nothing about the design.
 
 import { eq } from 'drizzle-orm'
+import type { AdminViewAsSections } from '../../../../utils/extensions'
 
 export default defineEventHandler(async (event) => {
   const admin = await requireAdmin(event)
@@ -73,25 +74,27 @@ export default defineEventHandler(async (event) => {
       ipHash: await auditIpHash(event),
     },
     async () => {
-      // The identical function GET /api/billing/entitlement runs for the
-      // customer — see server/utils/entitlement-view.ts for why it is shared.
-      const entitlement = await buildEntitlementView(db, user.id)
+      // What each feature resolves for this customer, by the same functions
+      // their own requests run (billing: buildEntitlementView, the function
+      // GET /api/billing/entitlement runs — see server/utils/entitlement-view.ts
+      // for why it is shared), and the gates each one contributes.
+      const contributors = getAdminViewAsContributors()
+      const loaded = await Promise.all(contributors.map((c) => c.load(db, user.id)))
+      const sections = Object.fromEntries(contributors.map((c, i) => [c.key, loaded[i]?.value]))
+      // `auth` passes for anyone with an account; billing adds `subscription`,
+      // which passes only with a granting entitlement — the same condition
+      // app/middleware/subscription.ts checks against this exact payload.
+      const gates: Record<string, boolean> = { auth: true }
+      for (const result of loaded) Object.assign(gates, result.gates)
 
       return {
         /** Never omitted, never false. The UI banners the whole panel on it. */
         readOnly: true as const,
         user: { id: user.id, email: user.email, name: user.name },
-        entitlement,
-        // The two client-side gates, resolved. This is the "why can't I get in"
-        // answer: `auth` passes for anyone with an account, `subscription`
-        // passes only with a granting entitlement — the same condition
-        // app/middleware/subscription.ts checks against this exact payload.
-        gates: {
-          auth: true,
-          subscription: entitlement.active,
-        },
+        ...(sections as Partial<AdminViewAsSections>),
+        gates,
         /** Where those gates would land them if they opened /dashboard now. */
-        dashboardReachable: entitlement.active,
+        dashboardReachable: Object.values(gates).every(Boolean),
       }
     },
   )

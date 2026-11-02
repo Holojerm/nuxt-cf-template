@@ -5,7 +5,7 @@
 // Both middlewares are the UX guard, not the boundary, same as
 // app/pages/dashboard.vue: `auth` bounces a signed-out visitor to /login,
 // `subscription` bounces a signed-in one without an entitlement to
-// /pricing. The real check is `requireSubscription(event)` inside every
+// /pricing. The real check is `requireAccess(event)` inside every
 // layers/files/server/api/files/*.ts route — delete the client middleware and this page
 // still can't list, upload, or download anything; delete the server check
 // and it can.
