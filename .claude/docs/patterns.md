@@ -110,6 +110,21 @@ worked example: `layers/feedback/server/utils/feedback-extensions.ts` augments t
 same `register…()` function, because Nitro plugins don't run under vitest. Removing a
 feature removes its sections and nothing else; `test/extensions.test.ts` holds core to that.
 
+### Fork-specific fleet counters
+
+A fork reports its own numbers (sessions run, plans created) by registering them, not by
+editing `collectFleetCounters()`. From a Nitro plugin:
+
+```typescript
+registerFleetExtraContributor({
+  key: 'coaching',
+  collect: async (db) => ({ athletes: await total(db, schema.athletes) }),
+})
+```
+
+The numbers land in `extra` on `GET /api/fleet`. A typed, nested group goes through
+`registerFleetCounterContributor` instead (see the feedback layer). Counts only.
+
 ### Vendored layers
 
 A fork takes a template feature that has moved into `layers/<name>/` by vendoring it:

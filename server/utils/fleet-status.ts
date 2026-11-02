@@ -28,7 +28,11 @@ import type { drizzle } from 'drizzle-orm/d1'
 import journal from '../db/migrations/meta/_journal.json'
 import * as tables from '../db/schema'
 import { collectFleetFunnel, type FleetFunnel } from './fleet-funnel'
-import { collectSections, getFleetCounterContributors } from './extensions'
+import {
+  collectSections,
+  getFleetCounterContributors,
+  getFleetExtraContributors,
+} from './extensions'
 import type { FleetCounterContributor, FleetCounterSections } from './extensions'
 
 /** Same shape as PurgeDb — the Drizzle client, passed in explicitly. */
@@ -101,9 +105,12 @@ function tagOf(name: string): string {
 //
 // Everything a portfolio dashboard wants to put on a card, in one query-light
 // call. Counts only — no rows, no ids, no emails — so the payload is safe to
-// store for months in someone else's database. `extra` is where a fork adds
-// its own (sessions run, plans created, …): add to this function rather than
-// inventing a second endpoint, so one token and one route cover the fleet.
+// store for months in someone else's database. A fork adds its own (sessions
+// run, plans created, …) by registering a contributor in server/utils/
+// extensions.ts rather than editing this function or inventing a second
+// endpoint, so one token and one route cover the fleet:
+//   registerFleetExtraContributor    → plain numbers merged into `extra`
+//   registerFleetCounterContributor  → a typed group beside `users`, `funnel`, …
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -144,12 +151,17 @@ export async function collectFleetCounters(db: FleetDb, now = new Date()): Promi
     .from(tables.opsEvents)
     .where(and(gt(tables.opsEvents.createdAt, dayAgo)))
 
+  const extra: Record<string, number> = {}
+  const extras = getFleetExtraContributors()
+  const extraValues = await Promise.all(extras.map((c) => c.collect(db, now)))
+  for (const values of extraValues) Object.assign(extra, values)
+
   return {
     users: { total: users?.total ?? 0, last7d: recentUsers?.total ?? 0 },
     entitlements: { byStatus },
     opsEvents: { pending: pendingOps?.total ?? 0, last24h: recentOps?.total ?? 0 },
     funnel: await collectFleetFunnel(db, now),
-    extra: {},
+    extra,
     ...(await collectSections<FleetCounterContributor, FleetCounterSections>(
       getFleetCounterContributors(),
       (c) => c.collect(db, now),

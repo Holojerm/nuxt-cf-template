@@ -157,11 +157,22 @@ export async function drainOpsEvents(
     }
   }
 
+  const pruned = await pruneOpsEvents(db, now)
+
+  return { pending: pending.length, sent, pruned, error }
+}
+
+/**
+ * Retention sweep, separate from the drain so the cron can run it when alerting
+ * is unconfigured. Without that, a fork with no `ALERT_EMAIL` binding spooled
+ * rows forever: the drain was the only thing that deleted them. Returns the
+ * number of rows removed.
+ */
+export async function pruneOpsEvents(db: OpsDb, now: Date = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - OPS_EVENT_RETENTION_DAYS * DAY_MS)
   const pruned = await db
     .delete(tables.opsEvents)
     .where(lt(tables.opsEvents.createdAt, cutoff))
     .returning({ id: tables.opsEvents.id })
-
-  return { pending: pending.length, sent, pruned: pruned.length, error }
+  return pruned.length
 }

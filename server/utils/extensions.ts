@@ -78,6 +78,21 @@ export interface FleetCounterContributor<
   collect: (db: ExtensionDb, now: Date) => Promise<FleetCounterSections[K]>
 }
 
+/**
+ * Plain numbers a fork adds to `extra` in GET /api/fleet (sessions run, plans
+ * created). Use `FleetCounterContributor` instead for a typed, nested group.
+ * `extra` is what the fleet dashboard already renders generically, so a counter
+ * here needs no change on the dashboard.
+ */
+export interface FleetExtraContributor {
+  key: string
+  /**
+   * Counts only, like every fleet counter. Names must be unique across
+   * contributors; on a clash the contributor registered later wins.
+   */
+  collect: (db: ExtensionDb, now: Date) => Promise<Record<string, number>>
+}
+
 export interface PurgeContributor {
   /** Reported under this key in the purge task's result and log line. */
   key: string
@@ -96,6 +111,7 @@ export interface OnboardingSignalContributor {
 const accountContributors = new Map<string, AccountContributor>()
 const adminUserContributors = new Map<string, AdminUserContributor>()
 const fleetCounterContributors = new Map<string, FleetCounterContributor>()
+const fleetExtraContributors = new Map<string, FleetExtraContributor>()
 const onboardingSignalContributors = new Map<string, OnboardingSignalContributor>()
 const purgeContributors = new Map<string, PurgeContributor>()
 
@@ -115,6 +131,10 @@ export function registerFleetCounterContributor<K extends keyof FleetCounterSect
   contributor: FleetCounterContributor<K>,
 ): void {
   fleetCounterContributors.set(contributor.key, contributor as unknown as FleetCounterContributor)
+}
+
+export function registerFleetExtraContributor(contributor: FleetExtraContributor): void {
+  fleetExtraContributors.set(contributor.key, contributor)
 }
 
 export function registerOnboardingSignalContributor(
@@ -143,6 +163,10 @@ export function getFleetCounterContributors(): FleetCounterContributor[] {
   return [...fleetCounterContributors.values()]
 }
 
+export function getFleetExtraContributors(): FleetExtraContributor[] {
+  return [...fleetExtraContributors.values()]
+}
+
 export function getOnboardingSignalContributors(): OnboardingSignalContributor[] {
   return [...onboardingSignalContributors.values()]
 }
@@ -161,6 +185,7 @@ export function clearExtensionsForTest(): void {
   accountContributors.clear()
   adminUserContributors.clear()
   fleetCounterContributors.clear()
+  fleetExtraContributors.clear()
   onboardingSignalContributors.clear()
   purgeContributors.clear()
 }
