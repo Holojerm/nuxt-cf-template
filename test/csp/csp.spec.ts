@@ -275,6 +275,23 @@ test.describe('the policy still permits what the vendors need', () => {
     )
   })
 
+  test('the edge-injected Web Analytics beacon is allowed', async ({ page }) => {
+    // Cloudflare injects this at the edge, so dev never loads it and only the
+    // policy text can be checked. Without both hosts every production page logs
+    // a violation and the analytics dashboard reads zero.
+    const csp = await policy(page)
+
+    const scriptSrc = /script-src ([^;]+)/.exec(csp)?.[1] ?? ''
+    expect(scriptSrc, 'beacon.min.js would be refused').toContain(
+      'https://static.cloudflareinsights.com',
+    )
+
+    const connectSrc = /connect-src ([^;]+)/.exec(csp)?.[1] ?? ''
+    expect(connectSrc, 'the /cdn-cgi/rum reports would be refused').toContain(
+      'https://cloudflareinsights.com',
+    )
+  })
+
   test('PostHog stays on the first-party proxy', async ({ page }) => {
     const csp = await policy(page)
 
@@ -325,7 +342,9 @@ test.describe('the directives that make the policy worth having', () => {
     ).not.toContain('unsafe-eval')
   })
 
-  test('no external origin has crept into script-src beyond the two we chose', async ({ page }) => {
+  test('no external origin has crept into script-src beyond the ones we chose', async ({
+    page,
+  }) => {
     const response = await page.goto('/')
     const csp = response!.headers()['content-security-policy'] ?? ''
     const scriptSrc = /script-src ([^;]+)/.exec(csp)?.[1] ?? ''
@@ -337,7 +356,8 @@ test.describe('the directives that make the policy worth having', () => {
     // challenges.cloudflare.com joined the list when Turnstile did, and that is
     // this assertion working rather than being worked around: the list is short
     // enough to read, and every entry on it had to be argued for in
-    // nuxt.config.ts. Do not append to it to make a build go green.
+    // nuxt.config.ts. static.cloudflareinsights.com is the Web Analytics beacon
+    // the zone injects at the edge. Do not append to it to make a build go green.
     const externalHosts = scriptSrc
       .split(/\s+/)
       .filter((source) => source.startsWith('http') || source.startsWith('//'))
@@ -346,6 +366,7 @@ test.describe('the directives that make the policy worth having', () => {
       'https://cdn.paddle.com',
       'https://challenges.cloudflare.com',
       'https://sandbox-cdn.paddle.com',
+      'https://static.cloudflareinsights.com',
     ])
   })
 })

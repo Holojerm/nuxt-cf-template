@@ -21,7 +21,7 @@ definePageMeta({
 
 const config = useRuntimeConfig()
 
-const LAST_UPDATED = '2026-08-21'
+const LAST_UPDATED = '2026-11-01'
 
 const app = computed(() => config.public.appName)
 const entity = computed(() => config.public.legalEntity)
@@ -30,8 +30,8 @@ const support = computed(() => config.public.supportEmail)
 const processors = [
   {
     name: 'Cloudflare',
-    purpose: 'Hosting, database, file storage, and CDN',
-    data: 'Everything the app stores, plus request logs',
+    purpose: 'Hosting, database, file storage, CDN, and cookieless page-load analytics',
+    data: 'Everything the app stores, plus request logs and page-load timings',
   },
   {
     name: 'Paddle',

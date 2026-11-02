@@ -48,6 +48,20 @@ const PADDLE = {
  */
 const TURNSTILE = ['https://challenges.cloudflare.com'] as const
 
+/**
+ * Cloudflare Web Analytics. With it on for the zone (the default for a new
+ * site), Cloudflare injects the beacon into every HTML response at the edge, so
+ * no code in app/ loads it — and without these hosts every page logs a CSP
+ * violation and the dashboard reads zero visits. `script-src` for
+ * beacon.min.js, `connect-src` for the /cdn-cgi/rum reports, as listed on
+ * Cloudflare's own CSP page. Cookieless; it is named in /privacy under
+ * Cloudflare.
+ */
+const CF_WEB_ANALYTICS = {
+  script: ['https://static.cloudflareinsights.com'],
+  connect: ['https://cloudflareinsights.com'],
+} as const
+
 // `nuxt dev` sets NODE_ENV=development, `nuxt build` sets production.
 //
 // The dev delta is exactly one source — `frame-src 'self'`, for the Nuxt
@@ -86,10 +100,16 @@ const CSP: Record<string, string[]> = {
   // after a routine `bun update`.
   //
   // What survives: script-src still refuses every *external* origin except
-  // Paddle's CDN and Turnstile's, so an injected `<script src="//evil.tld/x.js">`
-  // does not load. Paired with object-src/base-uri below, the classic bypasses
-  // stay shut. test/csp/ pins that list to exactly those two vendors.
-  'script-src': ["'self'", "'unsafe-inline'", ...PADDLE.cdn, ...TURNSTILE],
+  // Paddle's CDN, Turnstile's and the Web Analytics beacon, so an injected
+  // `<script src="//evil.tld/x.js">` does not load. Paired with object-src/
+  // base-uri below, the classic bypasses stay shut. test/csp/ pins that list.
+  'script-src': [
+    "'self'",
+    "'unsafe-inline'",
+    ...PADDLE.cdn,
+    ...TURNSTILE,
+    ...CF_WEB_ANALYTICS.script,
+  ],
 
   // Vue SSR emits inline style attributes and Vite dev injects <style> blocks;
   // there is no build flag that stops either. Paddle's overlay pulls
@@ -126,7 +146,7 @@ const CSP: Record<string, string[]> = {
   // host, and dropping it changed nothing in test/csp. It is also not a cheap
   // addition — `ws:` is a bare scheme source, so it would permit a socket to
   // *any* host, which is a strange thing to hand a dev server.
-  'connect-src': ["'self'", ...PADDLE.api],
+  'connect-src': ["'self'", ...PADDLE.api, ...CF_WEB_ANALYTICS.connect],
 
   // The overlay checkout is an iframe into this page, which is frame-src.
   // X-Frame-Options / frame-ancestors govern the opposite direction and do not
