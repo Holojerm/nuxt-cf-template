@@ -7,7 +7,7 @@
 // owns and that fails silently when wrong:
 //
 //   1. `?w=` snaps to the ladder rather than being honoured verbatim — the
-//      cost control described in server/utils/images.ts.
+//      cost control described in layers/files/server/utils/images.ts.
 //   2. No modifiers means NO transform, so the untouched path stays a plain
 //      stream of the original object.
 //   3. `format=auto` reads Accept, prefers AVIF, and marks the response as

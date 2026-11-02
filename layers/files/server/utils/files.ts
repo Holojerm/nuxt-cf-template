@@ -5,9 +5,9 @@
 //
 // Like server/utils/entitlements.ts and layers/feedback/server/utils/feedback.ts, every
 // function here takes the Drizzle client as its first argument rather than
-// reaching for the auto-imported `db`, so test/files.test.ts can drive this
+// reaching for the auto-imported `db`, so layers/files/test/files.test.ts can drive this
 // against a real D1 binding without booting Nitro. The R2 calls themselves
-// (`blob.put`, `blob.serve`, `blob.del`) stay in server/api/files/*.ts — they
+// (`blob.put`, `blob.serve`, `blob.del`) stay in layers/files/server/api/files/*.ts — they
 // need a real R2 binding and Nitro's request context, neither of which this
 // file has access to, and keeping them out of here is what makes everything
 // below testable with no bucket at all.
@@ -29,7 +29,7 @@ import {
   type AllowedFileType,
   type FileStatus,
   type FileView,
-} from '#shared/utils/files'
+} from '../../shared/utils/files'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type FilesDb = ReturnType<typeof drizzle<typeof tables>>
@@ -191,7 +191,7 @@ function matchesSignature(bytes: Uint8Array, offset: number, signature: number[]
  * bytes themselves. Returns null when they match none of the allowed
  * types (including a file too short to contain any signature) — the caller
  * treats that identically to a declared/sniffed mismatch (see
- * server/api/files/index.post.ts), since "unrecognized" and "wrong" both
+ * layers/files/server/api/files/index.post.ts), since "unrecognized" and "wrong" both
  * mean the same thing here: don't trust the declared type.
  */
 export function sniffMimeType(bytes: Uint8Array): AllowedFileType | null {
@@ -209,12 +209,12 @@ export function sniffMimeType(bytes: Uint8Array): AllowedFileType | null {
 /**
  * What the POST route checks a multipart file's own metadata against,
  * before anything touches R2 — exported (rather than defined inline in the
- * route) so test/files.test.ts can exercise it directly, and so the route
+ * route) so layers/files/test/files.test.ts can exercise it directly, and so the route
  * has one thing to call: `fileMetaSchema.safeParse(...)`. A bare `.parse()`
  * here used to turn any client mistake — a missing filename, an unlisted
  * MIME type, an oversized declared size, including a 0-byte file (excluded
  * by `.positive()` below) — into an uncaught 500 instead of a 400. See
- * server/api/files/index.post.ts.
+ * layers/files/server/api/files/index.post.ts.
  */
 export const fileMetaSchema = z.object({
   filename: z.string().min(1).max(MAX_RAW_FILENAME_LENGTH),
@@ -300,7 +300,7 @@ export interface NewFileInput {
 /**
  * Insert a `pending` row. Called BEFORE the object is written to R2 — see
  * the `status` column's comment in schema.ts and the ordering note in
- * server/api/files/index.post.ts. A row that never reaches `uploaded` is an
+ * layers/files/server/api/files/index.post.ts. A row that never reaches `uploaded` is an
  * abandoned upload, not a lie about what's in the bucket.
  */
 export async function createFileRecord(db: FilesDb, input: NewFileInput): Promise<FileRecord> {
@@ -508,7 +508,7 @@ export async function getFileById(
 
 /**
  * Delete the row. Callers decide the order relative to blob.del() — see
- * server/api/files/[id].delete.ts for why the object is removed first.
+ * layers/files/server/api/files/[id].delete.ts for why the object is removed first.
  */
 export async function deleteFileRecord(
   db: FilesDb,
@@ -538,7 +538,7 @@ export async function countFilesForUser(db: FilesDb, userId: string): Promise<nu
 }
 
 /**
- * Whether this user has hit MAX_FILES_PER_USER (shared/utils/files.ts) —
+ * Whether this user has hit MAX_FILES_PER_USER (layers/files/shared/utils/files.ts) —
  * checked by the POST route before it writes anything, alongside the
  * per-request rate limit. The rate limit bounds how FAST someone can
  * upload; this bounds how MUCH they can accumulate, which the rate limit
@@ -550,7 +550,7 @@ export async function isFilesQuotaExceeded(db: FilesDb, userId: string): Promise
 }
 
 // ── Wire shape ────────────────────────────────────────────────────────────────
-// `FileView` itself lives in #shared/utils/files — both this file and the
+// `FileView` itself lives in layers/files/shared/utils/files.ts — both this file and the
 // client need the identical shape. See that file's own comment for why.
 
 /**

@@ -25,7 +25,7 @@
 // Images binding. It happens HERE, after both checks above, and not through
 // `/cdn-cgi/image/` like the rest of the app's images, because the edge
 // resolves that by fetching the source URL itself with no session cookie —
-// against this endpoint it would fetch a 401. server/utils/images.ts has the
+// against this endpoint it would fetch a 401. layers/files/server/utils/images.ts has the
 // full argument.
 //
 // With no modifiers, or no binding, or a transform that throws, the response
@@ -45,7 +45,7 @@ export default defineEventHandler(async (event) => {
   if (!file) throw createError({ statusCode: 404, message: 'File not found' })
 
   // A `pending` row has no object behind it yet — still mid-upload, or the
-  // blob.put() that would have completed it failed (server/api/files/index.post.ts).
+  // blob.put() that would have completed it failed (layers/files/server/api/files/index.post.ts).
   // Either way there is nothing in R2 to stream, so this is a 404 rather
   // than a request that hangs on a missing object.
   if (file.status !== 'uploaded') {
@@ -53,7 +53,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // PDFs are forced to download rather than render in-browser — see
-  // dispositionForMimeType() (server/utils/files.ts) for why an `inline`
+  // dispositionForMimeType() (layers/files/server/utils/files.ts) for why an `inline`
   // PDF at this app's origin is a bigger risk than an `inline` image.
   const disposition = contentDispositionValue(file.filename, dispositionForMimeType(file.mimeType))
 

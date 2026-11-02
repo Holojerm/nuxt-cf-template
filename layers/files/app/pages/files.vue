@@ -6,11 +6,11 @@
 // app/pages/dashboard.vue: `auth` bounces a signed-out visitor to /login,
 // `subscription` bounces a signed-in one without an entitlement to
 // /pricing. The real check is `requireSubscription(event)` inside every
-// server/api/files/*.ts route — delete the client middleware and this page
+// layers/files/server/api/files/*.ts route — delete the client middleware and this page
 // still can't list, upload, or download anything; delete the server check
 // and it can.
 
-import type { FileView } from '#shared/utils/files'
+import type { FileView } from '../../shared/utils/files'
 
 definePageMeta({ middleware: ['auth', 'subscription'] })
 
@@ -53,7 +53,7 @@ async function loadMore() {
     files.value = [...files.value, ...page.files]
     nextCursor.value = page.nextCursor
   } catch {
-    // The 400-on-a-bad-cursor case (server/api/files/index.get.ts) can't
+    // The 400-on-a-bad-cursor case (layers/files/server/api/files/index.get.ts) can't
     // happen from a token this page minted itself, so anything landing
     // here is transient — the same "try again" the rest of this page's
     // error handling reaches for.

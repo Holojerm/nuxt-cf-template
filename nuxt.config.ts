@@ -284,7 +284,7 @@ export default defineNuxtConfig({
     //   2. It cannot serve anything behind a session. The edge fetches the
     //      source itself, with no cookie, so a private R2 object comes back
     //      401. Those transform inside the worker instead — see
-    //      server/utils/images.ts.
+    //      layers/files/server/utils/images.ts.
     '@nuxt/image',
     'nuxt-auth-utils',
     // nuxt-mcp rewrites `.mcp.json` — a *tracked* file — with the live dev
@@ -439,7 +439,7 @@ export default defineNuxtConfig({
     // The edge does the work; nothing here runs at build time.
     provider: 'cloudflare',
 
-    // The width ladder. Kept identical to IMAGE_WIDTHS in server/utils/images.ts
+    // The width ladder. Kept identical to IMAGE_WIDTHS in layers/files/server/utils/images.ts
     // on purpose — that file snaps `?w=` to these rungs so a private upload and
     // a public asset are cached at the same handful of sizes rather than at two
     // overlapping sets. Change one, change the other.

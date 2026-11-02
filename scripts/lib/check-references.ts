@@ -63,7 +63,8 @@ export interface Reference {
   token: string
 }
 
-const SOURCE_DIRS = ['app', 'server', 'shared', 'scripts', 'test', 'emails']
+// `layers` holds the app's Nuxt layers (each with its own app/server/shared/test).
+const SOURCE_DIRS = ['app', 'server', 'shared', 'scripts', 'test', 'emails', 'layers']
 const DOC_DIRS = ['.claude/docs', '.claude/commands', '.claude/routines']
 const DOC_FILES = ['AGENTS.md', 'TEARDOWN.md', 'DESIGN.md', 'README.md']
 const CORPUS_EXTRA = [
@@ -454,9 +455,17 @@ const ROUTE_METHODS = ['get', 'post', 'put', 'patch', 'delete', '']
 function servedRouteExists(root: string, route: string): boolean {
   const path = route.replace(/^\//, '').replace(/\/$/, '')
   if (!path) return false
-  const bases = path.startsWith('api/')
-    ? [join(root, 'server', path), join(root, 'server', 'routes', path)]
-    : [join(root, 'server', 'routes', path)]
+  // A route may be served by the app or by any of its layers.
+  const layerRoots = existsSync(join(root, 'layers'))
+    ? readdirSync(join(root, 'layers'), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => join(root, 'layers', entry.name))
+    : []
+  const bases = [root, ...layerRoots].flatMap((base) =>
+    path.startsWith('api/')
+      ? [join(base, 'server', path), join(base, 'server', 'routes', path)]
+      : [join(base, 'server', 'routes', path)],
+  )
   for (const base of bases) {
     for (const method of ROUTE_METHODS) {
       const suffix = method ? `.${method}.ts` : '.ts'

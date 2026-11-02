@@ -1,6 +1,6 @@
 // The R2 upload feature's db-only half, run against a real D1 inside
 // workerd. No R2 binding involved — the blob calls live in
-// server/api/files/*.ts, not here (server/utils/files.ts's own header
+// layers/files/server/api/files/*.ts, not here (layers/files/server/utils/files.ts's own header
 // explains why) — so what this file pins down is everything that doesn't
 // need one:
 //
@@ -27,7 +27,7 @@ import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import * as schema from '../server/db/schema'
+import * as schema from '~~/server/db/schema'
 import {
   MAX_FILENAME_LENGTH,
   MIME_SNIFF_BYTES,

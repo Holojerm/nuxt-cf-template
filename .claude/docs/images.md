@@ -42,7 +42,7 @@ AVIF, and nothing would fail.
 ## Private uploads — the Images binding, inside the Worker
 
 Files uploaded through the R2 feature have no public URL. They are served by
-[`server/api/files/[id].get.ts`](../../server/api/files/[id].get.ts), which is itself the
+[`layers/files/server/api/files/[id].get.ts`](../../layers/files/server/api/files/[id].get.ts), which is itself the
 access-control boundary: `requireSubscription()`, then an ownership check scoped to
 `userId`.
 
@@ -90,9 +90,9 @@ GET /api/files/<id>?w=512&format=auto
 
 | File | What |
 | --- | --- |
-| [`server/utils/images.ts`](../../server/utils/images.ts) | The whole decision layer — parsing, snapping, negotiation, feature detection |
-| [`server/api/files/[id].get.ts`](../../server/api/files/[id].get.ts) | The call site, after the access checks |
-| [`test/images.test.ts`](../../test/images.test.ts) | Everything above, pinned |
+| [`layers/files/server/utils/images.ts`](../../layers/files/server/utils/images.ts) | The whole decision layer — parsing, snapping, negotiation, feature detection |
+| [`layers/files/server/api/files/[id].get.ts`](../../layers/files/server/api/files/[id].get.ts) | The call site, after the access checks |
+| [`layers/files/test/images.test.ts`](../../layers/files/test/images.test.ts) | Everything above, pinned |
 
 The binding itself is not stubbed in tests. `images.input().transform().output()` is
 Cloudflare's, and a hand-rolled fake would only assert that the fake behaves like the fake.

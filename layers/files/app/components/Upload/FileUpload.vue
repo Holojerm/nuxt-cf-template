@@ -1,21 +1,21 @@
 <script setup lang="ts">
 // Pick and upload a single file into the caller's own R2 prefix
-// (POST /api/files). Mounted on app/pages/files.vue, which owns the list
+// (POST /api/files). Mounted on layers/files/app/pages/files.vue, which owns the list
 // this appends to.
 //
 // The type/size check below is a courtesy that saves a round trip on an
 // obviously-wrong file — it is NOT the boundary. The server re-validates
 // every one of these with ensureBlob() regardless of what a modified client
-// sends (server/api/files/index.post.ts), against the exact same
+// sends (layers/files/server/api/files/index.post.ts), against the exact same
 // MAX_FILE_SIZE_BYTES / ALLOWED_FILE_TYPES this component reads from
-// #shared/utils/files, so the two can never disagree about what gets
+// layers/files/shared/utils/files.ts, so the two can never disagree about what gets
 // rejected.
 //
 // FileView type import is explicit (app/composables/useSeo.ts and
 // app/utils/faq.ts do the same for shared/utils/schema.ts's types) — the
 // constants and functions below are left to Nuxt's auto-import, same as
 // MAX_COMP_PASSES on app/pages/admin/users/[id].vue.
-import type { FileView } from '#shared/utils/files'
+import type { FileView } from '../../../shared/utils/files'
 
 const emit = defineEmits<{
   uploaded: [file: FileView]

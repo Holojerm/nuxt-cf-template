@@ -29,7 +29,6 @@ beforeEach(async () => {
   await db.delete(schema.lifecycleSends)
   await db.delete(schema.auditLog)
   await db.delete(schema.notificationPreferences)
-  await db.delete(schema.files)
   await db.delete(schema.mcpConnectCodes)
   await db.delete(schema.magicLinkTokens)
   await db.delete(schema.entitlements)
@@ -95,16 +94,7 @@ describe('deleteAccount', () => {
     expect(entitlement?.status).toBe('active')
   })
 
-  it('hard-deletes files, mcp connect codes, and notification preferences', async () => {
-    await db.insert(schema.files).values({
-      id: 'file-1',
-      userId: USER,
-      filename: 'a.png',
-      mimeType: 'image/png',
-      sizeBytes: 100,
-      r2Key: `uploads/${USER}/a.png`,
-      status: 'uploaded',
-    })
+  it('hard-deletes mcp connect codes and notification preferences', async () => {
     await db.insert(schema.mcpConnectCodes).values({
       id: 'code-1',
       userId: USER,
@@ -129,12 +119,10 @@ describe('deleteAccount', () => {
       where: eq(schema.auditLog.action, 'account.deleted'),
     })
     expect(audit?.metadata).toMatchObject({
-      filesCount: 1,
       connectCodesCount: 1,
       notificationPreferencesCount: 1,
     })
 
-    expect(await db.query.files.findMany({ where: eq(schema.files.userId, USER) })).toHaveLength(0)
     expect(
       await db.query.mcpConnectCodes.findMany({ where: eq(schema.mcpConnectCodes.userId, USER) }),
     ).toHaveLength(0)
@@ -184,16 +172,6 @@ describe('deleteAccount', () => {
   })
 
   it('writes an account.deleted audit row, actor and target both the deleting user', async () => {
-    await db.insert(schema.files).values({
-      id: 'file-1',
-      userId: USER,
-      filename: 'a.png',
-      mimeType: 'image/png',
-      sizeBytes: 100,
-      r2Key: `uploads/${USER}/a.png`,
-      status: 'uploaded',
-    })
-
     await deleteAccount(db, USER)
 
     const rows = await db.query.auditLog.findMany({
@@ -209,7 +187,6 @@ describe('deleteAccount', () => {
     expect(row.targetId).toBe(USER)
     // Counts only — never PII (see server/utils/audit.ts policy note).
     expect(row.metadata).toMatchObject({
-      filesCount: 1,
       connectCodesCount: 0,
       notificationPreferencesCount: 0,
     })

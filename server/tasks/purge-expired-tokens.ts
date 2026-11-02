@@ -37,7 +37,7 @@
 // task runtime), which is why the DB logic lives in server/utils/purge.ts and
 // is tested there rather than through this wrapper.
 
-// `db` and `blob` are imported explicitly rather than left to NuxtHub's
+// `db` is imported explicitly rather than left to NuxtHub's
 // auto-imports, matching server/utils/account.ts and server/utils/rate-limit.ts.
 // The auto-imports typecheck everywhere but are not always INJECTED at runtime
 // — `kv` resolved to `ReferenceError: kv is not defined` in a server util while
@@ -45,16 +45,11 @@
 // a worse place than most to discover that: it is an untested bundling surface
 // that runs unattended at 04:00, and the only symptom would be a cron event
 // that failed nightly with nobody watching.
-import { blob } from '@nuxthub/blob'
 import { db } from '@nuxthub/db'
 import { z } from 'zod'
 
-import {
-  purgeExpiredTokens,
-  purgePendingUploads,
-  PURGE_BATCH_LIMIT,
-  PURGE_GRACE_SECONDS,
-} from '../utils/purge'
+import { getPurgeContributors } from '../utils/extensions'
+import { purgeExpiredTokens, PURGE_BATCH_LIMIT, PURGE_GRACE_SECONDS } from '../utils/purge'
 
 // Cron delivers `{ scheduledTime }` and nothing else, so in practice this
 // validates the hand-run dev route above — where the values arrive as query
@@ -88,21 +83,24 @@ export default defineTask({
     // preset's `scheduled()` sets before it calls us — so there is a real
     // database here even though no request ran.
     const result = await purgeExpiredTokens(db, options)
-    // Sequential, not Promise.all: these are two independent sweeps and
-    // running them concurrently only buys latency nobody is waiting for, while
-    // doubling the D1 work in flight during a cron tick.
-    const uploads = await purgePendingUploads(db, blob, options)
+    // Then each feature's sweep (the files layer's abandoned uploads), keyed by
+    // contributor. Sequential, not Promise.all: independent sweeps running
+    // concurrently only buy latency nobody is waiting for, while multiplying
+    // the D1 work in flight during a cron tick.
+    const sweeps: Array<readonly [string, { count: number; truncated: boolean }]> = []
+    for (const c of getPurgeContributors()) sweeps.push([c.key, await c.run(db, options)])
+    const counts = Object.fromEntries(sweeps.map(([key, sweep]) => [key, sweep.count]))
 
     console.info(
       JSON.stringify({
         kind: 'purge_expired_tokens',
         ...result,
-        pendingUploads: uploads.files,
-        truncated: result.truncated || uploads.truncated,
+        ...counts,
+        truncated: result.truncated || sweeps.some(([, sweep]) => sweep.truncated),
         durationMs: Date.now() - started,
       }),
     )
 
-    return { result: { ...result, pendingUploads: uploads.files } }
+    return { result: { ...result, ...counts } }
   },
 })

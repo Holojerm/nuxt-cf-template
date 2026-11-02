@@ -5,10 +5,8 @@
 // Like server/utils/entitlements.ts and server/utils/audit.ts, every function
 // here takes the Drizzle client as its first argument rather than reaching for
 // the auto-imported `db`, so test/account.test.ts can drive it against a real
-// D1 binding without booting Nitro. For the same reason, anything this file
-// calls that Nitro would normally auto-inject (`blob`) is imported explicitly
-// — nothing is injected outside a real Nitro request (see .claude/docs/gotchas.md
-// on `kv`, which has the identical failure mode).
+// D1 binding without booting Nitro. Uploaded files (R2) are swept by the files
+// layer's contributor, which imports `blob` explicitly for the same reason.
 //
 // ── Anonymize the row, don't erase it ────────────────────────────────────────
 // `users.id` has to survive: `entitlements.user_id` is a real foreign key, and
@@ -26,7 +24,6 @@
 
 import { and, count, desc, eq } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
-import { blob } from '@nuxthub/blob'
 import * as tables from '../db/schema'
 import type { AuditMetadata } from '../db/schema'
 import { isBillingLive } from './entitlements'
@@ -130,12 +127,8 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
     return { outcome: 'live_subscription', subscriptionId: liveSubscriptionId }
 
   const contributors = getAccountContributors()
-  const [files, [connectCodeTotal], [magicLinkTotal], [notificationTotal], contributorCounts] =
+  const [[connectCodeTotal], [magicLinkTotal], [notificationTotal], contributorCounts] =
     await Promise.all([
-      db
-        .select({ id: tables.files.id, r2Key: tables.files.r2Key })
-        .from(tables.files)
-        .where(eq(tables.files.userId, userId)),
       db
         .select({ total: count() })
         .from(tables.mcpConnectCodes)
@@ -154,7 +147,6 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
     ])
 
   const metadata: AuditMetadata = {
-    filesCount: files.length,
     connectCodesCount: connectCodeTotal?.total ?? 0,
     magicLinkTokensCount: magicLinkTotal?.total ?? 0,
     notificationPreferencesCount: notificationTotal?.total ?? 0,
@@ -174,23 +166,9 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
       metadata,
     },
     async (): Promise<DeleteAccountOutcome> => {
-      // Outside the batch below, and before it, because of the R2 half: the
-      // objects have to be swept while their rows still name them, and that
-      // sweep is best-effort in a way a transaction cannot express.
-      if (files.length) {
-        await db.delete(tables.files).where(eq(tables.files.userId, userId))
-        // Best-effort: an R2 outage (or, in tests, no R2 binding at all) must
-        // not fail the deletion the person is waiting on. The orphaned objects
-        // cost storage, not correctness — the row that pointed at them, and
-        // soon the account itself, are already gone.
-        try {
-          await blob.del(files.map((file) => file.r2Key))
-        } catch (error) {
-          console.error(
-            JSON.stringify({ kind: 'account_delete_blob_failed', userId, error: String(error) }),
-          )
-        }
-      }
+      // Contributors' out-of-batch work first (the files layer sweeps R2 here,
+      // while its rows still name the objects). See AccountContributor.
+      for (const c of contributors) await c.beforeDeletion?.(db, userId)
 
       // One batch, not a run of awaited statements. D1 runs a batch as a single
       // transaction and a single round trip, which matters twice here: the
@@ -219,7 +197,7 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
           .delete(tables.notificationPreferences)
           .where(eq(tables.notificationPreferences.userId, userId)),
 
-        ...contributors.flatMap((c) => c.deletionStatements(db, userId)),
+        ...contributors.flatMap((c) => c.deletionStatements?.(db, userId) ?? []),
 
         db
           .update(tables.users)
@@ -394,8 +372,8 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
       orderBy: desc(tables.auditLog.createdAt),
     }),
     collectSections<ReturnType<typeof getAccountContributors>[number], AccountExportSections>(
-      getAccountContributors(),
-      (c) => c.exportSection(db, userId),
+      getAccountContributors().filter((c) => c.exportSection),
+      (c) => c.exportSection?.(db, userId) ?? Promise.resolve(undefined),
     ),
   ])
 
