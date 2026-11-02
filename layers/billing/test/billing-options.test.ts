@@ -4,6 +4,7 @@
 
 import { env } from 'cloudflare:test'
 import { drizzle } from 'drizzle-orm/d1'
+import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '~~/server/db/schema'
@@ -19,8 +20,16 @@ import {
   findActiveEntitlement,
   grantPass,
   setPassDays,
+  setStackAtBilled,
 } from '../server/utils/entitlements'
 import { isForeignProduct } from '../server/utils/paddle-prices'
+import {
+  notifyBillingOutcome,
+  notifyCompGranted,
+  notifyCompRevoked,
+  setBillingNotify,
+} from '../server/utils/billing-notifications'
+import { registerBillingExtensions } from '../server/utils/billing-extensions'
 
 const db = drizzle(env.DB, { schema })
 const USER = 'user-options'
@@ -34,6 +43,8 @@ beforeEach(async () => {
 
 afterEach(() => {
   setPassDays(30)
+  setStackAtBilled(false)
+  setBillingNotify(true)
   clearBillingOutcomeHandlersForTest()
   vi.restoreAllMocks()
 })
@@ -145,5 +156,108 @@ describe('billing outcome handlers', () => {
 
   it('with none registered, do nothing', async () => {
     await expect(runBillingOutcomeHandlers(context)).resolves.toBeUndefined()
+  })
+})
+
+describe('billing.notify', () => {
+  // No `findUserById`/`sendEmail` exist in this suite, so a send that is attempted
+  // fails inside its try and is logged as billing_email_failed. That makes "was a
+  // send attempted?" observable without stubbing the mail path.
+  const pass = {
+    kind: 'pass',
+    userId: USER,
+    granted: true,
+    endsAt: new Date('2099-01-01'),
+  } as unknown as Parameters<typeof notifyBillingOutcome>[1]
+
+  async function attempts(): Promise<number> {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await notifyBillingOutcome(db, pass)
+    await notifyCompGranted(db, { userId: USER, endsAt: null })
+    await notifyCompRevoked(db, { userId: USER })
+    return error.mock.calls.length + warn.mock.calls.length
+  }
+
+  it('is on by default: each customer email is attempted', async () => {
+    expect(await attempts()).toBe(3)
+  })
+
+  it('off: nothing is looked up, rendered, sent or logged', async () => {
+    setBillingNotify(false)
+    expect(await attempts()).toBe(0)
+  })
+
+  it('is set from the layer option at startup, and an unset option leaves it alone', async () => {
+    registerBillingExtensions({ notify: false })
+    expect(await attempts()).toBe(0)
+    registerBillingExtensions({})
+    expect(await attempts()).toBe(0)
+    registerBillingExtensions({ notify: true })
+    expect(await attempts()).toBe(3)
+  })
+})
+
+describe('billing.stackAtBilledAt', () => {
+  // The old pass ended 10 days ago, so at the wall clock nothing is running. The
+  // new pass was bought 15 days ago, while the old one still had 5 days left, and
+  // its webhook is only being processed now (a long delivery lag).
+  const oldBilled = new Date(Date.now() - 40 * DAY)
+  const oldEnds = new Date(oldBilled.getTime() + 30 * DAY)
+  const newBilled = new Date(Date.now() - 15 * DAY)
+  const sec = (ms: number) => Math.floor(ms / 1000) * 1000
+
+  beforeEach(async () => {
+    await grantPass(db, { userId: USER, transactionId: 'txn_old', billedAt: oldBilled })
+  })
+
+  it('defaults to the wall clock: nothing is running now, so the new pass starts at its billing date', async () => {
+    const result = await grantPass(db, {
+      userId: USER,
+      transactionId: 'txn_new',
+      billedAt: newBilled,
+    })
+    expect(result.stackedOn).toBeNull()
+    expect(result.endsAt.getTime()).toBe(sec(newBilled.getTime() + 30 * DAY))
+  })
+
+  it('on: stacks on what was running when it was bought, so the overlap is kept', async () => {
+    setStackAtBilled(true)
+    const result = await grantPass(db, {
+      userId: USER,
+      transactionId: 'txn_new',
+      billedAt: newBilled,
+    })
+    expect(result.stackedOn?.getTime()).toBe(sec(oldEnds.getTime()))
+    expect(result.endsAt.getTime()).toBe(sec(oldEnds.getTime() + 30 * DAY))
+  })
+
+  it('on: identical to the default when delivery is prompt', async () => {
+    const billed = new Date()
+    const promptOff = await grantPass(db, {
+      userId: USER,
+      transactionId: 'txn_p1',
+      billedAt: billed,
+    })
+    await db
+      .delete(schema.entitlements)
+      .where(eq(schema.entitlements.paddleSubscriptionId, 'txn_p1'))
+    setStackAtBilled(true)
+    const promptOn = await grantPass(db, {
+      userId: USER,
+      transactionId: 'txn_p1',
+      billedAt: billed,
+    })
+    expect(promptOn).toEqual(promptOff)
+  })
+
+  it('is set from the layer option at startup', async () => {
+    registerBillingExtensions({ stackAtBilledAt: true })
+    const result = await grantPass(db, {
+      userId: USER,
+      transactionId: 'txn_new',
+      billedAt: newBilled,
+    })
+    expect(result.stackedOn).not.toBeNull()
   })
 })

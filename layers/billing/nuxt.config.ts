@@ -61,6 +61,21 @@ export default defineNuxtConfig({
       // can still bill. Turn it off only when the app's own deletion flow
       // cancels the subscription at Paddle itself and fails closed.
       guardDeletion: true,
+      // Send the customer emails billing decides on (purchase, payment failed,
+      // access ended, comp granted and revoked). Turn it off for an app that
+      // sends no customer email: nothing is looked up, rendered, sent or logged.
+      // Core's email modules must still exist (the layer imports them); the
+      // `pass_expiring` lifecycle step is sent only by core's lifecycle task.
+      notify: true,
+      // Send the layer's own `paddle_*` PostHog events from the webhook
+      // (subscription lifecycle, transaction completed, access revoked). Turn it
+      // off for an app that records its own plan events through
+      // registerBillingOutcomeHandler() and promises its users nothing more.
+      analytics: true,
+      // Stack a new pass on the access running when it was bought, not when the
+      // webhook was processed. Only differs when delivery lagged past the old
+      // pass's end; true keeps the customer's overlap. Default: the wall clock.
+      stackAtBilledAt: false,
     },
     public: {
       // Paddle client-side token (public by design) + environment. Empty

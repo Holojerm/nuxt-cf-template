@@ -82,6 +82,13 @@ export default defineEventHandler(async (event) => {
   const paddleEvent = parsed.data
   const eventType = paddleEvent.event_type
 
+  // The layer's own `paddle_*` PostHog events. An app that records its own plan
+  // events through registerBillingOutcomeHandler() turns these off
+  // (billing.analytics); only an explicit false does, so a config without the key
+  // keeps sending.
+  const capture: typeof captureServerEvent =
+    config.billing.analytics === false ? async () => {} : captureServerEvent
+
   const outcome = await applyPaddleEvent(db, paddleEvent, paddlePriceCatalogue(config.public))
 
   // At most one email, only on a real transition — see
@@ -101,13 +108,13 @@ export default defineEventHandler(async (event) => {
   await runBillingOutcomeHandlers({ db, event: paddleEvent, outcome })
 
   if (outcome.kind === 'subscription') {
-    await captureServerEvent({
+    await capture({
       distinctId: outcome.userId,
       event: paddleSubscriptionEvent(eventType),
       properties: { subscriptionId: paddleEvent.data.id, status: outcome.status },
     })
   } else if (outcome.kind === 'pass') {
-    await captureServerEvent({
+    await capture({
       distinctId: outcome.userId,
       event: 'paddle_transaction_completed',
       properties: {
@@ -151,7 +158,7 @@ export default defineEventHandler(async (event) => {
       })
     }
     if (outcome.result.userId) {
-      await captureServerEvent({
+      await capture({
         distinctId: outcome.result.userId,
         event: 'paddle_access_revoked',
         properties: {

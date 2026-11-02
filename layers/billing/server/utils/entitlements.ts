@@ -17,6 +17,8 @@ import { and, desc, eq, gt, inArray, isNotNull, or } from 'drizzle-orm'
 import { z } from 'zod'
 import * as tables from '../db/schema'
 import type { Entitlement } from '../db/schema'
+// The account table, for the existence check before a new row is written.
+import { users } from '#server/db/schema'
 // Explicit, not the Nitro auto-import: the workerd vitest suite loads this file
 // directly and nothing is injected there.
 import { likePrefix } from '#server/utils/sql'
@@ -48,6 +50,21 @@ export function setPassDays(days: number): boolean {
   }
   PASS_DAYS = days
   return true
+}
+
+// ── Which moment a pass stacks against ──────────────────────────────────────
+// A pass bought while access is running starts where that access ends. "Running"
+// is judged at the wall clock by default (when the webhook is processed). That
+// is the same moment as the purchase unless delivery lagged, and when it lagged
+// past the old pass's end the new one starts at its billing date and the
+// overlap is lost. An app that wants the customer to keep those days sets
+// `runtimeConfig.billing.stackAtBilledAt` and the lookup is made as of the
+// purchase instead. Identical for every prompt delivery.
+let stackAtBilled = false
+
+/** Apply the app's choice of stacking moment. Called once at startup. */
+export function setStackAtBilled(enabled: boolean): void {
+  stackAtBilled = enabled
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -255,7 +272,12 @@ export async function grantPass(
   const { userId, transactionId, customerId = null, productKey = 'default' } = params
   const billedAt = params.billedAt ?? new Date()
 
-  const existing = await findActiveEntitlement(db, userId, productKey)
+  const existing = await findActiveEntitlement(
+    db,
+    userId,
+    productKey,
+    stackAtBilled ? billedAt : undefined,
+  )
   // Through the shared helpers, not a second copy of the arithmetic: comp
   // grants (layers/billing/server/utils/admin-grants.ts) and referral grants stack with the
   // identical rule, and "nobody loses days they already paid for" must not be
@@ -1131,6 +1153,24 @@ export async function applyPaddleEvent(
   return outcome
 }
 
+/**
+ * Does the account a purchase names exist?
+ *
+ * Asked before a NEW row is written, not left to the `entitlements.user_id`
+ * foreign key: an app whose table has no such key (an older schema it has not
+ * rebuilt) would otherwise write an entitlement for nobody. With the key the
+ * answer is the same one the constraint gives, a step earlier, so the outcome
+ * (`unknown_user`, acknowledged and alerted) does not depend on which kind of
+ * table the app has. The key stays as the backstop for a race.
+ */
+async function userExists(db: EntitlementDb, userId: string): Promise<boolean> {
+  const row = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: { id: true },
+  })
+  return Boolean(row)
+}
+
 function isForeignKeyFailure(error: unknown): boolean {
   // Drizzle wraps the D1 error; the constraint text is on the cause chain.
   for (let e = error, depth = 0; e && depth < 5; e = (e as { cause?: unknown }).cause, depth++) {
@@ -1170,6 +1210,7 @@ async function dispatchPaddleEvent(
         }
       }
       productKey = price.entry.productKey
+      if (!(await userExists(db, userId))) return { kind: 'ignored', reason: 'unknown_user' }
     }
     const status = data.status ?? 'unknown'
     const { previousStatus, applied, skipped, firstTransactionId } = await upsertSubscription(db, {
@@ -1214,6 +1255,7 @@ async function dispatchPaddleEvent(
         priceIds: price.priceIds,
       }
     }
+    if (!(await userExists(db, userId))) return { kind: 'ignored', reason: 'unknown_user' }
     const result = await grantPass(db, {
       userId,
       transactionId: data.id,

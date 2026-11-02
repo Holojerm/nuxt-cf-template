@@ -41,7 +41,7 @@ const OWN_PRODUCT = 'pro_route_own'
 
 interface Config {
   paddle: { webhookSecret: string; productId: string }
-  billing: { alertUnmatchedAdjustments: boolean }
+  billing: { alertUnmatchedAdjustments: boolean; analytics?: boolean }
   public: { paddlePricePass: string; paddlePriceMonthly: string }
 }
 
@@ -346,5 +346,23 @@ describe('outcome handlers', () => {
     expect(logs.error).toHaveBeenCalledWith(
       expect.stringContaining('billing_outcome_handler_failed'),
     )
+  })
+})
+
+describe('billing.analytics', () => {
+  it('on by default (and when the key is absent): the layer’s paddle_* events are sent', async () => {
+    await deliver(purchase(PRICE_PASS, OWN_PRODUCT))
+    expect(captured.map((c) => c.event)).toEqual(['paddle_transaction_completed'])
+  })
+
+  it('off: nothing is sent to PostHog, and the delivery is otherwise unchanged', async () => {
+    config.billing.analytics = false
+    const seen: string[] = []
+    registerBillingOutcomeHandler('probe', async ({ outcome }) => void seen.push(outcome.kind))
+    expect((await deliver(purchase(PRICE_PASS, OWN_PRODUCT))).status).toBe(200)
+    expect(captured).toEqual([])
+    // The app's own handlers still run: that is how it records its own events.
+    expect(seen).toEqual(['pass'])
+    expect((await db.query.entitlements.findMany()).length).toBe(1)
   })
 })
