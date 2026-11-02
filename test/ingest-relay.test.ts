@@ -57,14 +57,21 @@ beforeEach(() => {
 afterEach(() => resetIngestRelayForTest())
 
 describe('configureIngestRelay', () => {
-  it('defaults to 300 requests per 120s, a budget the native binding cannot take', () => {
-    const limiter = getIngestLimiter()
-    expect(limiter).toEqual({ name: 'ingest', limit: 300, windowSeconds: 120 })
-    expect(limiter.windowSeconds === NATIVE_LIMITER.windowSeconds).toBe(false)
+  it('is off until an app turns it on, and still forwards the client address', () => {
+    expect(getIngestLimiter()).toBeNull()
     expect(getForwardClientIp()).toBe(true)
+    configureIngestRelay({ forwardClientIp: false })
+    expect(getIngestLimiter()).toBeNull()
   })
 
-  it('overrides only what it is given', () => {
+  it('defaults to 300 requests per 120s once on, a budget the native binding cannot take', () => {
+    configureIngestRelay({ rateLimit: true })
+    const limiter = getIngestLimiter()!
+    expect(limiter).toEqual({ name: 'ingest', limit: 300, windowSeconds: 120 })
+    expect(limiter.windowSeconds === NATIVE_LIMITER.windowSeconds).toBe(false)
+  })
+
+  it('overrides only what it is given, and a number implies on', () => {
     configureIngestRelay({ limit: 50 })
     expect(getIngestLimiter()).toEqual({ name: 'ingest', limit: 50, windowSeconds: 120 })
     configureIngestRelay({ windowSeconds: 30, forwardClientIp: false })
@@ -76,12 +83,19 @@ describe('configureIngestRelay', () => {
     expect(() => configureIngestRelay({ limit: 0 })).toThrow(/limit/)
     expect(() => configureIngestRelay({ limit: 1.5 })).toThrow(/limit/)
     expect(() => configureIngestRelay({ windowSeconds: -1 })).toThrow(/windowSeconds/)
-    expect(getIngestLimiter().limit).toBe(300)
+    expect(getIngestLimiter()).toBeNull()
   })
 })
 
 describe('the /ingest route', () => {
+  it('does not rate-limit an app that never turned the limiter on', async () => {
+    await handler(fakeEvent('/ingest/e/'))
+    expect(rateLimit).not.toHaveBeenCalled()
+    expect(h3.sendProxy).toHaveBeenCalledTimes(1)
+  })
+
   it('rate-limits by hashed address with the configured budget, before anything is forwarded', async () => {
+    configureIngestRelay({ rateLimit: true })
     await handler(fakeEvent('/ingest/e/'))
     expect(rateLimit).toHaveBeenCalledTimes(1)
     expect(rateLimit.mock.calls[0]![1]).toEqual({
@@ -97,6 +111,7 @@ describe('the /ingest route', () => {
   })
 
   it('forwards nothing when the limiter refuses', async () => {
+    configureIngestRelay({ rateLimit: true })
     rateLimit.mockRejectedValueOnce(
       Object.assign(new Error('Too many requests'), { statusCode: 429 }),
     )

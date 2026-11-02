@@ -8,6 +8,12 @@
 // the window long: 300 requests per 120s per address, which no single browser
 // reaches and no spammer wants.
 //
+// ── Opt-in ───────────────────────────────────────────────────────────────────
+// Off unless an app turns it on. The KV backend costs a read and a write per
+// relayed request, which is real money for an app with real traffic, and an
+// unconfigured fork syncing this file must not start paying for it unasked.
+// An app that wants it calls `configureIngestRelay({ rateLimit: true })`.
+//
 // ── Why 120s ─────────────────────────────────────────────────────────────────
 // The window is deliberately not 10 or 60. Those are the only periods the native
 // Rate Limiting binding accepts, so a 120s window can only ever be served by the
@@ -21,6 +27,8 @@
 // plugin instead of editing the route. Nothing to configure means the default.
 
 export interface IngestRelayOptions {
+  /** Turn the limiter on. Implied by `limit` or `windowSeconds`. Default off. */
+  rateLimit?: boolean
   /** Requests allowed per window, per address. Default 300. */
   limit?: number
   /** Window length in seconds. Default 120; keep it off 10 and 60. */
@@ -41,11 +49,11 @@ export interface IngestLimiter {
 
 const DEFAULT_INGEST_LIMITER: IngestLimiter = { name: 'ingest', limit: 300, windowSeconds: 120 }
 
-let ingestLimiter: IngestLimiter = DEFAULT_INGEST_LIMITER
+let ingestLimiter: IngestLimiter | null = null
 let forwardClientIp = true
 
-/** The budget `rateLimit()` is called with for every /ingest request. */
-export function getIngestLimiter(): IngestLimiter {
+/** The budget `rateLimit()` is called with for every /ingest request; null = not limited. */
+export function getIngestLimiter(): IngestLimiter | null {
   return ingestLimiter
 }
 
@@ -66,12 +74,14 @@ export function configureIngestRelay(options: IngestRelayOptions): void {
       `configureIngestRelay: windowSeconds must be a positive integer, got ${windowSeconds}`,
     )
   }
-  ingestLimiter = { name: DEFAULT_INGEST_LIMITER.name, limit, windowSeconds }
+  const enabled =
+    options.rateLimit ?? (options.limit !== undefined || options.windowSeconds !== undefined)
+  ingestLimiter = enabled ? { name: DEFAULT_INGEST_LIMITER.name, limit, windowSeconds } : null
   forwardClientIp = options.forwardClientIp ?? true
 }
 
 /** Test-only: back to the defaults. */
 export function resetIngestRelayForTest(): void {
-  ingestLimiter = DEFAULT_INGEST_LIMITER
+  ingestLimiter = null
   forwardClientIp = true
 }

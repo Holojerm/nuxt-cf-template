@@ -24,7 +24,7 @@ const PAYLOAD_METHODS = new Set(['PATCH', 'POST', 'PUT', 'DELETE'])
 
 export default defineEventHandler(async (event) => {
   // An open proxy with no counter is an open proxy anyone can point anything
-  // through, on our bill and from our IP reputation. server/middleware/auth.ts
+  // through, on our bill and from our IP reputation. Opt-in, for the KV cost. server/middleware/auth.ts
   // never sees this route — it only guards `/api/**` — so the limit lives here.
   // Budget and its reasoning: server/utils/ingest-relay.ts.
   //
@@ -32,7 +32,8 @@ export default defineEventHandler(async (event) => {
   // anonymous surface in the app, and its counters would otherwise be a rolling
   // list of visitor IPs sitting in KV. Fails open, like every limiter here — a
   // broken KV must not silently switch analytics off.
-  await rateLimit(event, { ...getIngestLimiter(), identifier: await hashedClientIp(event) })
+  const limiter = getIngestLimiter()
+  if (limiter) await rateLimit(event, { ...limiter, identifier: await hashedClientIp(event) })
 
   const path = (getRouterParam(event, 'path') ?? '').replace(/^\/+/, '')
   const search = getRequestURL(event).search

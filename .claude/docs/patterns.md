@@ -136,8 +136,9 @@ a registered budget. Core registers `NATIVE_LIMITER`; an app adds another with
 
 Two analytics settings an app changes by configuration, not by editing the file:
 
-- `configureIngestRelay({ limit, windowSeconds, forwardClientIp })` (Nitro plugin,
-  `server/utils/ingest-relay.ts`): the PostHog relay's rate-limit budget (default 300/120s) and
+- `configureIngestRelay({ rateLimit, limit, windowSeconds, forwardClientIp })` (Nitro plugin,
+  `server/utils/ingest-relay.ts`): the PostHog relay's rate limit (off unless turned on, for the
+  per-request KV cost; 300/120s once on) and
   whether PostHog is told the visitor's address for GeoIP (default true). An app that collects
   no location passes `forwardClientIp: false`.
 - `runtimeConfig.captureSignOut` (default `true`): set it to `false` to leave the
