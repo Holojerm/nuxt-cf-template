@@ -1,0 +1,5 @@
+{
+  "_comment": "Written by `bun run layers:pull`. Each entry is a layer copied from `repo` at `sha`; `hash` fingerprints the copy so `bun run layers:check` fails if anyone edits it. Change behaviour by shadowing a component/page/route from the app, through an extension point, or upstream in the template, then re-pull. Commit it.",
+  "repo": "Holojerm/nuxt-cf-template",
+  "layers": {}
+}

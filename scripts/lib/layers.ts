@@ -1,0 +1,120 @@
+// Shared by scripts/layers-pull.ts and scripts/check-layers.ts.
+//
+// A vendored layer is a copy of `layers/<name>/` from the template at one
+// commit, committed into this repo. Nuxt auto-registers everything under
+// `layers/`, so a vendored layer behaves exactly like one authored here.
+// Vendoring rather than `extends: ['github:…']` is deliberate: NuxtHub builds
+// its merged schema types with tsdown, which leaves anything under
+// node_modules (where remote layers land) untyped.
+//
+// layers.lock.json records, per vendored layer, the commit it came from and a
+// content hash taken at pull time. The hash is what lets layers:check prove
+// offline that nobody edited the copy.
+
+import { createHash } from 'node:crypto'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join, relative, resolve, sep } from 'node:path'
+
+export const ROOT = resolve(import.meta.dir, '../..')
+export const LAYERS_DIR = join(ROOT, 'layers')
+export const LOCK_FILE = join(ROOT, 'layers.lock.json')
+export const DEFAULT_REPO = 'Holojerm/nuxt-cf-template'
+
+export interface LockedLayer {
+  /** What was asked for (a branch, tag or sha), kept so a re-pull can follow it. */
+  ref: string
+  sha: string
+  hash: string
+}
+
+export interface LayersLock {
+  _comment?: string
+  repo: string
+  layers: Record<string, LockedLayer>
+}
+
+const LOCK_COMMENT =
+  'Written by `bun run layers:pull`. Each entry is a layer copied from `repo` at `sha`; `hash` fingerprints the copy so `bun run layers:check` fails if anyone edits it. Change behaviour by shadowing a component/page/route from the app, through an extension point, or upstream in the template, then re-pull. Commit it.'
+
+/** Files that never belong to a layer, whatever the OS left behind. */
+const IGNORED = new Set(['.DS_Store', 'Thumbs.db'])
+
+export function readLock(): LayersLock {
+  if (!existsSync(LOCK_FILE)) return { repo: templateRepo(), layers: {} }
+  return JSON.parse(readFileSync(LOCK_FILE, 'utf8')) as LayersLock
+}
+
+export function writeLock(lock: LayersLock): void {
+  const layers = Object.fromEntries(
+    Object.entries(lock.layers).sort(([a], [b]) => a.localeCompare(b)),
+  )
+  const body = { _comment: LOCK_COMMENT, repo: lock.repo, layers }
+  writeFileSync(LOCK_FILE, `${JSON.stringify(body, null, 2)}\n`)
+}
+
+/** The template this repo was forked from, per fleet.json; the template itself otherwise. */
+function templateRepo(): string {
+  try {
+    const manifest = JSON.parse(readFileSync(join(ROOT, 'fleet.json'), 'utf8')) as {
+      template?: { repo?: string } | null
+    }
+    return manifest.template?.repo ?? DEFAULT_REPO
+  } catch {
+    return DEFAULT_REPO
+  }
+}
+
+function listFiles(dir: string): string[] {
+  const files: string[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (IGNORED.has(entry.name)) continue
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) files.push(...listFiles(path))
+    else if (entry.isFile()) files.push(path)
+  }
+  return files
+}
+
+/**
+ * sha256 over every file's repo-independent path and bytes, in sorted order.
+ * Paths use `/` on every OS so a hash taken on macOS matches one taken in CI.
+ */
+export function hashLayer(dir: string): string {
+  const hash = createHash('sha256')
+  const files = listFiles(dir)
+    .map((path) => ({ path, rel: relative(dir, path).split(sep).join('/') }))
+    .sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))
+  for (const file of files) {
+    hash.update(file.rel).update('\0').update(readFileSync(file.path)).update('\0')
+  }
+  return hash.digest('hex')
+}
+
+/** Resolve a branch, tag or sha to a full commit sha. Public repo, no token. */
+export async function resolveRef(repo: string, ref: string): Promise<string> {
+  const response = await fetch(
+    `https://api.github.com/repos/${repo}/commits/${encodeURIComponent(ref)}`,
+    {
+      headers: { accept: 'application/vnd.github.sha', 'user-agent': 'layers-pull' },
+    },
+  )
+  if (!response.ok) throw new Error(`Could not resolve ${repo}@${ref}: HTTP ${response.status}`)
+  return (await response.text()).trim()
+}
+
+/**
+ * Download the repo at `sha` and extract it under `into`. Returns the path of
+ * the extracted checkout. Uses the system `tar` (bsdtar and GNU tar both read
+ * gzip) so no dependency is needed.
+ */
+export async function downloadRepo(repo: string, sha: string, into: string): Promise<string> {
+  const response = await fetch(`https://codeload.github.com/${repo}/tar.gz/${sha}`)
+  if (!response.ok) throw new Error(`Could not download ${repo}@${sha}: HTTP ${response.status}`)
+  const archive = join(into, 'repo.tar.gz')
+  await Bun.write(archive, response)
+  const tar = Bun.spawnSync(['tar', '-xzf', archive, '-C', into])
+  if (tar.exitCode !== 0) throw new Error(`tar failed: ${tar.stderr.toString()}`)
+  const top = readdirSync(into, { withFileTypes: true }).find((entry) => entry.isDirectory())
+  if (!top) throw new Error(`Archive for ${repo}@${sha} was empty`)
+  return join(into, top.name)
+}
