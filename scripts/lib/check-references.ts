@@ -348,16 +348,37 @@ export interface DeadReference extends Reference {
  */
 function nuxtRuntimeConfigEnvNames(root: string): Set<string> {
   const names = new Set<string>()
-  let source: string
-  try {
-    source = readFileSync(join(root, 'nuxt.config.ts'), 'utf8')
-  } catch {
-    return names
+  // The app's own config and every layer's: a layer declares the keys its
+  // feature reads (billing: the Paddle names), and a doc naming one is true.
+  const configs = [
+    join(root, 'nuxt.config.ts'),
+    ...layerDirs(root).map((dir) => join(dir, 'nuxt.config.ts')),
+  ]
+  for (const file of configs) {
+    try {
+      collectEnvNames(readFileSync(file, 'utf8'), names)
+    } catch {
+      // No config there: nothing to add.
+    }
   }
+  return names
+}
+
+function layerDirs(root: string): string[] {
+  try {
+    return readdirSync(join(root, 'layers'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(root, 'layers', entry.name))
+  } catch {
+    return []
+  }
+}
+
+function collectEnvNames(source: string, names: Set<string>): void {
   const start = source.indexOf('runtimeConfig:')
-  if (start === -1) return names
+  if (start === -1) return
   const open = source.indexOf('{', start)
-  if (open === -1) return names
+  if (open === -1) return
 
   const snake = (key: string) => key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()
   const path: string[] = []
@@ -416,7 +437,6 @@ function nuxtRuntimeConfigEnvNames(root: string): Set<string> {
       names.add(`NUXT_${[...path, key].map(snake).join('_')}`)
     }
   }
-  return names
 }
 
 export function findDeadReferences(root: string): DeadReference[] {
