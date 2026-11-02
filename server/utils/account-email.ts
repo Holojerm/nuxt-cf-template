@@ -8,7 +8,7 @@
 import { composeEmail, type Branding, type EmailContent } from './email-templates'
 
 /**
- * Sent by the caller (DELETE /api/account) BEFORE the `users` row is
+ * Sent by the caller (POST /api/account/delete) BEFORE the `users` row is
  * anonymized — it's the last message that can reach the real address, because
  * server/utils/account.ts rewrites it to a synthetic tombstone the moment
  * deletion succeeds. Confirms exactly what /privacy promises: the account and

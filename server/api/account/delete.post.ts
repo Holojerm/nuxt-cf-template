@@ -1,4 +1,11 @@
-// DELETE /api/account — self-serve account deletion.
+// POST /api/account/delete — self-serve account deletion.
+//
+// POST, not DELETE, because the confirmation travels in the body and Nitro's
+// Cloudflare handler only forwards a body for POST/PUT/PATCH (nitropack
+// runtime `requestHasBody`). A DELETE with a body reaches the handler with no
+// body at all, readValidatedBody waits forever, and workerd kills the request
+// as hung: a 500 for every deletion in production, invisible in `nuxt dev`.
+// `bun run methods:check` fails a delete/get/head route that reads a body.
 //
 // /privacy promises "deletion of your account and its contents" through the
 // support inbox; this is that promise made self-serve instead, which matters

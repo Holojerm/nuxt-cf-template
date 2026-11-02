@@ -83,6 +83,16 @@ export default defineEventHandler(async (event) => {
 })
 ```
 
+**A DELETE never carries a body on Workers.** Nitro's Cloudflare handler forwards a request body
+only for POST, PUT and PATCH (nitropack runtime `requestHasBody`). A `*.delete.ts` route that calls
+`readBody`/`readValidatedBody` gets no body, the read waits forever, and workerd kills the request
+("Worker's code had hung"): a 500 in production that `nuxt dev` (Node) and vitest never show. Use
+POST for any destructive action that takes a confirmation in the body (`POST /api/account/delete`);
+a DELETE that needs only the URL (`DELETE /api/files/:id`) is fine. The same goes for GET and HEAD.
+`bun run methods:check` (in `bun run ci`) fails a get/head/delete route that reads a body; it cannot
+see a read hidden in a helper, so confirm a new destructive route against the built Worker
+(`wrangler dev -c .output/server/wrangler.json`).
+
 ## Database (Drizzle + D1)
 
 - **Schema lives in `server/db/schema.ts`**, plus one `server/db/schema.ts` per layer. The app's file re-exports each layer's at the end, which is what puts layer tables into the typed `db` and into drizzle-kit's view; migrations stay in `server/db/migrations`.

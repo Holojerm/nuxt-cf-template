@@ -49,7 +49,7 @@ export interface WebhookStep {
 export interface RequestStep {
   type: 'request'
   name: string
-  method: 'GET' | 'POST' | 'DELETE'
+  method: 'GET' | 'POST'
   path: string
   as: keyof typeof USERS | 'fleet' | 'anonymous'
   json?: unknown
@@ -161,6 +161,15 @@ const get = (name: string, path: string, as: RequestStep['as']): RequestStep => 
   method: 'GET',
   path,
   as,
+})
+
+const post = (name: string, path: string, as: RequestStep['as'], json: unknown): RequestStep => ({
+  type: 'request',
+  name,
+  method: 'POST',
+  path,
+  as,
+  json,
 })
 
 /** The full replay, in delivery order. */
@@ -505,10 +514,25 @@ export function buildSteps(): Step[] {
   steps.push(get('admin: one-customer view', `/api/admin/users/${buyer}`, 'admin'))
   steps.push(get('admin: view as', `/api/admin/users/${buyer}/view-as`, 'admin'))
   steps.push(get('fleet counters', '/api/fleet', 'fleet'))
-  // Not replayed: DELETE /api/account. A DELETE request with a body hangs under
-  // `wrangler dev` (workerd reports "Worker's code had hung" before the handler
-  // runs, on origin/main too), so the deletion guard is pinned by
-  // test/account.test.ts and layers/billing/test/billing-extensions.test.ts instead.
+  // ── Account deletion, through the built Worker ──────────────────────────────
+  // POST /api/account/delete, not DELETE: a DELETE body never reaches the handler on
+  // Workers (the request hangs). A wrong confirmation changes nothing, a customer with
+  // a live subscription is refused by billing's guard, and a plain account is deleted.
+  // The deleted row's tombstone shows in the users dump.
+  steps.push(
+    post('delete account: wrong confirmation (400)', '/api/account/delete', 'free', {
+      confirmEmail: 'someone-else@replay.test',
+    }),
+    post('delete account: signed out (401)', '/api/account/delete', 'anonymous', {
+      confirmEmail: USERS.free.email,
+    }),
+    post('delete account: live subscription refused (409)', '/api/account/delete', 'live', {
+      confirmEmail: USERS.live.email,
+    }),
+    post('delete account: plain account (200)', '/api/account/delete', 'free', {
+      confirmEmail: USERS.free.email,
+    }),
+  )
   steps.push({
     type: 'request',
     name: 'portal link without an API key (503)',
