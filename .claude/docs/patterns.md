@@ -134,6 +134,27 @@ hash is the template's.
   tests in `layers/<name>/test/`. A layer table may reference core's (files → `users`) by
   importing the app's `server/db/schema.ts` relatively; the path is the same in every app.
 
+### Fork-owned layers
+
+A fork puts its own product domains in `layers/<domain>/` too: authored there, never in
+`layers.lock.json`, so `layers:check` ignores them and `design:check`/`seo:check` scan them
+(`ownLayerDirs()` in `scripts/lib/layers.ts`). Template-owned paths then hold only template
+code, and a sync never touches product code.
+
+- **Pure moves.** `git mv`; tables go to `layers/<domain>/server/db/schema.ts`, re-exported
+  from the app schema, so `drizzle-kit generate` reports no changes. Prove parity by diffing
+  the sorted keys of `.nuxt/types/nitro-routes.d.ts`, `.nuxt/components.d.ts` and
+  `.nuxt/types/imports.d.ts`, plus the page paths, before and after.
+- **Core → domain**: register through an extension point where one fits; otherwise import
+  `#layers/<domain>/…` and say so in the layer's `nuxt.config.ts` header.
+- **Gotchas:**
+  - A layer's `components` config is its own: if the app sets `pathPrefix: false`, set it
+    in the layer too or component names change.
+  - Layer plugins run before the app's. A layer plugin that needs an app plugin first
+    imports it explicitly.
+  - `@pinia/nuxt` resolves `storesDirs` against the app only; a layer with stores sets
+    `pinia: { storesDirs: ['stores'] }` in its own config.
+
 ---
 
 
