@@ -605,3 +605,4 @@ export type NewNotificationPreference = typeof notificationPreferences.$inferIns
 // Removing a layer means deleting its line here and running `bun run db:generate`.
 export * from '../../layers/feedback/server/db/schema'
 export * from '../../layers/files/server/db/schema'
+export * from '../../layers/social/server/db/schema'
