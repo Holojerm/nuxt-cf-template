@@ -48,54 +48,32 @@ file:
 **3. Call sites** need no edit, including the files layer's (vendored copies are never
 edited): they call `requireAccess`. Your own paywalled routes should too; if they call
 `requireSubscription` directly, switch them. The client-side `subscription` route
-middleware is billing's; the files page and `app/pages/dashboard.vue` name it, so keep a
-no-op `app/middleware/subscription.ts` (or shadow those pages) unless you edit them.
+middleware is billing's; the files page and `app/pages/dashboard.vue` name it, so add a
+no-op `subscription` route middleware in the app's `app/middleware/` (or shadow those pages) unless you edit them.
 
-**4. Delete the Paddle adapter and the entitlement layer:**
+**4. Delete the layer.** Billing is `layers/billing/`: don't vendor it, or `rm -rf` it. It holds
+the Paddle adapter (webhook, signature check, portal call), the entitlement model and its
+tests, billing state and notifications, comp grants, the `/pricing` page with `plans.ts`,
+`usePaddle()`/`useEntitlement()`, the past-due banner and alert, the `subscription` route
+middleware, the replay fixtures, and the Nitro plugin inside it that registers billing
+with core. Also delete `server/plugins/referral.ts` and `server/utils/referral-billing.ts`
+if referrals are still there (step 1 should have removed them).
 
-```
-server/routes/paddle/webhook.post.ts
-server/utils/paddle.ts
-server/utils/paddle-api.ts
-server/utils/paddle-refs.ts
-server/utils/billing.ts
-server/utils/billing-state.ts
-server/utils/billing-notifications.ts
-server/utils/entitlements.ts
-server/utils/entitlement-view.ts
-server/utils/billing-extensions.ts
-server/utils/billing-lifecycle.ts
-server/plugins/billing.ts
-server/api/billing/entitlement.get.ts
-server/api/billing/portal.post.ts
-```
+Core imports none of it, so nothing else in core needs editing: account deletion is
+unguarded, the data export drops `entitlements`, `/api/fleet` drops its `entitlements` group
+and reports `funnel.paid` as 0, the lifecycle run drops `pass_expiring`, the nightly purge
+drops the `paddleEvents` sweep, and `shared/utils/onboarding-steps.ts` loses its
+`entitlementActive` input (drop the `plan` step there). In a fork that vendored the layer,
+remove its entry from `layers.lock.json` too.
 
-Those last three registration files are how billing reaches core (deletion guard,
-export section, admin views, `entitlements` fleet counter, `paid` funnel stage, onboarding
-signal, paddle-event purge, `pass_expiring` lifecycle step, the paywall gate). Core imports
-none of them, so nothing else in core needs editing: account deletion is unguarded, the data
-export drops `entitlements`, `/api/fleet` drops its `entitlements` group and reports
-`funnel.paid` as 0, the lifecycle run drops `pass_expiring`, and `shared/utils/onboarding-steps.ts`
-loses its `entitlementActive` input (drop the `plan` step there).
-
-**5. Delete the billing UI:**
-
-```
-app/composables/usePaddle.ts
-app/components/Billing/PastDueAlert.vue
-app/components/Billing/PastDueBanner.vue
-app/middleware/subscription.ts
-app/pages/pricing.vue
-app/utils/plans.ts
-app/utils/checkout.ts
-app/utils/churn.ts
-```
-
-Then remove the `PastDueBanner` mount from [`app/layouts/default.vue`](app/layouts/default.vue),
-the `['auth', 'subscription']` middleware array in
+**5. Remove what the app still says about billing.** The `PastDueBanner` mount in
+[`app/layouts/default.vue`](app/layouts/default.vue), `useEntitlement()` in
+[`app/components/Auth/UserMenu.vue`](app/components/Auth/UserMenu.vue), the
+`['auth', 'subscription']` middleware array in
 [`app/pages/dashboard.vue`](app/pages/dashboard.vue) and
-[`layers/files/app/pages/files.vue`](layers/files/app/pages/files.vue) (leave `'auth'`), and the billing
-sections of [`app/pages/account.vue`](app/pages/account.vue) and
+[`layers/files/app/pages/files.vue`](layers/files/app/pages/files.vue) (leave `'auth'`), the plan list on
+[`app/pages/index.vue`](app/pages/index.vue), and the billing sections of
+[`app/pages/account.vue`](app/pages/account.vue) and
 [`app/pages/admin/users/[id].vue`](app/pages/admin/users/[id].vue).
 
 **6. `app/utils/faq.ts` and `app/pages/index.vue` reference plans.** `PRICING_FAQ` and
@@ -104,7 +82,8 @@ Structured data describing content you do not render is a manual-action risk wit
 Google, so do not leave it behind "for later."
 
 **7. Drop the schema.** In [`server/db/schema.ts`](server/db/schema.ts) delete the
-`entitlements` table, then:
+`export * from '../../layers/billing/server/db/schema'` line (that drops `entitlements` and
+`paddle_events`), then:
 
 ```bash
 bun db:generate    # writes the DROP TABLE migration
@@ -114,14 +93,13 @@ bun db:migrate     # local
 Remember production and preview are separate and nothing applies migrations for you:
 `bun run db:migrate:remote` and `bun run db:migrate:preview`.
 
-**8. Delete the tests.** `test/paddle.test.ts`, `test/entitlements.test.ts`,
-`test/entitlement-view.test.ts`, `test/billing-state.test.ts`,
-`test/billing-notifications.test.ts`, `test/billing-extensions.test.ts`, `test/checkout.test.ts`, and the three e2e specs
-`test/e2e/purchase-access.spec.ts`, `test/e2e/cancel-lose-access.spec.ts`,
-`test/e2e/webhook-signing.spec.ts` (plus `test/e2e/webhook-secret.ts`).
+**8. Delete the e2e specs** that need Paddle: `test/e2e/purchase-access.spec.ts`,
+`test/e2e/cancel-lose-access.spec.ts`, `test/e2e/webhook-signing.spec.ts` (plus
+`test/e2e/webhook-secret.ts` and `test/e2e/paddle-prices.ts`). The unit tests left with the layer.
 
-**9. Strip the config.** Remove from `.env.example`, `wrangler.toml` (both `[vars]` and
-`[env.preview.vars]`), and the `runtimeConfig` block in `nuxt.config.ts`:
+**9. Strip the config.** The `runtimeConfig` declarations went with the layer. Remove from
+`.env.example` and `wrangler.toml` (both `[vars]` and `[env.preview.vars]`), and any
+`NUXT_PADDLE_PRODUCT_ID` / `NUXT_BILLING_*` you set:
 
 ```
 NUXT_PADDLE_API_KEY
@@ -162,15 +140,17 @@ Do **not** start by deleting things. The entitlement model — one row per subsc
 status transitions drive email, refunds and chargebacks cascade a revocation — is
 provider-independent and is the part that took the longest to get right. Keep it.
 
-**The adapter boundary is four files.** Everything else reads the `entitlements` table
+**The adapter boundary is four files**, all inside `layers/billing/`. A fork that vendors the
+layer cannot edit them (`layers:check` fails): drop the layer from `layers.lock.json` and own the
+directory as a fork-owned layer before you start. Everything else reads the `entitlements` table
 and does not care who wrote it:
 
 | File | What it does | Stripe equivalent |
 | --- | --- | --- |
-| [`server/routes/paddle/webhook.post.ts`](server/routes/paddle/webhook.post.ts) | HMAC-verifies, then hands the event to `applyPaddleEvent` | `stripe.webhooks.constructEvent` over the raw body |
-| [`server/utils/paddle.ts`](server/utils/paddle.ts) | Classifies a provider event into an entitlement change | Map `customer.subscription.*` / `charge.refunded` / `charge.dispute.*` onto the same verbs |
-| [`server/utils/paddle-api.ts`](server/utils/paddle-api.ts) | Server-side calls (the self-serve portal link) | Billing Portal session create |
-| [`app/composables/usePaddle.ts`](app/composables/usePaddle.ts) | Opens checkout in the browser | Stripe Checkout redirect or embedded |
+| [`layers/billing/server/routes/paddle/webhook.post.ts`](layers/billing/server/routes/paddle/webhook.post.ts) | HMAC-verifies, then hands the event to `applyPaddleEvent` | `stripe.webhooks.constructEvent` over the raw body |
+| [`layers/billing/server/utils/paddle.ts`](layers/billing/server/utils/paddle.ts) | Classifies a provider event into an entitlement change | Map `customer.subscription.*` / `charge.refunded` / `charge.dispute.*` onto the same verbs |
+| [`layers/billing/server/utils/paddle-api.ts`](layers/billing/server/utils/paddle-api.ts) | Server-side calls (the self-serve portal link) | Billing Portal session create |
+| [`layers/billing/app/composables/usePaddle.ts`](layers/billing/app/composables/usePaddle.ts) | Opens checkout in the browser | Stripe Checkout redirect or embedded |
 
 **Ordered steps:**
 
@@ -179,17 +159,17 @@ and does not care who wrote it:
    via `bun db:generate`. Keep the **unique index** on the subscription id — it is not
    a nicety, it is the entire idempotency mechanism for webhook redelivery.
 2. **Reimplement `applyPaddleEvent`** with the same return shape. Read its tests
-   (`test/paddle.test.ts`) first and port them — they encode the rules that cost money
+   (`layers/billing/test/paddle.test.ts`) first and port them — they encode the rules that cost money
    when wrong, particularly that **any** approved refund ends the buyer's access, and
    that a chargeback the merchant later *wins* restores access — the buyer's one-off
    pass and the referral reward it earned — from `restore_period_end`.
 3. **Keep `revokeForAdjustment` and `revokeDerivedEntitlements` untouched.** They live
-   in `server/utils/entitlements.ts`, are provider-agnostic, and are what makes a
+   in `layers/billing/server/utils/entitlements.ts`, are provider-agnostic, and are what makes a
    refund claw back the referral reward it paid for.
-4. **Keep `decideNotification()`** in `server/utils/billing-notifications.ts`. It fires
+4. **Keep `decideNotification()`** in `layers/billing/server/utils/billing-notifications.ts`. It fires
    on status *transitions*, not events — the reason billing mail here is readable
    rather than noise. Stripe's event stream is at least as chatty as Paddle's.
-5. **Re-point the deterministic refs** in `server/utils/paddle-refs.ts`. They are how a
+5. **Re-point the deterministic refs** in `layers/billing/server/utils/paddle-refs.ts`. They are how a
    grant is idempotent without a ledger table; the derivation is yours to change, the
    determinism is not.
 6. **Update the CSP** in `nuxt.config.ts`: `js.stripe.com` in `script-src` and
@@ -209,10 +189,12 @@ Referrals grant entitlements, so remove them **before** billing.
    [`server/api/referral/me.get.ts`](server/api/referral/me.get.ts),
    [`shared/utils/referral.ts`](shared/utils/referral.ts),
    [`app/components/Referral/ShareCard.vue`](app/components/Referral/ShareCard.vue),
-   and `test/referral.test.ts`.
+   and `test/referral.test.ts` / `test/referral-billing.test.ts`.
 2. Remove the `ShareCard` mount from [`app/pages/account.vue`](app/pages/account.vue).
-3. In [`server/routes/paddle/webhook.post.ts`](server/routes/paddle/webhook.post.ts),
-   remove the first-paid hook that calls into the referral module.
+3. Delete [`server/plugins/referral.ts`](server/plugins/referral.ts) and
+   [`server/utils/referral-billing.ts`](server/utils/referral-billing.ts): they are the
+   referral loop's two handlers on the billing webhook (the first-paid reward and the
+   clawback paperwork). The webhook runs without them.
 4. In [`server/utils/auth.ts`](server/utils/auth.ts), drop the `referred_by`
    resolution from the INSERT branch of `upsertOAuthUser`, and in
    [`server/utils/magic-link.ts`](server/utils/magic-link.ts) drop the
@@ -267,7 +249,7 @@ Nothing in the app depends on it — it is a second Worker that reads the same D
 | **Social posting (Buffer)** | `layers/social/` | Delete its `export *` line at the end of `server/db/schema.ts` and run `bun run db:generate` to drop the `social_posts` table; remove `social:post` from `SCHEDULED_TASKS` in `nuxt.config.ts` if the app scheduled it, and the `NUXT_SOCIAL_*` secrets |
 | **Image transforms** | `layers/files/server/utils/images.ts`, `layers/files/test/images.test.ts` | Remove the transform branch from `layers/files/server/api/files/[id].get.ts` (leave the `blob.serve()` call), `@nuxt/image` from `package.json` / `modules` / the `image` and `$development` blocks in `nuxt.config.ts`, the `[images]` blocks from `wrangler.toml`, and `.claude/docs/images.md`. Replace every `<NuxtImg>` with `<img>` — a leftover `<NuxtImg>` is a build error, so the typecheck finds them for you |
 | **Turnstile** | `server/utils/turnstile.ts`, `test/turnstile.test.ts` | Remove `<NuxtTurnstile>` from `login.vue` and the feedback widget, `@nuxtjs/turnstile` from `package.json`, and `challenges.cloudflare.com` from the CSP. **You are removing a bot control from two endpoints a stranger can reach** — rate limiting alone is weaker |
-| **Admin panel** | `app/pages/admin/`, `server/api/admin/`, `server/utils/admin.ts`, `server/utils/admin-grants.ts`, `app/utils/admin.ts`, `test/admin-grants.test.ts` | Keep `server/utils/audit.ts` and the `audit_log` table — deletion and grant history are written from non-admin paths too |
+| **Admin panel** | `app/pages/admin/`, `server/api/admin/`, `server/utils/admin.ts`, `app/utils/admin.ts`, and the layer's comp-grant routes (`layers/billing/server/api/admin/`), `layers/billing/server/utils/admin-grants.ts` and `layers/billing/test/admin-grants.test.ts` | Keep `server/utils/audit.ts` and the `audit_log` table — deletion and grant history are written from non-admin paths too |
 | **PostHog analytics** | `app/plugins/posthog.client.ts`, `server/utils/posthog.ts`, `server/routes/ingest/`, `app/utils/analytics-privacy.ts` | Remove the PostHog CSP entries; the `$exception` branch of `server/plugins/error-logger.ts` (**keep the `console.error` branch** — it is your only error visibility once PostHog is gone) |
 
 ---

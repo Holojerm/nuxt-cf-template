@@ -8,7 +8,7 @@
 //
 // Keep the session small. It's a sealed cookie sent on every request, so it
 // holds identity, not state: read entitlements from the DB
-// (server/utils/billing.ts), never from the session, or a user who cancels
+// (layers/billing/server/utils/billing.ts), never from the session, or a user who cancels
 // keeps their access until the cookie expires.
 
 declare module '#auth-utils' {

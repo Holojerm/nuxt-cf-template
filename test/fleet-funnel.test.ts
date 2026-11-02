@@ -5,8 +5,6 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import { registerBillingExtensions } from '../server/utils/billing-extensions'
-import { clearExtensionsForTest } from '../server/utils/extensions'
 import { collectFleetFunnel, sourceKey } from '../server/utils/fleet-funnel'
 
 const db = drizzle(env.DB, { schema })
@@ -22,8 +20,6 @@ function user(id: string, createdDaysAgo: number, signupSource: string | null = 
 
 describe('collectFleetFunnel', () => {
   beforeEach(async () => {
-    registerBillingExtensions()
-    await env.DB.exec('DELETE FROM entitlements')
     await env.DB.exec('DELETE FROM audit_log')
     await env.DB.exec('DELETE FROM users')
   })
@@ -46,34 +42,15 @@ describe('collectFleetFunnel', () => {
       // Outside the cohort: activated, but signed up 40 days ago.
       { ...activation, actorUserId: 'old', targetId: 'old' },
     ])
-    await db.insert(schema.entitlements).values([
-      { userId: 'a', paddleSubscriptionId: 'txn_1', status: 'active' },
-      { userId: 'a', paddleSubscriptionId: 'sub_2', status: 'active' },
-      // Access nobody paid for is not revenue.
-      { userId: 'b', paddleSubscriptionId: 'comp_3', status: 'active' },
-      { userId: 'old', paddleSubscriptionId: 'txn_4', status: 'active' },
-    ])
-
     expect(await collectFleetFunnel(db, NOW)).toEqual({
       cohortDays: 28,
       signups: 3,
       activated: 2,
-      paid: 1,
+      // No funnel contributor registered here: billing counts `paid`
+      // (layers/billing/test/billing-fleet.test.ts).
+      paid: 0,
       sources: { google: 2, direct: 1 },
     })
-  })
-})
-
-describe('collectFleetFunnel without billing', () => {
-  it('reports the paid stage as 0 even when entitlement rows exist', async () => {
-    await env.DB.exec('DELETE FROM entitlements')
-    await env.DB.exec('DELETE FROM users')
-    await db.insert(schema.users).values([user('a', 2)])
-    await db
-      .insert(schema.entitlements)
-      .values([{ userId: 'a', paddleSubscriptionId: 'txn_1', status: 'active' }])
-    clearExtensionsForTest()
-    expect(await collectFleetFunnel(db, NOW)).toMatchObject({ signups: 1, paid: 0 })
   })
 })
 

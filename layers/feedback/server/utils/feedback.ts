@@ -2,7 +2,7 @@
 // (PostHog, wired in app/plugins/posthog.client.ts, is the "what did they do"
 // half. Both fire on every submission; see layers/feedback/server/api/feedback.post.ts.)
 //
-// Like server/utils/entitlements.ts, every function takes the Drizzle client as
+// Like layers/billing/server/utils/entitlements.ts, every function takes the Drizzle client as
 // its first argument rather than reaching for the auto-imported `db`, so the
 // workerd vitest suite (layers/feedback/test/feedback.test.ts) can drive it against a real D1
 // binding without booting Nitro.
@@ -24,7 +24,7 @@ export type FeedbackDb = ReturnType<typeof drizzle<typeof tables>>
  * Submission types. Kept short on purpose — long taxonomies go untriaged.
  *
  * `churn` is the exception to "the widget sends everything": it comes from the
- * cancellation prompt on /account (app/utils/churn.ts), which is the only
+ * cancellation prompt on /account (layers/billing/app/utils/churn.ts), which is the only
  * chance to ask, because cancelling itself happens on Paddle's hosted portal
  * where no survey of ours can run.
  */

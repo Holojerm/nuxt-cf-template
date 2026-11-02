@@ -637,13 +637,6 @@ export default defineNuxtConfig({
     // secret, and the [[send_email]] binding pins the destination anyway.
     alertEmailTo: '',
     alertEmailFrom: '',
-    // Paddle billing (sandbox-first) — set via NUXT_PADDLE_* env vars / secrets
-    paddle: {
-      // Endpoint secret from Paddle → Developer tools → Notifications
-      webhookSecret: '',
-      // Server-side API key (only needed if you call Paddle's API, not for webhooks)
-      apiKey: '',
-    },
     // OAuth providers, read by nuxt-auth-utils' defineOAuth*EventHandler.
     // Declared here (rather than left implicit) so /api/auth/providers can tell
     // the login page which buttons to render — an unconfigured provider dead-ends
@@ -726,16 +719,6 @@ export default defineNuxtConfig({
       // client bundle. Empty key = plugin no-ops, nothing tracked.
       posthogKey: '',
       posthogHost: 'https://us.i.posthog.com',
-      // Paddle client-side token (public by design) + environment. Empty
-      // token = usePaddle() no-ops, so the template runs without a Paddle account.
-      paddleClientToken: '',
-      paddleEnv: 'sandbox',
-      // Paddle price IDs (pri_…) for the plans on /pricing. Kept in config
-      // rather than in app/utils/plans.ts so sandbox and production can point at
-      // different prices without a code change. Empty = that plan's button is
-      // disabled instead of opening a checkout that 400s.
-      paddlePriceMonthly: '',
-      paddlePricePass: '',
       // The app's canonical public origin, no trailing slash. Absolute links in
       // emails, sitemap.xml, robots.txt, and og: tags are built from this —
       // there is no request context in a webhook to infer it from.

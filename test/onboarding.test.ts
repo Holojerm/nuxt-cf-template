@@ -119,7 +119,7 @@ describe('deriveOnboardingSteps — omitted optional input', () => {
 
 describe('deriveOnboardingSteps — the plan step on /dashboard', () => {
   // /dashboard's own subscription middleware already refuses entry to
-  // anyone without an active entitlement (app/middleware/subscription.ts),
+  // anyone without an active entitlement (layers/billing/app/middleware/subscription.ts),
   // so entitlementActive is structurally true for every real visitor to
   // this checklist. This function doesn't assume that — it just reports
   // whatever it's given — which this test pins down explicitly.

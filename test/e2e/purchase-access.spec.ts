@@ -4,9 +4,9 @@
 // Paddle webhook exactly as Paddle would deliver it, and prove the dashboard
 // unlocks and GET /api/billing/entitlement agrees. Two variants, because the
 // entitlements table tells a pass and a subscription apart by the ref's
-// prefix (server/utils/paddle-refs.ts) and the two exercise different code in
+// prefix (layers/billing/server/utils/paddle-refs.ts) and the two exercise different code in
 // applyPaddleEvent (grantPass vs. upsertSubscription) — see
-// server/utils/entitlements.ts.
+// layers/billing/server/utils/entitlements.ts.
 //
 // Each variant signs in as its own fresh user rather than sharing one, on
 // purpose: findActiveEntitlement grants access from ANY row in

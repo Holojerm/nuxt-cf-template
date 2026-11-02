@@ -107,7 +107,7 @@ export type OnboardingStatus = z.infer<typeof onboardingStatusSchema>
  */
 export interface OnboardingInputs {
   /**
-   * From buildEntitlementView(...).active (server/utils/entitlement-view.ts),
+   * From buildEntitlementView(...).active (layers/billing/server/utils/entitlement-view.ts),
    * supplied by the billing feature's onboarding signal. Optional: absent in an
    * app without billing, where the 'plan' step reads as not done (drop that
    * step in onboarding-steps.ts).
@@ -116,7 +116,7 @@ export interface OnboardingInputs {
    * middleware: ['auth', 'subscription'] })` already redirects anyone
    * without an active entitlement to /pricing (or /account, if they're
    * `past_due`) before this page ever renders — see
-   * app/middleware/subscription.ts. So "pick a plan" reads as done for
+   * layers/billing/app/middleware/subscription.ts. So "pick a plan" reads as done for
    * every real visitor to this checklist, and the honest reason is
    * structural, not that the step is fake: the gate that makes it true is
    * the same gate that put the checklist in front of them at all.

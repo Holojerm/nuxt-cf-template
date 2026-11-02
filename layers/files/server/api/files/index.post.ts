@@ -1,7 +1,7 @@
 // POST /api/files — upload a file into the caller's own R2 prefix.
 //
 // Paid feature: requireAccess gates it before anything else runs, the
-// same boundary every other paid route uses (server/utils/billing.ts). The
+// same boundary every other paid route uses (layers/billing/server/utils/billing.ts). The
 // upload is server-mediated — the client posts multipart form data here
 // rather than straight to R2 — so this handler is the one place that
 // decides the object's key, and the `files` table's invariant (every

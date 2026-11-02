@@ -25,7 +25,7 @@ export type OnboardingDb = ReturnType<typeof drizzle<typeof tables>>
 /**
  * Gather the signals the checklist is built from, in one `Promise.all`:
  * the notification-preference row plus one read per registered feature signal
- * (billing's `entitlementActive` is one — see server/utils/billing-extensions.ts).
+ * (billing's `entitlementActive` is one — see layers/billing/server/utils/billing-extensions.ts).
  * Nothing here is a table scan.
  */
 export async function computeOnboardingInputs(

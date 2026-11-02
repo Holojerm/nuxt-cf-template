@@ -2,7 +2,7 @@
 //
 // buildResendEmailRequest() is pure (no network, no runtime config), so most
 // of this is direct assertions on its output — matching how
-// test/billing-notifications.test.ts tests decideNotification() rather than
+// layers/billing/test/billing-notifications.test.ts tests decideNotification() rather than
 // the network-touching function that calls it. One test at the bottom drives
 // sendEmail() itself, with fetch and useRuntimeConfig stubbed, to prove the
 // wiring from options to the actual POST body is intact end to end.

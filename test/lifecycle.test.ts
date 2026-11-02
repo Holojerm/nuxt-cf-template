@@ -2,14 +2,16 @@
 
 import { env } from 'cloudflare:test'
 import { drizzle } from 'drizzle-orm/d1'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
 import type { SendEmailOptions, SendEmailResult } from '../server/utils/email'
 import { runLifecycle, type LifecycleDeps } from '../server/utils/lifecycle'
-import { passExpiringStep } from '../server/utils/billing-lifecycle'
-import { registerBillingExtensions } from '../server/utils/billing-extensions'
-import { clearExtensionsForTest, getRegisteredLifecycleSteps } from '../server/utils/extensions'
+import {
+  clearExtensionsForTest,
+  getRegisteredLifecycleSteps,
+  registerLifecycleStep,
+} from '../server/utils/extensions'
 import { TEMPLATE_LIFECYCLE_STEPS, activationNudgeStep } from '../server/utils/lifecycle-steps'
 
 const db = drizzle(env.DB, { schema })
@@ -33,15 +35,6 @@ async function activate(userId: string) {
   })
 }
 
-async function addEntitlement(userId: string, ref: string, endsInDays: number | null) {
-  await db.insert(schema.entitlements).values({
-    userId,
-    paddleSubscriptionId: ref,
-    status: 'active',
-    currentPeriodEnd: endsInDays === null ? null : daysFromNow(endsInDays),
-  })
-}
-
 function fakeDeps(result: SendEmailResult = { sent: true, id: 'x' }) {
   const sent: SendEmailOptions[] = []
   const deps: LifecycleDeps = {
@@ -58,7 +51,6 @@ function fakeDeps(result: SendEmailResult = { sent: true, id: 'x' }) {
 beforeEach(async () => {
   await env.DB.exec('DELETE FROM lifecycle_sends')
   await env.DB.exec('DELETE FROM notification_preferences')
-  await env.DB.exec('DELETE FROM entitlements')
   await env.DB.exec('DELETE FROM audit_log')
   await env.DB.exec('DELETE FROM users')
 })
@@ -85,40 +77,20 @@ describe('activationNudgeStep.due', () => {
 })
 
 describe('lifecycle step registry', () => {
-  it('keeps pass_expiring out of core and adds it when billing registers', () => {
-    clearExtensionsForTest()
-    expect(TEMPLATE_LIFECYCLE_STEPS.map((s) => s.id)).toEqual(['activation_nudge'])
+  afterEach(() => clearExtensionsForTest())
+
+  it('keeps feature steps out of core: the template ships only the activation nudge', () => {
+    expect(TEMPLATE_LIFECYCLE_STEPS.map((step) => step.id)).toEqual(['activation_nudge'])
     expect(getRegisteredLifecycleSteps()).toEqual([])
-
-    registerBillingExtensions()
-    // The id is stored in lifecycle_sends; renaming it re-sends to everyone.
-    expect(getRegisteredLifecycleSteps().map((s) => s.id)).toEqual(['pass_expiring'])
-    expect(getRegisteredLifecycleSteps()[0]).toBe(passExpiringStep)
-    clearExtensionsForTest()
   })
-})
 
-describe('passExpiringStep.due', () => {
-  it('picks a paid pass ending within 3 days that nothing takes over from', async () => {
-    await addUser('ending')
-    await addEntitlement('ending', 'txn_1', 2)
-    await addUser('later')
-    await addEntitlement('later', 'txn_2', 5)
-    await addUser('renews')
-    await addEntitlement('renews', 'txn_3', 2)
-    await addEntitlement('renews', 'sub_4', null)
-    await addUser('stacked')
-    await addEntitlement('stacked', 'txn_5', 2)
-    await addEntitlement('stacked', 'txn_6', 32)
-    await addUser('comped')
-    await addEntitlement('comped', 'comp_7', 2)
-    await addUser('lapsed')
-    await addEntitlement('lapsed', 'txn_8', -1)
-
-    const due = await passExpiringStep.due(db, NOW, 100)
-    expect(due.map((r) => r.userId)).toEqual(['ending'])
-    const endsAt = Math.floor(daysFromNow(2).getTime() / 1000)
-    expect(due[0]?.subjectKey).toBe(`default:${endsAt}`)
+  it('keeps registered steps in registration order and replaces one registered twice', () => {
+    const first = { ...activationNudgeStep, id: 'first' }
+    const second = { ...activationNudgeStep, id: 'second' }
+    registerLifecycleStep(first)
+    registerLifecycleStep(second)
+    registerLifecycleStep({ ...first, notification: 'tips' })
+    expect(getRegisteredLifecycleSteps().map((step) => step.id)).toEqual(['first', 'second'])
   })
 })
 
@@ -158,17 +130,6 @@ describe('runLifecycle', () => {
     const rejected = fakeDeps({ sent: false, reason: 'rejected' })
     await runLifecycle(db, [activationNudgeStep], rejected.deps, NOW)
     expect(await db.select().from(schema.lifecycleSends)).toHaveLength(1)
-  })
-
-  it('sends mandatory mail with no unsubscribe link, whatever the preferences say', async () => {
-    await addUser('ending')
-    await addEntitlement('ending', 'txn_1', 2)
-    const { deps, sent } = fakeDeps()
-
-    await runLifecycle(db, [passExpiringStep], deps, NOW)
-    expect(sent).toHaveLength(1)
-    expect(sent[0]?.unsubscribe).toBeUndefined()
-    expect(sent[0]?.subject).toContain('access ends')
   })
 
   it('keeps going when one step’s query throws', async () => {

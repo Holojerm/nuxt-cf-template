@@ -2,7 +2,7 @@
 // promises, no more: "deletion of your account and its contents", "a copy of
 // your data", billing records kept as tax law requires.
 //
-// Like server/utils/entitlements.ts and server/utils/audit.ts, every function
+// Like layers/billing/server/utils/entitlements.ts and server/utils/audit.ts, every function
 // here takes the Drizzle client as its first argument rather than reaching for
 // the auto-imported `db`, so test/account.test.ts can drive it against a real
 // D1 binding without booting Nitro. Uploaded files (R2) are swept by the files
@@ -66,9 +66,9 @@ export type DeleteAccountOutcome =
  *
  * ── Refusing a live subscription is the one justified guard ─────────────────
  * It lives with billing, which registers it as a DeletionGuard
- * (server/utils/billing-extensions.ts); the reasoning stays here because it is
+ * (layers/billing/server/utils/billing-extensions.ts); the reasoning stays here because it is
  * the case for having a guard seam at all. Every other exit from this app is deliberately frictionless (see
- * app/utils/churn.ts) — but deleting the `users` row does not touch Paddle,
+ * layers/billing/app/utils/churn.ts) — but deleting the `users` row does not touch Paddle,
  * which owns the subscription's billing lifecycle independently of whether
  * that row still exists. Anonymizing it out from under a live subscription
  * would not stop the next renewal; Paddle would keep charging a card attached

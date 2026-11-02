@@ -1,10 +1,10 @@
 // The event registry is what funnels join on, so every name that is actually
-// captured has to be in it — including the client-side checkout names, which
-// are strings in app/utils/checkout.ts rather than typed call sites.
+// captured has to be in it. The client-side checkout names (strings in the
+// billing layer's layers/billing/app/utils/checkout.ts) are checked against it in
+// layers/billing/test/checkout.test.ts.
 
 import { describe, expect, it } from 'vitest'
 
-import { CHECKOUT_ABANDONED, CHECKOUT_EVENT_NAMES } from '../app/utils/checkout'
 import {
   ANALYTICS_EVENTS,
   EVENT_NAME_PATTERN,
@@ -15,12 +15,6 @@ import {
 describe('analytics event registry', () => {
   it('names every event in the shape PostHog and fleet.json accept', () => {
     for (const name of Object.keys(ANALYTICS_EVENTS)) expect(name).toMatch(EVENT_NAME_PATTERN)
-  })
-
-  it('registers every checkout event the Paddle overlay can produce', () => {
-    for (const name of [...Object.values(CHECKOUT_EVENT_NAMES), CHECKOUT_ABANDONED]) {
-      expect(isAnalyticsEvent(name), name).toBe(true)
-    }
   })
 
   it('does not treat Object.prototype keys as events', () => {

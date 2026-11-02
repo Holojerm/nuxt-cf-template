@@ -118,7 +118,7 @@ export function createServer(env: Env): McpServer {
   )
 
   // Example of an entitlement-gated tool: same gate as the app's
-  // requireSubscription() (server/utils/billing.ts), expressed as raw D1 SQL
+  // requireSubscription() (layers/billing/server/utils/billing.ts), expressed as raw D1 SQL
   // since this worker doesn't carry the Drizzle schema.
   server.registerTool(
     'subscription_status',
@@ -135,7 +135,7 @@ export function createServer(env: Env): McpServer {
       if (!user) return text(REFUSED)
       const userId = user.id
       // This has to mean exactly what findActiveEntitlement() means in the app
-      // (server/utils/entitlements.ts), because it is the same gate written
+      // (layers/billing/server/utils/entitlements.ts), because it is the same gate written
       // twice — the worker has no Drizzle schema, so it cannot call it.
       //
       // Three clauses, and only the first is obvious:

@@ -26,7 +26,7 @@ a report the owner can read in two minutes and issues the backlog can act on.
    they are where the money leaks and none of them existed in earlier reports:
 
    - **Checkout abandonment.** `checkout_started` → `checkout_completed`, with
-     `checkout_abandoned` in between (app/utils/checkout.ts). Segment by price id. A rise here
+     `checkout_abandoned` in between (layers/billing/app/utils/checkout.ts). Segment by price id. A rise here
      is worth more attention than an equivalent drop in signups.
    - **Acquisition by channel.** `users.signup_source` / `signup_medium` / `signup_campaign`
      joined against `entitlements` in D1 — that is paying customers per channel, not visits.

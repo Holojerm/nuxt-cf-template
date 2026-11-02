@@ -1,6 +1,6 @@
 // Audit trail — the append-only record of privileged actions.
 //
-// Like server/utils/entitlements.ts, every function here takes the Drizzle
+// Like layers/billing/server/utils/entitlements.ts, every function here takes the Drizzle
 // client as its first argument rather than reaching for the auto-imported `db`,
 // so test/audit.test.ts can drive it against a real D1 binding inside workerd
 // without booting Nitro. The H3-facing helper at the bottom is the exception,

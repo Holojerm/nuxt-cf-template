@@ -1,6 +1,6 @@
 // User provisioning — the bridge between an OAuth callback and a `users` row.
 //
-// Like server/utils/entitlements.ts, every function here takes the Drizzle
+// Like layers/billing/server/utils/entitlements.ts, every function here takes the Drizzle
 // client explicitly instead of reaching for the auto-imported `db`, so the
 // workerd suite (test/users.test.ts) can drive account creation against a real
 // D1 binding without booting Nitro.
@@ -246,7 +246,7 @@ export function isReferralCodeCollision(error: unknown): boolean {
  * of the `users` table using this file's own identity rules, and putting it
  * here keeps the import graph one-directional (referral.ts → users.ts). The
  * reverse would be a cycle, and this repo has already had to break one of those
- * once (see the header of server/utils/paddle-refs.ts).
+ * once (see the header of layers/billing/server/utils/paddle-refs.ts).
  *
  * Three refusals, each of which is a way somebody gets paid for nothing:
  *

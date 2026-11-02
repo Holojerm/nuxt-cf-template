@@ -73,7 +73,7 @@ const { user, entitlement } = await requireSubscription(event) // 401 | 402
 ```
 
 **The client middleware is not a security boundary.** `app/middleware/auth.ts`
-and `app/middleware/subscription.ts` run in the browser and exist so people see
+and `layers/billing/app/middleware/subscription.ts` run in the browser and exist so people see
 a login page instead of an empty one. Every paid API route must call
 `requireSubscription(event)` itself, or the gate is decorative.
 

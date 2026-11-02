@@ -10,7 +10,6 @@ import { drizzle } from 'drizzle-orm/d1'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import { registerBillingExtensions } from '../server/utils/billing-extensions'
 import { clearExtensionsForTest, registerFleetExtraContributor } from '../server/utils/extensions'
 import {
   collectFleetCounters,
@@ -90,10 +89,6 @@ describe('compareMigrations', () => {
 
 describe('collectFleetCounters', () => {
   beforeEach(async () => {
-    // The `entitlements` group is billing's contribution; the extra-contributor
-    // tests below clear the registry after each case, so register per test.
-    registerBillingExtensions()
-    await env.DB.exec('DELETE FROM entitlements')
     await env.DB.exec('DELETE FROM audit_log')
     await env.DB.exec('DELETE FROM ops_events')
     await env.DB.exec('DELETE FROM users')
@@ -114,9 +109,7 @@ describe('collectFleetCounters', () => {
 
       const counters = await collectFleetCounters(db, NOW)
       expect(counters.extra).toEqual({ athletes: 3, plans: 5, sessionsLogged: 7 })
-      expect(Object.keys(counters).sort()).toEqual(
-        ['entitlements', 'extra', 'funnel', 'opsEvents', 'users'].sort(),
-      )
+      expect(Object.keys(counters).sort()).toEqual(['extra', 'funnel', 'opsEvents', 'users'].sort())
     })
 
     it('replaces rather than duplicates a contributor registered twice', async () => {
@@ -129,19 +122,10 @@ describe('collectFleetCounters', () => {
   it('is all zeros on an empty database', async () => {
     expect(await collectFleetCounters(db, NOW)).toEqual({
       users: { total: 0, last7d: 0 },
-      entitlements: { byStatus: {} },
       opsEvents: { pending: 0, last24h: 0 },
       funnel: { cohortDays: 28, signups: 0, activated: 0, paid: 0, sources: {} },
       extra: {},
     })
-  })
-
-  it('omits the entitlements group and reports no paid stage without billing', async () => {
-    clearExtensionsForTest()
-    const counters = await collectFleetCounters(db, NOW)
-    expect(counters).not.toHaveProperty('entitlements')
-    expect(Object.keys(counters).sort()).toEqual(['extra', 'funnel', 'opsEvents', 'users'])
-    expect(counters.funnel.paid).toBe(0)
   })
 
   it('counts, and only counts — no rows, no ids, no addresses leave', async () => {
@@ -150,11 +134,6 @@ describe('collectFleetCounters', () => {
     await db.insert(schema.users).values([
       { id: 'u-new', email: 'new@example.com', name: 'New', createdAt: recent, updatedAt: recent },
       { id: 'u-old', email: 'old@example.com', name: 'Old', createdAt: old, updatedAt: old },
-    ])
-    await db.insert(schema.entitlements).values([
-      { userId: 'u-new', paddleSubscriptionId: 'sub_1', status: 'active' },
-      { userId: 'u-old', paddleSubscriptionId: 'sub_2', status: 'active' },
-      { userId: 'u-old', paddleSubscriptionId: 'txn_3', status: 'canceled' },
     ])
     const hourAgo = new Date(NOW.getTime() - 60 * 60 * 1000)
     const twoDaysAgo = new Date(NOW.getTime() - 2 * DAY_MS)
@@ -171,7 +150,6 @@ describe('collectFleetCounters', () => {
 
     const counters = await collectFleetCounters(db, NOW)
     expect(counters.users).toEqual({ total: 2, last7d: 1 })
-    expect(counters.entitlements?.byStatus).toEqual({ active: 2, canceled: 1 })
     expect(counters.opsEvents).toEqual({ pending: 1, last24h: 2 })
 
     // The payload is stored for months in someone else's database: it must be

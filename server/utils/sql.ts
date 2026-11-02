@@ -1,7 +1,7 @@
 // SQL fragments that are easy to get subtly wrong, written once.
 //
 // Everything here is pure and imports nothing from Nitro, because the money
-// code (server/utils/entitlements.ts) uses it and the workerd vitest suite
+// code (layers/billing/server/utils/entitlements.ts) uses it and the workerd vitest suite
 // loads that file directly.
 
 import { sql } from 'drizzle-orm'

@@ -115,7 +115,10 @@ feature removes its sections and nothing else; `test/extensions.test.ts` holds c
 Beyond the contributors above, `server/utils/extensions.ts` and `server/utils/access-gate.ts`
 hold the places a feature steps into a core flow. Each is a plain registry, behaves as
 documented with nothing registered, and is registered from a Nitro plugin (tests call the same
-function). Billing registers all of them (`server/utils/billing-extensions.ts`).
+function). Billing registers all of them (`layers/billing/server/utils/billing-extensions.ts`).
+A layer never imports another layer: it calls core's seam, and whoever provides the feature registers
+into it. (Referral, which stays in core, is the one thing that imports billing, via `#layers/billing/…`.
+It reaches the webhook through billing's own handler registry, `registerBillingOutcomeHandler`.)
 
 | Seam | Register with | Core does | With nothing registered |
 | --- | --- | --- | --- |
@@ -186,11 +189,15 @@ hash is the template's.
   cannot be shadowed (the layer's export wins), so change server behaviour through the
   layer's `runtimeConfig` options (set in the app's `nuxt.config.ts`), an extension point,
   or upstream in the template. Feedback's options: `feedback.anonymiseUserId`,
-  `feedback.deletionCountKey`.
+  `feedback.deletionCountKey`; billing's: `billing.passDays`,
+  `billing.alertUnmatchedAdjustments`, `paddle.productId`. A fork's own util whose file name
+  collides with a layer's must be renamed before vendoring.
 - **Why not `extends: ['github:…']`**: NuxtHub's merged schema types leave layers under
   `node_modules` untyped, so a remote layer's tables lose their types.
 - **In the template itself**, layers are authored, not vendored: its lock stays empty.
-  `layers/feedback/` and `layers/files/` are the first two; each reaches core through
+  `layers/feedback/`, `layers/files/`, `layers/social/` and `layers/billing/` are the
+  worked examples (billing is the largest: its own server routes, pages, composables and tests, plus a
+  replay script); each reaches core through
   `#server/utils/…`, reads other tables through `@nuxthub/db/schema`, and carries its own
   tests in `layers/<name>/test/`. A layer table may reference core's (files → `users`) by
   importing the app's `server/db/schema.ts` relatively; the path is the same in every app.

@@ -4,7 +4,7 @@
 // (Findings 18 + 20): a signed-out visit to a gated route bounces to /login
 // with a way back, POST /api/auth/dev establishes a real session cookie the
 // server actually accepts, and a signed-in user with NO entitlement is turned
-// away from /dashboard by app/middleware/subscription.ts — landing on the
+// away from /dashboard by layers/billing/app/middleware/subscription.ts — landing on the
 // specific alert /pricing shows for exactly that case.
 
 import { expect, test, uniqueEmail, watchForViolations } from './fixtures'
@@ -34,7 +34,7 @@ test('a signed-in user with no entitlement is turned away from /dashboard, and t
   expect(url.pathname).toBe('/pricing')
   expect(url.searchParams.get('from')).toBe('/dashboard')
 
-  // app/pages/pricing.vue's `gatedFrom` branch — the alert that exists so
+  // layers/billing/app/pages/pricing.vue's `gatedFrom` branch — the alert that exists so
   // "why am I here?" has an answer instead of a plans page appearing out of
   // nowhere.
   await expect(page.getByText('That page needs an active plan')).toBeVisible()

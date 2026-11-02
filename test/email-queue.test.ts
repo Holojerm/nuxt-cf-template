@@ -2,7 +2,7 @@
 //
 // Two halves, tested the way each one deserves. The retry/dead-letter decision
 // and the response classifier are pure functions, so they get direct assertions
-// — the same shape as decideNotification() in test/billing-notifications.test.ts.
+// — the same shape as decideNotification() in layers/billing/test/billing-notifications.test.ts.
 // The producer/inline selection is driven through sendEmail() itself with a
 // fake binding, because the property that matters there is not "the function
 // returns the right enum", it is "the message ends up in exactly one of the two

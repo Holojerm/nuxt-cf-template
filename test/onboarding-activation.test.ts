@@ -10,15 +10,16 @@
 // instead of before, and every test here still passes on the first call.
 
 import { env } from 'cloudflare:test'
-import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '../server/db/schema'
 import { registerFeedbackExtensions } from '../layers/feedback/server/utils/feedback-extensions'
 import { listAudit } from '../server/utils/audit'
-import { registerBillingExtensions } from '../server/utils/billing-extensions'
-import { clearExtensionsForTest } from '../server/utils/extensions'
+import {
+  clearExtensionsForTest,
+  registerOnboardingSignalContributor,
+} from '../server/utils/extensions'
 import {
   activateIfComplete,
   computeOnboardingInputs,
@@ -31,8 +32,17 @@ const db = drizzle(env.DB, { schema })
 // The checklist's 'feedback' step (shared/utils/onboarding-steps.ts) reads a
 // signal the feedback layer contributes; register it as its plugin does.
 registerFeedbackExtensions()
-// …and the `entitlementActive` signal is billing's.
-registerBillingExtensions()
+
+// …and 'plan' reads `entitlementActive`, which billing supplies in a real app
+// (layers/billing/test/billing-onboarding.test.ts covers that against the real
+// table). Core is tested against a stand-in so this suite needs no billing.
+const paying = new Set<string>()
+const registerPlanSignal = () =>
+  registerOnboardingSignalContributor({
+    key: 'plan',
+    read: async (_db, userId) => ({ entitlementActive: paying.has(userId) }),
+  })
+registerPlanSignal()
 
 const USER_ID = 'user-onboarding-1'
 
@@ -40,7 +50,7 @@ beforeEach(async () => {
   await db.delete(schema.auditLog)
   await db.delete(schema.feedback)
   await db.delete(schema.notificationPreferences)
-  await db.delete(schema.entitlements)
+  paying.clear()
   await db.delete(schema.users)
   await db.insert(schema.users).values({ id: USER_ID, email: 'ada@example.com', name: 'Ada' })
 })
@@ -174,19 +184,14 @@ describe('hasActivated', () => {
   })
 })
 
-describe('computeOnboardingInputs without billing', () => {
-  it('leaves entitlementActive out, so the plan step reads as not done', async () => {
+describe('computeOnboardingInputs without a plan signal', () => {
+  it('leaves entitlementActive out when no feature supplies it, so the plan step reads as not done', async () => {
     clearExtensionsForTest()
     try {
-      await db.insert(schema.entitlements).values({
-        userId: USER_ID,
-        paddleSubscriptionId: 'sub_1',
-        status: 'active',
-      })
       const inputs = await computeOnboardingInputs(db, USER_ID)
       expect(inputs).toEqual({ hasNotificationPreference: false })
     } finally {
-      registerBillingExtensions()
+      registerPlanSignal()
       registerFeedbackExtensions()
     }
   })
@@ -223,17 +228,6 @@ describe('computeOnboardingInputs', () => {
     expect(inputs.hasSentFeedback).toBe(true)
   })
 
-  it('reads entitlementActive from an active subscription row', async () => {
-    await db.insert(schema.entitlements).values({
-      userId: USER_ID,
-      paddleSubscriptionId: 'sub_1',
-      status: 'active',
-    })
-
-    const inputs = await computeOnboardingInputs(db, USER_ID)
-    expect(inputs.entitlementActive).toBe(true)
-  })
-
   // GET /api/onboarding calls nothing but this function — no
   // recordActivationOnce, no audit write. That used to not be true (see the
   // header comment on server/utils/onboarding.ts), and the regression it
@@ -243,11 +237,7 @@ describe('computeOnboardingInputs', () => {
   // true, call only the read function, and prove nothing landed in
   // audit_log regardless.
   it('never writes an audit row, even for an already-complete account', async () => {
-    await db.insert(schema.entitlements).values({
-      userId: USER_ID,
-      paddleSubscriptionId: 'sub_1',
-      status: 'active',
-    })
+    paying.add(USER_ID)
     await db.insert(schema.notificationPreferences).values({
       userId: USER_ID,
       channel: 'email',
@@ -301,11 +291,7 @@ describe('activateIfComplete', () => {
 
   it('activates once a complete account is seeded, and records the variant passed in', async () => {
     const fetchMock = stubPosthog()
-    await db.insert(schema.entitlements).values({
-      userId: USER_ID,
-      paddleSubscriptionId: 'sub_1',
-      status: 'active',
-    })
+    paying.add(USER_ID)
     await db.insert(schema.notificationPreferences).values({
       userId: USER_ID,
       channel: 'email',
@@ -330,11 +316,7 @@ describe('activateIfComplete', () => {
 
   it('is idempotent through the same path a repeat POST would take', async () => {
     const fetchMock = stubPosthog()
-    await db.insert(schema.entitlements).values({
-      userId: USER_ID,
-      paddleSubscriptionId: 'sub_1',
-      status: 'active',
-    })
+    paying.add(USER_ID)
     await db.insert(schema.notificationPreferences).values({
       userId: USER_ID,
       channel: 'email',
@@ -368,11 +350,7 @@ describe('activateIfComplete', () => {
   // the guard check short-circuits before computeOnboardingInputs ever runs.
   it('skips recomputing the checklist entirely once already activated', async () => {
     const fetchMock = stubPosthog()
-    await db.insert(schema.entitlements).values({
-      userId: USER_ID,
-      paddleSubscriptionId: 'sub_1',
-      status: 'active',
-    })
+    paying.add(USER_ID)
     await db.insert(schema.notificationPreferences).values({
       userId: USER_ID,
       channel: 'email',
@@ -387,7 +365,7 @@ describe('activateIfComplete', () => {
 
     // The checklist is no longer complete by any honest recomputation — if
     // this call recomputed, it would have nothing left to activate.
-    await db.delete(schema.entitlements).where(eq(schema.entitlements.userId, USER_ID))
+    paying.delete(USER_ID)
 
     const second = await activateIfComplete(db, USER_ID, 'control')
 

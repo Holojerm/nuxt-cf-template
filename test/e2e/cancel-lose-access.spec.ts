@@ -3,9 +3,9 @@
 // The mirror image of Spec 2: a subscription that was genuinely granting
 // access stops, through the same real webhook path a Paddle cancellation
 // takes, and every surface that promises access has to agree it's gone —
-// the gate (app/middleware/subscription.ts), the account page, and
+// the gate (layers/billing/app/middleware/subscription.ts), the account page, and
 // GET /api/billing/entitlement. Plus the case that isn't a cancellation at
-// all: a failed payment (`past_due`), which server/utils/billing-state.ts
+// all: a failed payment (`past_due`), which layers/billing/server/utils/billing-state.ts
 // treats as recoverable dunning rather than an ended plan, and which
 // subscription.ts routes to /account (where the fix — update the card —
 // lives) instead of /pricing (where it would look like re-selling something
@@ -119,7 +119,7 @@ test.describe('cancel → lose access', () => {
     )
 
     await page.goto('/dashboard')
-    // Not /pricing: app/middleware/subscription.ts sends a past_due account
+    // Not /pricing: layers/billing/app/middleware/subscription.ts sends a past_due account
     // to /account specifically, because /pricing would read as "buy the
     // thing you're already paying for" to someone mid-dunning.
     await page.waitForURL(/\/account/)
@@ -127,7 +127,7 @@ test.describe('cancel → lose access', () => {
     expect(url.pathname).toBe('/account')
     expect(url.searchParams.get('from')).toBe('/dashboard')
 
-    // app/components/Billing/PastDueAlert.vue — shared between the layout
+    // layers/billing/app/components/Billing/PastDueAlert.vue — shared between the layout
     // banner and this page specifically so the two can't tell two different
     // stories about the same failed payment.
     await expect(page.getByText("Your last payment didn't go through")).toBeVisible()

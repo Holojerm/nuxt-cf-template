@@ -90,11 +90,11 @@ goes hunting. Fix cost is one line each.
 Wrong twice over: **`revokeReferralRewardForReferee` does not exist anywhere in the
 repo**, and the mechanism it describes lives in a different file. The real cascade is
 `revokeDerivedEntitlements`, called from `revokeForAdjustment`, both in
-[server/utils/entitlements.ts:441](server/utils/entitlements.ts:441) and
-[:568](server/utils/entitlements.ts:568). `AGENTS.md` states the correct location; this
+[layers/billing/server/utils/entitlements.ts:441](layers/billing/server/utils/entitlements.ts:441) and
+[:568](layers/billing/server/utils/entitlements.ts:568). `AGENTS.md` states the correct location; this
 comment contradicts it.
 
-**Fix:** `(server/utils/entitlements.ts › revokeDerivedEntitlements, called from revokeForAdjustment).`
+**Fix:** `(layers/billing/server/utils/entitlements.ts › revokeDerivedEntitlements, called from revokeForAdjustment).`
 
 ### D2 · `app/types/seo.d.ts:3-4`
 
@@ -527,7 +527,7 @@ I would not spend a review cycle on these unless already editing the file.
 
 | # | Location | Verdict | Before | Save | Why nothing is lost |
 | --- | --- | --- | ---: | ---: | --- |
-| S1 | `server/utils/admin-grants.ts:141-155` | TIGHTEN | 256 | ~151 | Lines 141–147 narrate a `/account` labelling bug the comment itself says was fixed elsewhere; the refusal rule and the "name the right instrument" guidance stay |
+| S1 | `layers/billing/server/utils/admin-grants.ts:141-155` | TIGHTEN | 256 | ~151 | Lines 141–147 narrate a `/account` labelling bug the comment itself says was fixed elsewhere; the refusal rule and the "name the right instrument" guidance stay |
 | S2 | `server/db/schema.ts:268-283` | TIGHTEN | 269 | ~129 | Restates the cross-device argument made 12 lines earlier at 248–256; the money-vs-marketing distinction and the not-a-FK rule stay |
 | S3 | `app/composables/useFlag.ts:3-6` | **CUT** | 66 | 66 | Explains what feature flags are for in general — tutorial voice, zero repo-specific content |
 | S4 | 7 sites: "db comes in as first arg so tests drive real D1 in workerd" — `entitlements.ts:3`, `audit.ts:3`, `magic-link.ts:9`, `notifications.ts:9`, `admin-grants.ts:8`, `account.ts:6`, `session-guard.ts:124` | TIGHTEN | ~350 | ~200 | Keep one canonical statement; the rest become a clause. Do **not** cut entirely — it prevents a refactor to the auto-imported `db` that would break every test |
@@ -535,7 +535,7 @@ I would not spend a review cycle on these unless already editing the file.
 | S6 | `server/utils/rate-limit.ts:15-30` | TIGHTEN | 291 | ~91 | Caveat 2 (the quoted Cloudflare line) restates caveat 1; the per-colo trade-off keeps its point in two lines instead of six |
 | S7 | `server/db/schema.ts:176-192` | TIGHTEN | 279 | ~94 | The not-composite decision and the SQLite `LIKE`/`ESCAPE` interaction both stay; the justification narrows |
 | S8 | `scripts/seed.ts:33-42` | TIGHTEN | 176 | ~86 | Keep "reuses the webhook's own `upsertSubscription()` so the row shape can't drift"; the driver-agnosticism paragraph is inferable from the code |
-| S9 | `server/utils/admin-grants.ts:312-319` | TIGHTEN | 139 | ~84 | "A `comp_` row has no Paddle side, so nothing else can end one early" is the whole content; the hand-written-SQL anecdote is not |
+| S9 | `layers/billing/server/utils/admin-grants.ts:312-319` | TIGHTEN | 139 | ~84 | "A `comp_` row has no Paddle side, so nothing else can end one early" is the whole content; the hand-written-SQL anecdote is not |
 | S10 | `server/utils/session-guard.ts:3-15` | TIGHTEN | 224 | ~84 | The revocation mechanism stays; the pre-fix symptom list compresses |
 | S11 | `server/db/schema.ts:3-13` | TIGHTEN | 134 | ~74 | snake_case conventions are visible in the code below; the append-only `updated_at` rule is the only non-obvious line and stays |
 | S12 | `server/utils/session-guard.ts:68-75` | TIGHTEN | 149 | ~64 | The allowlist and the `GET /api/_auth/session` carve-out are untouched; three worked symptom examples become one |
@@ -543,7 +543,7 @@ I would not spend a review cycle on these unless already editing the file.
 | S14 | `server/utils/email.ts:41-47` | TIGHTEN | 115 | ~60 | "Ignores rather than throws, and logs loudly" carries it; the inbox-provider elaboration does not |
 | S15 | `scripts/seed.ts:11-14` | TIGHTEN | 77 | ~57 | Narrative ("The first version of this script seeded two users"); **the seed-user table at 18–25 must stay** — it is reference data, not prose |
 | S16 | `server/utils/audit.ts:52-57` | TIGHTEN | 109 | ~49 | The no-PII rule stays; the client-side-filtering aside goes |
-| S17 | `server/utils/admin-grants.ts:344-348` | TIGHTEN | 98 | ~43 | "`already_expired` writes nothing, because moving a past date forward rewrites history" is the rule; the "used to" framing is not |
+| S17 | `layers/billing/server/utils/admin-grants.ts:344-348` | TIGHTEN | 98 | ~43 | "`already_expired` writes nothing, because moving a past date forward rewrites history" is the rule; the "used to" framing is not |
 | S18 | `app/pages/admin/users/[id].vue:33-36` | TIGHTEN | 77 | ~32 | Keep "fails silently in both directions"; drop "It used to be re-typed here as `MAX_PASSES = 12`" |
 
 **S-subtotal: ~1,599 tokens. §4 + §5 prose total: 3,235.**
@@ -581,12 +581,12 @@ I verified how each gate treats comment text:
 | `server/api/auth/apple.ts:1-56` | 907 tok | Five distinct silent-failure gotchas (no `.get` suffix, four-value config, required redirect URL, Hide My Email identity split, SameSite=Lax limitation). I verified the library claim at `apple.js:27` vs `:62` — it is correct. Cut nothing |
 | `server/utils/session-guard.ts:17-32` | ~250 tok | The "why not a KV cache" argument. `AGENTS.md` explicitly points *here* as the canonical home, and this is the exact refactor an agent would otherwise make — a cache that fails open reintroduces the bug |
 | `server/db/schema.ts` index rationales (`:98-104`, `:288-305`, `:462-470`) | ~600 tok | Each names a query that full-scans without the index, and a `LIMIT` that bounds rows deleted rather than examined. Pure silent-degradation-as-you-grow |
-| `server/utils/admin-grants.ts:321-339` | ~330 tok | "Comps only" + "both status and date must be set". Ordering/atomicity the code cannot express, on access-control code |
+| `layers/billing/server/utils/admin-grants.ts:321-339` | ~330 tok | "Comps only" + "both status and date must be set". Ordering/atomicity the code cannot express, on access-control code |
 | `scripts/seed.ts:44-53` | ~180 tok | `grantCompPasses()` calls `db.batch()`, which bun-sqlite does not have — it would **throw**, not merely diverge. Prevents an obvious "reuse the helper" refactor |
 | `scripts/seed.ts:18-25` | ~140 tok | The seed-user table. Reference data an agent cannot derive; not prose |
 | `server/utils/email.ts:29-39` | ~200 tok | List-Unsubscribe must never appear on billing/security mail, enforced twice on purpose. Deliverability + security invariant |
 | `server/utils/referral.ts:58-63`, `:648-668` | ~330 tok | Structural idempotency, and "the cap counts revoked rows" — the anti-churn property. Money semantics |
-| `server/utils/entitlements.ts`, `layers/files/server/utils/files.ts`, `server/utils/users.ts` (all blocks) | ~11k tok | Largest block in each is 18/21/32 lines. Many small comments on specific decisions — the healthy pattern, no essay drift found |
+| `layers/billing/server/utils/entitlements.ts`, `layers/files/server/utils/files.ts`, `server/utils/users.ts` (all blocks) | ~11k tok | Largest block in each is 18/21/32 lines. Many small comments on specific decisions — the healthy pattern, no essay drift found |
 | `app/plugins/00.zod-jitless.client.ts:26-35` | ~200 tok | Why module scope and why the `00.` prefix. Removing the prefix silently reintroduces a CSP violation on every page load |
 | `server/tasks/purge-expired-tokens.ts:1-38` | 550 tok | The two-strings-must-match cron gotcha, which fails with no error and no log line |
 | `server/utils/identity.ts:1-29` | 456 tok | Canonical home for the salt argument. T3 and T5 above make it *more* canonical by pointing here |

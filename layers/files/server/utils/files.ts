@@ -3,7 +3,7 @@
 // this feature ever writes starts with `uploads/<user_id>/`, and never with
 // anything a client sent.
 //
-// Like server/utils/entitlements.ts and layers/feedback/server/utils/feedback.ts, every
+// Like layers/billing/server/utils/entitlements.ts and layers/feedback/server/utils/feedback.ts, every
 // function here takes the Drizzle client as its first argument rather than
 // reaching for the auto-imported `db`, so layers/files/test/files.test.ts can drive this
 // against a real D1 binding without booting Nitro. The R2 calls themselves

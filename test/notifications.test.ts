@@ -1,5 +1,5 @@
 // The reader that decides whether one email actually gets sent, run against a
-// real D1 inside workerd — same shape as test/entitlements.test.ts.
+// real D1 inside workerd — same shape as layers/billing/test/entitlements.test.ts.
 
 import { env } from 'cloudflare:test'
 import { drizzle } from 'drizzle-orm/d1'

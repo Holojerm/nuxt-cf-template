@@ -33,7 +33,7 @@ The `useSeo()` one-call-per-page contract, how `publicPage` meta feeds both `sit
   builds its `FAQPage` from the same `PRICING_FAQ` array it renders — see
   `app/utils/faq.ts`. Structured data describing invisible content is a manual-action
   risk with Google and a lie an answer engine will repeat.
-- **Prices go into schema as numbers**, never display strings. `app/utils/plans.ts`
+- **Prices go into schema as numbers**, never display strings. `layers/billing/app/utils/plans.ts`
   carries `amount` + `currency` + `unit` alongside the `'$12'` display copy for exactly
   this reason.
 - Structured-data builders live in `shared/utils/schema.ts` and are pure functions of a

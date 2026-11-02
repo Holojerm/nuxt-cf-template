@@ -24,7 +24,7 @@ mistake available here. Ask if it isn't obvious from the request:
 | `await requireAdmin(event)` | Owner-facing endpoints | 401 / 403 |
 | none — add to the allowlist | Genuinely public (see below) | — |
 
-**`requireSubscription()` is the real paywall.** `app/middleware/subscription.ts`
+**`requireSubscription()` is the real paywall.** `layers/billing/app/middleware/subscription.ts`
 runs in the browser and only decides which page renders; delete it and the API
 still refuses. Skip the server call and the gate is decorative — a signed-in
 free user can `fetch()` the route directly. If the feature is behind a plan,
@@ -112,7 +112,7 @@ Anything with real branching — money, entitlements, quota, multi-step writes �
 belongs in `server/utils/*.ts` as a function taking the Drizzle client as its
 **first argument**, not inline in the handler. That's what lets the workerd
 vitest suite drive it against a real D1 binding without booting Nitro. See
-`server/utils/entitlements.ts` and `test/entitlements.test.ts` for the pattern.
+`layers/billing/server/utils/entitlements.ts` and `layers/billing/test/entitlements.test.ts` for the pattern.
 
 Handlers stay thin: gate, validate, call, shape.
 

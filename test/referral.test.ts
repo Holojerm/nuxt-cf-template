@@ -42,7 +42,7 @@ import {
   rewardReferrerForFirstPurchase,
   welcomeRefForEmail,
 } from '../server/utils/referral'
-import { COMP_REVOKED_STATUS } from '../server/utils/admin-grants'
+import { COMP_REVOKED_STATUS } from '#layers/billing/server/utils/admin-grants'
 import { deleteAccount } from '../server/utils/account'
 import {
   DERIVED_REVOKED_STATUS,
@@ -51,9 +51,13 @@ import {
   grantPass,
   revokeForAdjustment,
   upsertSubscription,
-} from '../server/utils/entitlements'
-import { buildEntitlementView } from '../server/utils/entitlement-view'
-import { isReferralRef, referralRewardRef, referralWelcomeRef } from '../server/utils/paddle-refs'
+} from '#layers/billing/server/utils/entitlements'
+import { buildEntitlementView } from '#layers/billing/server/utils/entitlement-view'
+import {
+  isReferralRef,
+  referralRewardRef,
+  referralWelcomeRef,
+} from '#layers/billing/server/utils/paddle-refs'
 import { generateReferralCode, upsertOAuthUser } from '../server/utils/users'
 import { getIdentitySalt } from '../server/utils/identity'
 import { saltedHash } from '../server/utils/hash'
@@ -642,7 +646,7 @@ describe('buildEntitlementView on referral access', () => {
 })
 
 // ── Refund clawback, keyed on the PURCHASE ────────────────────────
-// The cascade lives in revokeForAdjustment (server/utils/entitlements.ts) so
+// The cascade lives in revokeForAdjustment (layers/billing/server/utils/entitlements.ts) so
 // every caller gets it, and it is keyed on `earned_from_ref` — the transaction
 // that earned the reward — rather than on the person who made it. Keyed on the
 // person it was wrong three ways at once: a refund of somebody's SECOND
