@@ -19,12 +19,19 @@
 // place in this sitemap where `<lastmod>` is a real per-URL date rather than the
 // build date.
 //
+// Pages an app owns beyond those two (a catalogue, public profiles) come from
+// registered sources — server/utils/public-pages.ts — so this file stays
+// identical in every fork. With none registered the query below is skipped.
+//
 // Everything this route decides lives in `sitemapResponse()`, which is a pure
 // function this repo can actually test. What is left here is config, one query,
 // and two assignments — see that function for why the split is deliberate.
 
-import { sitemapResponse } from '../utils/seo'
+import { db } from '@nuxthub/db'
+
 import { tryListBlogPosts } from '../utils/blog'
+import { collectPublicPages } from '../utils/public-pages'
+import { sitemapResponse } from '../utils/seo'
 
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
@@ -39,13 +46,19 @@ export default defineEventHandler(async (event) => {
   const { posts, ok } =
     indexable && appUrl ? await tryListBlogPosts(event) : { posts: [], ok: true }
 
+  const dynamic =
+    indexable && appUrl
+      ? await collectPublicPages(db, { buildDate: config.buildDate })
+      : { entries: [], complete: true }
+
   const { body, cacheControl } = sitemapResponse({
     appUrl,
     indexable,
     buildDate: config.buildDate,
     pages: config.publicPages ?? [],
     posts,
-    complete: ok,
+    dynamic: dynamic.entries,
+    complete: ok && dynamic.complete,
   })
 
   setResponseHeader(event, 'Cache-Control', cacheControl)

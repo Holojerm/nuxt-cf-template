@@ -19,12 +19,22 @@
 // again in the document, because a crawler that ignored robots.txt still reads
 // the head.
 
+import type { MaybeRefOrGetter } from 'vue'
+
 import type { JsonLdNode, SiteContext } from '#shared/utils/schema'
 
 export interface SeoInput {
-  /** Page title, without the site name — see `titleMode`. */
-  title: string
-  description: string
+  /**
+   * Page title, without the site name — see `titleMode`.
+   *
+   * Accepts a getter (or ref) as well as a string. A detail page such as
+   * /things/[id] titles itself from data that arrives after setup, and a plain
+   * string would freeze the tab at "Thing" for every record. The value is
+   * passed straight through to `useSeoMeta`, which is reactive, and resolved
+   * with `toValue()` only where a literal is required.
+   */
+  title: MaybeRefOrGetter<string>
+  description: MaybeRefOrGetter<string>
   /**
    * 'suffix' (default) renders `Pricing · My App`. 'exact' uses the title
    * verbatim, for the landing page where the brand should lead.
@@ -60,13 +70,17 @@ export function useSeo(input: SeoInput): void {
   const siteIndexable = config.public.indexable !== false && Boolean(site.appUrl)
   const indexable = siteIndexable && !input.noindex
 
-  const title = input.titleMode === 'exact' ? input.title : `${input.title} · ${site.appName}`
+  // Getters, not resolved strings: `useSeoMeta` re-evaluates them, so a title
+  // that depends on fetched data updates the tab when the data lands.
+  const title = () =>
+    input.titleMode === 'exact' ? toValue(input.title) : `${toValue(input.title)} · ${site.appName}`
+  const description = () => toValue(input.description)
   const canonical = absoluteUrl(site.appUrl, route.path)
   const image = toAbsoluteAsset(site.appUrl, input.image ?? '/og.png')
 
   useSeoMeta({
     title,
-    description: input.description,
+    description,
     // Explicit on every page, not just the private ones: a page that silently
     // loses its canonical is much easier to spot when the directive is always
     // written out.
@@ -75,7 +89,7 @@ export function useSeo(input: SeoInput): void {
     ogType: input.ogType ?? 'website',
     ogSiteName: site.appName,
     ogTitle: title,
-    ogDescription: input.description,
+    ogDescription: description,
     ogUrl: canonical || undefined,
     ogLocale: 'en_US',
     ogImage: image || undefined,
@@ -85,7 +99,7 @@ export function useSeo(input: SeoInput): void {
 
     twitterCard: 'summary_large_image',
     twitterTitle: title,
-    twitterDescription: input.description,
+    twitterDescription: description,
     twitterImage: image || undefined,
   })
 
@@ -103,10 +117,13 @@ export function useSeo(input: SeoInput): void {
         innerHTML: jsonLdGraph([
           organizationSchema(site),
           websiteSchema(site),
+          // Resolved here rather than passed as getters: JSON-LD is serialised
+          // once into a <script> body, and an indexable page's title is a
+          // literal in practice — every page that reaches this branch has one.
           webPageSchema(site, {
             url: canonical,
-            title,
-            description: input.description,
+            title: title(),
+            description: description(),
           }),
           // A Home-only breadcrumb is noise; emit one only for a real trail.
           trail.length > 1 ? breadcrumbSchema(site, trail) : null,

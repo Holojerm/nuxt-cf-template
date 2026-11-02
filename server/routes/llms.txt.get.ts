@@ -16,9 +16,15 @@
 // marketing page states what the product is, a post explains how it works, and
 // the second is what gets quoted.
 //
+// Pages an app owns beyond those two come from registered sources, as in
+// sitemap.xml — see server/utils/public-pages.ts.
+//
 // Suppressed on preview deploys for the same reason robots.txt is.
 
+import { db } from '@nuxthub/db'
+
 import { tryListBlogPosts } from '../utils/blog'
+import { collectPublicPages } from '../utils/public-pages'
 import { llmsTxtResponse } from '../utils/seo'
 
 export default defineEventHandler(async (event) => {
@@ -33,6 +39,8 @@ export default defineEventHandler(async (event) => {
 
   const { posts, ok } = await tryListBlogPosts(event)
 
+  const dynamic = await collectPublicPages(db, { buildDate: config.buildDate })
+
   const { body, cacheControl } = llmsTxtResponse({
     appName: config.public.appName,
     appUrl: config.public.appUrl,
@@ -46,8 +54,9 @@ export default defineEventHandler(async (event) => {
       description: post.description,
       date: post.date,
     })),
-    // A failed post query must not be cached as if it were the truth.
-    complete: ok,
+    sections: dynamic.sections,
+    // A failed post or source query must not be cached as if it were the truth.
+    complete: ok && dynamic.complete,
   })
 
   setResponseHeader(event, 'Cache-Control', cacheControl)

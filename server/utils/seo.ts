@@ -46,6 +46,8 @@ export interface RobotsInput {
   appUrl: string
   indexable: boolean
   allowAiCrawlers: boolean
+  /** Extra paths to disallow beyond the core list — see registerRobotsDisallow(). */
+  disallow?: readonly string[]
 }
 
 export function buildRobotsTxt(input: RobotsInput): string {
@@ -59,7 +61,8 @@ export function buildRobotsTxt(input: RobotsInput): string {
     return ['User-agent: *', 'Disallow: /', ''].join('\n')
   }
 
-  const lines = ['User-agent: *', 'Allow: /', ...DISALLOWED.map((path) => `Disallow: ${path}`), '']
+  const disallowed = [...new Set([...DISALLOWED, ...(input.disallow ?? [])])]
+  const lines = ['User-agent: *', 'Allow: /', ...disallowed.map((path) => `Disallow: ${path}`), '']
 
   lines.push(
     input.allowAiCrawlers
@@ -70,7 +73,7 @@ export function buildRobotsTxt(input: RobotsInput): string {
   for (const { agent } of AI_CRAWLERS) {
     lines.push(`User-agent: ${agent}`)
     if (input.allowAiCrawlers) {
-      lines.push('Allow: /', ...DISALLOWED.map((path) => `Disallow: ${path}`))
+      lines.push('Allow: /', ...disallowed.map((path) => `Disallow: ${path}`))
     } else {
       lines.push('Disallow: /')
     }
@@ -202,6 +205,8 @@ export interface SitemapResponseInput {
   /** Collected from `definePageMeta({ publicPage })` at build time. */
   pages: PublicPage[]
   posts: { path: string; date: string; updated?: string }[]
+  /** Entries from registered public page sources — see server/utils/public-pages.ts. */
+  dynamic?: SitemapEntry[]
   /** False when the post query failed — see crawlerCacheControl(). */
   complete: boolean
 }
@@ -229,6 +234,7 @@ export function sitemapResponse(input: SitemapResponseInput): CrawlerDocument {
       ...POST_CRAWL_HINTS,
       lastmod: blogPostLastmod(post),
     })),
+    ...(input.dynamic ?? []),
   ]
 
   return {
@@ -246,6 +252,12 @@ export interface LlmsTxtPost {
   date: string
 }
 
+/** A heading with links, contributed by a public page source. */
+export interface LlmsTxtSection {
+  heading: string
+  links: { path: string; title: string; description: string }[]
+}
+
 export interface LlmsTxtInput {
   appName: string
   appUrl: string
@@ -256,6 +268,8 @@ export interface LlmsTxtInput {
   pages: PublicPage[]
   /** Newest first. Listed under their own heading, below the pages. */
   posts?: LlmsTxtPost[]
+  /** After the blog, before About — see server/utils/public-pages.ts. */
+  sections?: LlmsTxtSection[]
 }
 
 /**
@@ -291,6 +305,15 @@ export function buildLlmsTxt(input: LlmsTxtInput): string {
       sections.push(
         `- [${post.title}](${absoluteUrl(appUrl, post.path)}): ${post.description} (published ${post.date})`,
       )
+    }
+    sections.push('')
+  }
+
+  for (const section of input.sections ?? []) {
+    if (section.links.length === 0) continue
+    sections.push(`## ${section.heading}`, '')
+    for (const link of section.links) {
+      sections.push(`- [${link.title}](${absoluteUrl(appUrl, link.path)}): ${link.description}`)
     }
     sections.push('')
   }

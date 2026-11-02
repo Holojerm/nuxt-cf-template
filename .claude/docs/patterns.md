@@ -132,6 +132,13 @@ a registered budget. Core registers `NATIVE_LIMITER`; an app adds another with
 `registerNativeLimiter({ binding, limit, windowSeconds })` from a Nitro plugin, next to its
 `[[ratelimits]]` block. See `.claude/docs/auth.md › Rate Limiting`.
 
+### Dynamic public pages and robots paths
+
+Pages that exist only as an app's data (a problem catalogue, public profiles, permalinks) and
+the private paths crawlers should skip are registered, not hand-added to `sitemap.xml.get.ts`,
+`llms.txt.get.ts` or `seo.ts`: `registerPublicPageSource()` and `registerRobotsDisallow()` in
+`server/utils/public-pages.ts`. See `.claude/docs/seo.md`.
+
 ### Vendored layers
 
 A fork takes a template feature that has moved into `layers/<name>/` by vendoring it:
