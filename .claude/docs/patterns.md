@@ -132,6 +132,18 @@ a registered budget. Core registers `NATIVE_LIMITER`; an app adds another with
 `registerNativeLimiter({ binding, limit, windowSeconds })` from a Nitro plugin, next to its
 `[[ratelimits]]` block. See `.claude/docs/auth.md › Rate Limiting`.
 
+### The /ingest relay and the sign-out event
+
+Two analytics settings an app changes by configuration, not by editing the file:
+
+- `configureIngestRelay({ rateLimit, limit, windowSeconds, forwardClientIp })` (Nitro plugin,
+  `server/utils/ingest-relay.ts`): the PostHog relay's rate limit (off unless turned on, for the
+  per-request KV cost; 300/120s once on) and
+  whether PostHog is told the visitor's address for GeoIP (default true). An app that collects
+  no location passes `forwardClientIp: false`.
+- `runtimeConfig.captureSignOut` (default `true`): set it to `false` to leave the
+  `user_signed_out` event out of `POST /api/auth/logout`. The session is cleared either way.
+
 ### Dynamic public pages and robots paths
 
 Pages that exist only as an app's data (a problem catalogue, public profiles, permalinks) and

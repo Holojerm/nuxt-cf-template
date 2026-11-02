@@ -183,6 +183,15 @@ goes out on the response, and nothing fails. `period` may only be **10 or 60**.
   (`const INGEST_LIMITER = { name, limit, windowSeconds }`, passed straight to `rateLimit()`
   like `UNSUBSCRIBE_LIMITER`) belong in a file of the fork's own,
   not in `rate-limit.ts`.
+- **`/ingest/**`** (the PostHog relay) can be rate-limited: off by default, because the KV
+  backend costs a read and a write per relayed request. `configureIngestRelay({ rateLimit: true })`
+  turns on 300 requests per 120s per address, on KV, keyed by `hashedClientIp()` so the counters
+  hold no visitor IPs. 120s is
+  deliberately not a window the binding accepts, so it can never land on the per-colo limiter.
+  An app that needs other numbers calls `configureIngestRelay({ limit, windowSeconds })` from a
+  Nitro plugin (`server/utils/ingest-relay.ts`); don't edit the route. The relay also forwards
+  an explicit header allowlist (`server/utils/ingest-headers.ts`), never `Cookie` or
+  `Authorization`.
 - Changing the auth limit means changing `NATIVE_LIMITER` **and** `wrangler.toml`.
   `test/rate-limit.test.ts` drives the real binding and fails when they drift.
 - Both backends **fail open** (an outage in the abuse-control layer must not take

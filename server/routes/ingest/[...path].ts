@@ -1,3 +1,8 @@
+import { getRequestHeaders, readRawBody, sendProxy } from 'h3'
+
+import { forwardedIngestHeaders } from '../../utils/ingest-headers'
+import { getForwardClientIp, getIngestLimiter } from '../../utils/ingest-relay'
+
 // PostHog reverse proxy. The client SDK is configured with `api_host: '/ingest'`
 // so every request — events, decide, session-replay snapshots, the SDK bundle
 // itself — is fetched same-origin. This bypasses ad blockers and tracker
@@ -7,18 +12,29 @@
 //   /ingest/<anything else> → https://us.i.posthog.com/<anything else>
 //
 // posthog-js issues GETs (decide, array.js) and POSTs (events, replay) so the
-// proxy must preserve the method, query string, and body. It must NOT preserve
-// every header: because the proxy is same-origin, the browser attaches the
-// sealed `nuxt-session` cookie to every analytics request, and h3's
-// `proxyRequest` forwards `Cookie` verbatim — its ignore-list stops at
-// hop-by-hop headers. That is the bearer credential for the account, sent to a
-// third party on every page view. So the header set is built here, with the
-// two headers that can carry a credential removed or reduced, and handed to
-// `sendProxy` rather than merged over `proxyRequest`'s own copy of the request.
-
+// proxy must preserve the method, query string, and body — but NOT the
+// headers wholesale. See server/utils/ingest-headers.ts for why: h3's
+// `proxyRequest` forwards every incoming header except an eight-entry ignore
+// list that does not include `cookie` or `authorization`, which would ship
+// the sealed session cookie to PostHog on every request. This route calls
+// `sendProxy` directly instead, with headers built from an explicit
+// allowlist. That helper also drops the query string and fragment off the
+// Referer, so a sign-in token in the URL cannot ride along as `$referrer`.
 const PAYLOAD_METHODS = new Set(['PATCH', 'POST', 'PUT', 'DELETE'])
 
 export default defineEventHandler(async (event) => {
+  // An open proxy with no counter is an open proxy anyone can point anything
+  // through, on our bill and from our IP reputation. Opt-in, for the KV cost. server/middleware/auth.ts
+  // never sees this route — it only guards `/api/**` — so the limit lives here.
+  // Budget and its reasoning: server/utils/ingest-relay.ts.
+  //
+  // Keyed by a salted hash rather than the raw address: this is the busiest
+  // anonymous surface in the app, and its counters would otherwise be a rolling
+  // list of visitor IPs sitting in KV. Fails open, like every limiter here — a
+  // broken KV must not silently switch analytics off.
+  const limiter = getIngestLimiter()
+  if (limiter) await rateLimit(event, { ...limiter, identifier: await hashedClientIp(event) })
+
   const path = (getRouterParam(event, 'path') ?? '').replace(/^\/+/, '')
   const search = getRequestURL(event).search
 
@@ -26,42 +42,27 @@ export default defineEventHandler(async (event) => {
     ? `https://us-assets.i.posthog.com/${path}${search}`
     : `https://us.i.posthog.com/${path}${search}`
 
-  // `host` false: the upstream URL is absolute, so fetch sets its own Host.
-  const headers = new Headers(getProxyRequestHeaders(event, { host: false }))
-  headers.delete('cookie')
+  const headers = forwardedIngestHeaders(getRequestHeaders(event), {
+    forwardClientIp: getForwardClientIp(),
+  })
 
-  // Strip the query string and fragment off the Referer before it leaves.
-  //
-  // The browser sends a FULL-path Referer on every analytics request —
-  // including the one fired from /auth/verify?token=… while a live sign-in
-  // token is in the URL — and PostHog records it as `$referrer`. Sending only
-  // the origin+path keeps whatever value the header has for debugging while
-  // making it structurally incapable of carrying a secret. A Referer we cannot
-  // parse is one we cannot promise is clean, so it is dropped outright.
-  const referer = refererWithoutQuery(getRequestHeader(event, 'referer'))
-  if (referer) headers.set('referer', referer)
-  else headers.delete('referer')
-
-  const method = event.method
-  // `readRawBody` hands back a Node Buffer, which the Workers `fetch` type does
-  // not accept as a body; a Uint8Array view over the same bytes is.
-  const raw = PAYLOAD_METHODS.has(method)
+  // `false` asks h3 for the raw Buffer rather than a decoded string, so a
+  // binary or compressed body (session-replay snapshots in particular) is
+  // forwarded byte-for-byte. `fetch`'s BodyInit type doesn't know about
+  // Node's `Buffer`, though it satisfies `ArrayBufferView` at runtime — wrap
+  // it as a plain `Uint8Array` to give TypeScript what it's actually asking
+  // for without lying about the type.
+  const rawBody = PAYLOAD_METHODS.has(event.method)
     ? await readRawBody(event, false).catch(() => undefined)
     : undefined
-  const body = raw ? new Uint8Array(raw) : undefined
+  const body = rawBody ? new Uint8Array(rawBody) : undefined
 
   return sendProxy(event, upstream, {
-    fetchOptions: { method, body, headers, redirect: 'manual' },
+    headers,
+    fetchOptions: {
+      method: event.method,
+      body,
+      redirect: 'manual',
+    },
   })
 })
-
-/** Origin and path only; `undefined` for a missing or unparseable value. */
-function refererWithoutQuery(referer: string | undefined): string | undefined {
-  if (!referer) return undefined
-  try {
-    const url = new URL(referer)
-    return `${url.origin}${url.pathname}`
-  } catch {
-    return undefined
-  }
-}
