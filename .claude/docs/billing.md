@@ -130,7 +130,30 @@ Referral stays in core and registers itself with billing (below).
 | Plan copy and amounts | Shadow the layer's `layers/billing/app/utils/plans.ts`, or its `layers/billing/app/pages/pricing.vue` for a bespoke page, or its past-due alert component for wording, by putting a file at the same path under the app's `app/`. These are client files, so an app copy wins over the layer's |
 | CSP | The Paddle hosts stay in the app's `nuxt.config.ts` (the policy is one header string, not mergeable per layer) |
 | What follows money arriving | `registerBillingOutcomeHandler(key, async ({ db, event, outcome }) => …)` from a Nitro plugin. Awaited in registration order, after the email and before the log lines; a throwing handler is logged and skipped, never a 500. The referral reward is one |
+| Extra fields on the billing view | `registerEntitlementViewFields({ key, view?, history? })` from a Nitro plugin (below). Typed by augmenting `EntitlementViewFields` / `EntitlementHistoryFields` |
 | Who may use the paid thing | `requireAccess(event)` (core), backed by billing's `requireSubscription`; `findActiveEntitlement(db, userId, productKey, now?)` for anything finer |
+
+**Extra view fields.** `buildEntitlementView` (the shape behind `GET /api/billing/entitlement`, the
+admin user view and "view as") is a layer util, so an app cannot shadow it. To add a field, register
+it in `layers/billing/server/utils/entitlement-view-fields.ts`:
+
+```typescript
+declare module '#layers/billing/server/utils/entitlement-view-fields' {
+  interface EntitlementHistoryFields { referralKind: 'welcome' | 'reward' | null }
+}
+registerEntitlementViewFields({
+  key: 'referral',
+  history: (row) => ({ referralKind: referralRefKind(row.paddleSubscriptionId) }), // each history[] row
+  view: async ({ db, userId, overview, describing }) => ({ … }), // top level; may read, never write
+})
+```
+
+Nothing registered: the view is exactly what it was (same keys, same order, no extra query). Extras
+are appended after the base fields; a field the base view already has is never overwritten (logged
+as `billing_view_field_collision`), and a contributor that throws is logged
+(`billing_view_fields_failed`) and skipped. Re-registering a key replaces it; between contributors the
+later one wins a clash. Referral (core) registers `referralKind` on each history row this way
+(`server/plugins/referral.ts`, `server/utils/referral-view.ts`).
 
 **Shared Paddle account.** Paddle sends every event to every notification destination, so two
 apps on one account each receive the other's. Set `NUXT_PADDLE_PRODUCT_ID` to the product this app
