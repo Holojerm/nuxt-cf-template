@@ -2,7 +2,7 @@
 
 Paddle as merchant of record, the entitlement/clawback model, and the referral reward economics. Treat `server/utils/referral.ts` as billing code: a referral reward is access nobody paid for, granted automatically, on a signal from outside the building.
 
-> **Load this when:** touching `server/utils/entitlements.ts`, `server/utils/referral.ts`, `server/utils/paddle*.ts`, `server/routes/paddle/webhook.post.ts`, pricing, or the optional `mcp/` worker.
+> **Load this when:** touching `layers/billing/server/utils/entitlements.ts`, `server/utils/referral.ts`, `layers/billing/server/utils/paddle*.ts`, `layers/billing/server/routes/paddle/webhook.post.ts`, pricing, or the optional `mcp/` worker.
 > Canonical index: [AGENTS.md](../../AGENTS.md).
 
 ---
@@ -46,7 +46,7 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
      reinstated (a `txn_` row still reading `chargeback`; a `sub_` row not
      reading `refunded`), and it restores the buyer's `txn_` pass too, since no
      Paddle lifecycle event ever will. The cascade lives inside
-     `revokeForAdjustment` (`server/utils/entitlements.ts` ›
+     `revokeForAdjustment` (`layers/billing/server/utils/entitlements.ts` ›
      `revokeDerivedEntitlements`), not in the webhook route, so every caller
      gets it; the route only writes the audit rows.
   2. **The cap counts revoked rows.** Refund-churn burns budget instead of
@@ -69,7 +69,7 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
   ref during transition; delete that once no legacy row can still be granting.
 - **Idempotency is structural.** There is no ledger table and no "already paid"
   flag, because both need a read-then-write a webhook redelivery can race.
-  Each grant derives a deterministic ref (`server/utils/paddle-refs.ts`) and the
+  Each grant derives a deterministic ref (`layers/billing/server/utils/paddle-refs.ts`) and the
   unique index on `paddle_subscription_id` refuses the second write. So the
   webhook hook is called on *every* qualifying event: a redelivery is a repair
   path, not a second payout. The cap is the one soft edge — it is read-then-write,
@@ -109,9 +109,67 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
   Ids and day counts only — never a code or an address.
 
 
+## The billing layer
+
+Billing is `layers/billing/`: the mechanism, shipped once. An app supplies its catalogue and
+copy, and nothing else needs editing. What is in it: the webhook (`POST /paddle/webhook`),
+signature check, idempotent event handling, the `entitlements` and `paddle_events` tables
+(`server/db/schema.ts`, re-exported by the app's schema), `requireSubscription` and the other
+access queries, billing state and the entitlement view, notification decisions, comp grants, the
+`/pricing` scaffold, `usePaddle()`/`useEntitlement()`, the `subscription` route middleware, the
+past-due banner and alert, and its tests (`layers/billing/test/`, including the replay fixtures).
+Referral stays in core and registers itself with billing (below).
+
+**What the app provides**
+
+| What | How |
+| --- | --- |
+| Price ids, product id | `NUXT_PUBLIC_PADDLE_PRICE_PASS` / `_MONTHLY`, `NUXT_PADDLE_PRODUCT_ID` (optional). Declared in the layer's `runtimeConfig`, so these env names are the contract |
+| Secrets | `NUXT_PADDLE_WEBHOOK_SECRET`, `NUXT_PADDLE_API_KEY`; public `NUXT_PUBLIC_PADDLE_CLIENT_TOKEN`, `NUXT_PUBLIC_PADDLE_ENV` |
+| Pass length | `runtimeConfig.billing.passDays` (default 30). Plan copy that says "30 days" is the app's own file and has to move with it |
+| Plan copy and amounts | Shadow the layer's `layers/billing/app/utils/plans.ts`, or its `layers/billing/app/pages/pricing.vue` for a bespoke page, or its past-due alert component for wording, by putting a file at the same path under the app's `app/`. These are client files, so an app copy wins over the layer's |
+| CSP | The Paddle hosts stay in the app's `nuxt.config.ts` (the policy is one header string, not mergeable per layer) |
+| What follows money arriving | `registerBillingOutcomeHandler(key, async ({ db, event, outcome }) => …)` from a Nitro plugin. Awaited in registration order, after the email and before the log lines; a throwing handler is logged and skipped, never a 500. The referral reward is one |
+| Who may use the paid thing | `requireAccess(event)` (core), backed by billing's `requireSubscription`; `findActiveEntitlement(db, userId, productKey, now?)` for anything finer |
+
+**Shared Paddle account.** Paddle sends every event to every notification destination, so two
+apps on one account each receive the other's. Set `NUXT_PADDLE_PRODUCT_ID` to the product this app
+sells: a sale whose items are all on another product is then an info log
+(`paddle_webhook_foreign_product`), not an "unrecognised price" alert. Adjustment events (refunds,
+chargebacks) carry no product, so an app cannot tell the other's refunds from its own: set
+`runtimeConfig.billing.alertUnmatchedAdjustments` to `false` there, and the
+`paddle_adjustment_unmatched` alert stays a log line. The default (`true`) is right for an app with
+its own account.
+
+**What raises an ops alert** (`recordOpsEvent`, so a digest email; the same events are also logged):
+
+| Kind | When |
+| --- | --- |
+| `paddle_webhook_unconfigured` | `NUXT_PADDLE_WEBHOOK_SECRET` unset: every delivery is being dropped (503) |
+| `paddle_webhook_rejected` | Bad signature or stale timestamp (401). Mostly internet noise, but the only symptom if the secret drifts from Paddle's |
+| `paddle_webhook_unparseable` | Signed body that is not JSON or not a Paddle event (400) |
+| `paddle_adjustment_unmatched` | A refund/chargeback named a transaction with no entitlement (flag above) |
+| `paddle_webhook_unknown_user` / `_no_user` | `custom_data.userId` names no account / is missing: nothing granted |
+| `paddle_webhook_unrecognised_price` | A price not in config, on our product or with no product filter: nothing granted |
+
+Duplicates, stale and reordered events, and another product's sale are log lines only: Paddle
+retries and reorders by design.
+
+**Vendoring and collisions.** `bun run layers:pull billing` copies it. A layer's `server/utils`
+export always wins over an app file with the same name and cannot be shadowed, so a fork whose own
+util collides (`billing.ts`, `entitlements.ts`, `paddle.ts`…) renames its own first. A fork whose
+`entitlements` table differs from the layer's (extra or missing columns, no foreign key) must
+reconcile it before re-exporting the layer's schema: `bunx drizzle-kit generate` has to say "No
+schema changes". Migrations are never in the layer; their numbers are the app's.
+
+**Replay.** `bun run build && bun run billing:replay --out dump.json` posts the signed fixtures in
+`layers/billing/test/replay/` to the built Worker on a throwaway local D1 and dumps every status,
+the entitlement/event/ops rows, the entitlement endpoint, export, admin and fleet payloads and the
+server log records. Run it on the commit before a change and the commit after, and diff the dumps.
+
 ## Billing & MCP worker
 
-- **Paddle billing** is pre-wired: webhook at `server/routes/paddle/webhook.post.ts` (HMAC-verified, outside `/api/`), `entitlements` table, `requireSubscription(event, productKey?)` server util (throws 401/402), `usePaddle()` checkout composable, and the UI on top — `/pricing` (plans from `app/utils/plans.ts` + price IDs in runtime config) and `/account` (status, history, self-serve cancel via the Paddle portal). `NUXT_PADDLE_API_KEY` is **required** once billing is on: the cancel button always renders for a paying customer and `POST /api/billing/portal` 503s (`portal_unconfigured`) without the key — the toast names `NUXT_PUBLIC_SUPPORT_EMAIL`; there is no "reply to your receipt email" fallback by design. Gate paid API routes with `await requireAccess(event)` (core's gate, `server/utils/access-gate.ts`; billing registers `requireSubscription` as the real check, and without billing it is just `requireUserSession`) — never trust client state for access control. Billing reaches the rest of core only through registrations (`server/utils/billing-extensions.ts`): the `live_subscription` deletion guard, the data-export `entitlements` section, the admin `billing` and view-as sections, the `entitlements` fleet counter and `paid` funnel stage, the onboarding `entitlementActive` signal, the `paddleEvents` purge sweep and the `pass_expiring` lifecycle step. See `patterns.md › Other seams`.
+- **Paddle billing** is pre-wired: webhook at `layers/billing/server/routes/paddle/webhook.post.ts` (HMAC-verified, outside `/api/`), `entitlements` table, `requireSubscription(event, productKey?)` server util (throws 401/402), `usePaddle()` checkout composable, and the UI on top — `/pricing` (plans from `layers/billing/app/utils/plans.ts` + price IDs in runtime config) and `/account` (status, history, self-serve cancel via the Paddle portal). `NUXT_PADDLE_API_KEY` is **required** once billing is on: the cancel button always renders for a paying customer and `POST /api/billing/portal` 503s (`portal_unconfigured`) without the key — the toast names `NUXT_PUBLIC_SUPPORT_EMAIL`; there is no "reply to your receipt email" fallback by design. Gate paid API routes with `await requireAccess(event)` (core's gate, `server/utils/access-gate.ts`; billing registers `requireSubscription` as the real check, and without billing it is just `requireUserSession`) — never trust client state for access control. Billing reaches the rest of core only through registrations (`layers/billing/server/utils/billing-extensions.ts`): the `live_subscription` deletion guard, the data-export `entitlements` section, the admin `billing` and view-as sections, the `entitlements` fleet counter and `paid` funnel stage, the onboarding `entitlementActive` signal, the `paddleEvents` purge sweep and the `pass_expiring` lifecycle step. See `patterns.md › Other seams`.
 - **Events are ordered and deduplicated before anything is written.** Paddle
   retries every delivery that did not get a 2xx and documents that deliveries
   can overtake each other, so `applyPaddleEvent` reads two keys off every
@@ -134,7 +192,7 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
   `paddle_events` rows are swept by billing's `paddleEvents` purge contributor (run by the nightly purge task) after
   `PADDLE_EVENT_RETENTION_SECONDS` (30 days), long after Paddle stops retrying.
   All three refusals are logged as `paddle_webhook_not_applied` with the reason.
-- **The webhook trusts the price, not `custom_data`.** Checkout `custom_data` is written by the browser, so only `userId` is read from it, and only to find the account. What was bought comes from the event's `items[].price.id`, matched against the configured `NUXT_PUBLIC_PADDLE_PRICE_*` values by `paddlePriceCatalogue()` in `server/utils/paddle-prices.ts`: a new row is created only for a configured price of the kind the event implies, and an unknown price is acknowledged, logged as `paddle_webhook_unrecognised_price`, and grants nothing. Status changes on an existing subscription row skip the check so a price rotated out of config cannot leave a cancellation unapplied. Selling a second product means a new config key and a catalogue entry — not a `productKey` branch on `custom_data`.
+- **The webhook trusts the price, not `custom_data`.** Checkout `custom_data` is written by the browser, so only `userId` is read from it, and only to find the account. What was bought comes from the event's `items[].price.id`, matched against the configured `NUXT_PUBLIC_PADDLE_PRICE_*` values by `paddlePriceCatalogue()` in `layers/billing/server/utils/paddle-prices.ts`: a new row is created only for a configured price of the kind the event implies, and an unknown price is acknowledged, logged as `paddle_webhook_unrecognised_price`, and grants nothing. Status changes on an existing subscription row skip the check so a price rotated out of config cannot leave a cancellation unapplied. Selling a second product means a new config key and a catalogue entry — not a `productKey` branch on `custom_data`.
 - **Feedback loop** is pre-wired: `<FeedbackWidget />` (mounted in the default layout) → `POST /api/feedback` (public — the auth middleware allowlists that exact method + path; the handler rate-limits by `ip_hash` in D1) → a `feedback` row in D1 **and** a server-side PostHog `feedback_submitted` event carrying the session-replay link. Never capture the same event from the client too. Read the queue with `GET /api/feedback` (admin-only via `requireAdmin()`); the `feedback-triage` routine turns it into GitHub issues.
 - **MCP worker** (`mcp/`) is an optional second Worker: OAuth 2.1 (workers-oauth-provider + `OAUTH_KV`), stateless `createMcpHandler` tools at `/mcp`, sharing the app's D1 by `database_id`. The app owns all migrations; the worker reads with raw SQL. Users bridge identity with single-use connect codes (`POST /api/mcp/connect-code` ↔ the worker's `/authorize` page). Its wrangler scripts pass `-c wrangler.jsonc` — required, because the app build's `.wrangler/deploy/config.json` redirect confuses wrangler otherwise. Do not use `McpAgent` for new tools — it's deprecated in the agents SDK; `createMcpHandler` is the current path.
 

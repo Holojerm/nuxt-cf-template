@@ -87,6 +87,9 @@ restart. The rest are in [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).
 ├── content/                # @nuxt/content sources — NOT scanned by Nuxt as app code
 │   └── blog/               # One markdown file per post; the filename is the URL
 ├── scripts/                # One-off scripts (bun seed, etc.)
+├── layers/                 # Features that stand alone: billing/ (Paddle, entitlements, /pricing),
+│                           # feedback/, files/, social/. Each registers with core through
+│                           # server/utils/extensions.ts and reads like its own small app
 ├── public/                 # Static assets — og.png, favicon.svg, apple-touch-icon.png
 ├── .github/                # Dependabot + browser-suites.yml (axe/CSP/E2E — the only CI
 │                           # not in Workers Builds; that image can't launch Chromium)
@@ -185,8 +188,9 @@ Each of these has a full contract in its own doc — this is the one-line versio
   Client validation is never the boundary. → [`patterns.md`](.claude/docs/patterns.md)
 - **Auth** — the client middleware is **not** a security boundary; every paid API route
   calls `requireSubscription(event)` itself. → [`auth.md`](.claude/docs/auth.md)
-- **Billing & referrals** — a referral reward is access nobody paid for; treat
-  `server/utils/referral.ts` as billing code. → [`billing.md`](.claude/docs/billing.md)
+- **Billing & referrals** — billing is `layers/billing/`; a referral reward is access
+  nobody paid for, so treat `server/utils/referral.ts` as billing code. Gate paid routes
+  with `requireAccess(event)`. → [`billing.md`](.claude/docs/billing.md)
 - **Email** — `sendEmail()` never throws, and enqueues rather than POSTs when
   `EMAIL_QUEUE` exists. → [`email.md`](.claude/docs/email.md)
 - **SEO & AEO** — every page calls `useSeo()` exactly once and declares `publicPage`;

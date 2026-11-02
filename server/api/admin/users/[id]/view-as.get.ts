@@ -76,14 +76,14 @@ export default defineEventHandler(async (event) => {
     async () => {
       // What each feature resolves for this customer, by the same functions
       // their own requests run (billing: buildEntitlementView, the function
-      // GET /api/billing/entitlement runs — see server/utils/entitlement-view.ts
+      // GET /api/billing/entitlement runs — see layers/billing/server/utils/entitlement-view.ts
       // for why it is shared), and the gates each one contributes.
       const contributors = getAdminViewAsContributors()
       const loaded = await Promise.all(contributors.map((c) => c.load(db, user.id)))
       const sections = Object.fromEntries(contributors.map((c, i) => [c.key, loaded[i]?.value]))
       // `auth` passes for anyone with an account; billing adds `subscription`,
       // which passes only with a granting entitlement — the same condition
-      // app/middleware/subscription.ts checks against this exact payload.
+      // layers/billing/app/middleware/subscription.ts checks against this exact payload.
       const gates: Record<string, boolean> = { auth: true }
       for (const result of loaded) Object.assign(gates, result.gates)
 

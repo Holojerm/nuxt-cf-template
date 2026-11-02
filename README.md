@@ -337,7 +337,7 @@ connection"), so these specs sign in via
 `POST /api/auth/dev` — the same dev-only shortcut described under [Auth](#auth) — and then create or
 end entitlements by POSTing **signed Paddle webhooks** to `/paddle/webhook`, exactly as a real
 purchase or cancellation would arrive. `test/e2e/fixtures.ts` signs each one with the same HMAC
-construction `server/utils/paddle.ts` verifies; [`webhook-signing.spec.ts`](./test/e2e/webhook-signing.spec.ts)
+construction `layers/billing/server/utils/paddle.ts` verifies; [`webhook-signing.spec.ts`](./test/e2e/webhook-signing.spec.ts)
 checks that mirror against the real verifier rather than trusting it by inspection. Every user is
 fresh and unique per run (`e2e-<run>-<case>@example.com`) — nothing here reads the rows `bun seed`
 writes, on purpose, since the whole point is proving the flow works starting from nothing.
@@ -465,7 +465,7 @@ registering anything at all.
 | Which buttons to show | `GET /api/auth/providers` | Reports which providers are configured (and whether email can be sent at all), so nothing renders a button that dead-ends. |
 | Dev sign-in | [`server/api/auth/dev.post.ts`](./server/api/auth/dev.post.ts) | Email, no password. `import.meta.dev` is a build-time constant, so the handler is dead code in production and the route 404s. `bun seed` writes one account per billing state you can sign in as this way — see below. |
 | Server guard | [`server/middleware/auth.ts`](./server/middleware/auth.ts) | 401s every `/api/*` route except the allowlist in [`server/utils/public-routes.ts`](./server/utils/public-routes.ts) (documented in [`.claude/docs/auth.md › Public API surface`](./.claude/docs/auth.md)): `/api/health`, `/api/auth/`, `/api/_auth/`, the token-guarded `/api/status` and `/api/fleet`, `GET /api/blog*`, `/api/email/unsubscribe`, and whatever a feature registers (feedback: `POST /api/feedback`). Also rate-limits the auth surface. |
-| Client guards | [`app/middleware/auth.ts`](./app/middleware/auth.ts), [`subscription.ts`](./app/middleware/subscription.ts) | `definePageMeta({ middleware: ['auth', 'subscription'] })`. UX only — see below. |
+| Client guards | [`app/middleware/auth.ts`](./app/middleware/auth.ts), [`subscription.ts`](./layers/billing/app/middleware/subscription.ts) | `definePageMeta({ middleware: ['auth', 'subscription'] })`. UX only — see below. |
 
 **Seed accounts (`bun seed`, [`scripts/seed.ts`](./scripts/seed.ts)):** sign in as any of these via
 the dev endpoint above to land directly on that billing state, no checkout required. Idempotent —
@@ -876,8 +876,8 @@ email is the one message a user is actively waiting on.
 > `retry()` would silently become a no-op. Pinning the disable flag makes a date bump safe.
 
 Which emails exist, and when they fire — decided by `decideNotification()` in
-[`server/utils/billing-notifications.ts`](./server/utils/billing-notifications.ts), covered by
-[`test/billing-notifications.test.ts`](./test/billing-notifications.test.ts):
+[`layers/billing/server/utils/billing-notifications.ts`](./layers/billing/server/utils/billing-notifications.ts), covered by
+[`layers/billing/test/billing-notifications.test.ts`](./layers/billing/test/billing-notifications.test.ts):
 
 | Email | Trigger |
 | --- | --- |
@@ -909,11 +909,11 @@ The pieces:
 
 | Piece | Where | What it does |
 | --- | --- | --- |
-| Webhook | [`server/routes/paddle/webhook.post.ts`](./server/routes/paddle/webhook.post.ts) | Verifies the `Paddle-Signature` HMAC (see `server/utils/paddle.ts`), then hands the event to `applyPaddleEvent`. Lives outside `/api/` — the signature is the auth. |
-| Entitlement writes | [`server/utils/entitlements.ts`](./server/utils/entitlements.ts) | Subscriptions, one-time passes, and refund revocation. Takes the `db` explicitly so [`test/entitlements.test.ts`](./test/entitlements.test.ts) can drive real Paddle events against a real D1. |
-| Entitlements | `entitlements` table in [`server/db/schema.ts`](./server/db/schema.ts) | One row per Paddle ref — `sub_…` for subscriptions, `txn_…` for one-time passes — mapped to a user via checkout `custom_data.userId`, and to a plan via the item's `price.id`, which must be one of the configured `NUXT_PUBLIC_PADDLE_PRICE_*` values (`server/utils/paddle-prices.ts`). |
-| Gating | `requireSubscription(event, productKey?)` in [`server/utils/billing.ts`](./server/utils/billing.ts) | Composes on `requireUserSession`; throws 401 signed-out, 402 unsubscribed. Auto-imported in all server routes. |
-| Checkout | `usePaddle()` in [`app/composables/usePaddle.ts`](./app/composables/usePaddle.ts) | Lazy-loads Paddle.js, opens overlay checkout with the signed-in user's email and `custom_data.userId`. |
+| Webhook | [`layers/billing/server/routes/paddle/webhook.post.ts`](./layers/billing/server/routes/paddle/webhook.post.ts) | Verifies the `Paddle-Signature` HMAC (see `layers/billing/server/utils/paddle.ts`), then hands the event to `applyPaddleEvent`. Lives outside `/api/` — the signature is the auth. |
+| Entitlement writes | [`layers/billing/server/utils/entitlements.ts`](./layers/billing/server/utils/entitlements.ts) | Subscriptions, one-time passes, and refund revocation. Takes the `db` explicitly so [`layers/billing/test/entitlements.test.ts`](./layers/billing/test/entitlements.test.ts) can drive real Paddle events against a real D1. |
+| Entitlements | `entitlements` table in [`server/db/schema.ts`](./server/db/schema.ts) | One row per Paddle ref — `sub_…` for subscriptions, `txn_…` for one-time passes — mapped to a user via checkout `custom_data.userId`, and to a plan via the item's `price.id`, which must be one of the configured `NUXT_PUBLIC_PADDLE_PRICE_*` values (`layers/billing/server/utils/paddle-prices.ts`). |
+| Gating | `requireSubscription(event, productKey?)` in [`layers/billing/server/utils/billing.ts`](./layers/billing/server/utils/billing.ts) | Composes on `requireUserSession`; throws 401 signed-out, 402 unsubscribed. Auto-imported in all server routes. |
+| Checkout | `usePaddle()` in [`layers/billing/app/composables/usePaddle.ts`](./layers/billing/app/composables/usePaddle.ts) | Lazy-loads Paddle.js, opens overlay checkout with the signed-in user's email and `custom_data.userId`. |
 | Status + cancel | `GET /api/billing/entitlement`, `POST /api/billing/portal` | Access status and history for an account page, and a fresh Paddle customer-portal link deep-linked to cancel. The portal route needs `NUXT_PADDLE_API_KEY`. |
 
 What the webhook does with each event:
@@ -1003,7 +1003,7 @@ Full contract in [`.claude/docs/images.md`](.claude/docs/images.md).
 | Route | Access | Notes |
 | --- | --- | --- |
 | `/` | Public | Landing page — hero, features, CTA. Indexed. |
-| `/pricing` | Public | Two plans from `app/utils/plans.ts` (monthly subscription, 30-day pass — monthly only, no yearly, by rule) + price IDs in runtime config. Indexed. |
+| `/pricing` | Public | Two plans from `layers/billing/app/utils/plans.ts` (monthly subscription, 30-day pass — monthly only, no yearly, by rule) + price IDs in runtime config. Indexed. |
 | `/blog` | Public | Post index, newest first. Indexed. |
 | `/blog/:slug` | Public | One post, from `content/blog/<slug>.md`. Indexed, with `BlogPosting` JSON-LD. |
 | `/login` | Public | Magic-link form, then buttons for configured OAuth providers, then dev sign-in. `noindex`. |
@@ -1134,7 +1134,7 @@ itself. Two rules worth keeping:
 - **Never describe something in JSON-LD that isn't on the page.** The pricing FAQ is rendered
   from the same [`PRICING_FAQ`](./app/utils/faq.ts) array that feeds the markup, so the two
   cannot disagree. FAQ markup without a visible FAQ is a manual-action risk with Google.
-- **Prices are numbers, not display strings.** `app/utils/plans.ts` carries `amount`,
+- **Prices are numbers, not display strings.** `layers/billing/app/utils/plans.ts` carries `amount`,
   `currency`, and `unit` next to the `'$12'` copy, because parsing a currency glyph out of
   display text breaks the first time someone writes `'From $12'` — and a wrong price published
   to answer engines is a bad failure to have.

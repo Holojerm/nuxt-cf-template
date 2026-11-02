@@ -53,12 +53,12 @@
 // Step 4 gets the same treatment from the other side. A signup costs one fresh
 // mailbox, so the welcome ref is keyed on the MAILBOX rather than the account
 // id — otherwise deleting and re-registering the same address refills the trial
-// forever (server/utils/paddle-refs.ts › referralWelcomeRef).
+// forever (layers/billing/server/utils/paddle-refs.ts › referralWelcomeRef).
 //
 // ── Idempotency is structural, not a flag ────────────────────────────────────
 // There is no ledger table and no "already paid?" column, because both would
 // need a read-then-write that a webhook redelivery can race. Instead each grant
-// derives a DETERMINISTIC ref (server/utils/paddle-refs.ts) from the account it
+// derives a DETERMINISTIC ref (layers/billing/server/utils/paddle-refs.ts) from the account it
 // concerns, and the unique index on `entitlements.paddle_subscription_id`
 // refuses the second one. Five redeliveries compute one ref and write one row.
 
@@ -73,12 +73,22 @@ import {
 import * as tables from '../db/schema'
 import type { User } from '../db/schema'
 import { writeAudit } from './audit'
-import { DERIVED_REVOKED_STATUS, getBillingOverview, stackingBase, toSeconds } from './entitlements'
-import type { EntitlementDb } from './entitlements'
-import type { RevokeResult } from './entitlements'
+// Core → domain: referral stays in core for now and reads billing's entitlement
+// rules through the layer path (see layers/billing/nuxt.config.ts).
+import {
+  DERIVED_REVOKED_STATUS,
+  getBillingOverview,
+  stackingBase,
+  toSeconds,
+} from '#layers/billing/server/utils/entitlements'
+import type { EntitlementDb, RevokeResult } from '#layers/billing/server/utils/entitlements'
 import { saltedHash } from './hash'
 import { getIdentitySalt } from './identity'
-import { REFERRAL_REF_PREFIX, referralRewardRef, referralWelcomeRef } from './paddle-refs'
+import {
+  REFERRAL_REF_PREFIX,
+  referralRewardRef,
+  referralWelcomeRef,
+} from '#layers/billing/server/utils/paddle-refs'
 import { likePrefix } from './sql'
 import {
   canonicalizeEmailForLimiting,
@@ -517,10 +527,10 @@ export async function grantRefereeWelcome(
  * path rather than a double payout, and a customer's second pass pays nothing.
  *
  * What "paid" can and cannot mean here is the caller's problem and is written
- * out at the call site (server/routes/paddle/webhook.post.ts). The backstop for
+ * out at the call site (layers/billing/server/routes/paddle/webhook.post.ts). The backstop for
  * everything a status transition cannot distinguish — a refunded pass, a
  * charged-back invoice — is the derived-entitlement cascade in
- * server/utils/entitlements.ts, which needs `earnedFromRef` to find this row.
+ * layers/billing/server/utils/entitlements.ts, which needs `earnedFromRef` to find this row.
  */
 export async function rewardReferrerForFirstPurchase(
   db: EntitlementDb,

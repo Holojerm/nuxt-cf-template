@@ -26,7 +26,7 @@
 // row untouched, rather than swallowed the way account deletion's
 // best-effort blob.del() is.
 //
-// Not audited — see server/api/admin/users/[id]/grant.post.ts for what
+// Not audited — see layers/billing/server/api/admin/users/[id]/grant.post.ts for what
 // withAudit() is for. A person deleting their own upload is not a
 // privileged action; audit_log exists to record what was done TO an
 // account by someone else, not a customer's routine housekeeping.

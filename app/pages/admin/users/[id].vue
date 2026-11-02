@@ -40,7 +40,7 @@ const missing = computed(() => error.value?.statusCode === 404)
 
 // ── Grant comp access ───────────────────────────────────────────────────────
 // Denominated in whole passes, not days, because a comp is the same thing the
-// customer would have bought — see server/utils/admin-grants.ts. The day count
+// customer would have bought — see layers/billing/server/utils/admin-grants.ts. The day count
 // in the label comes from the plan we actually advertise on /pricing rather
 // than a second copy of the number; the server's response reports the days it
 // really granted, which is what the confirmation shows.
@@ -243,7 +243,7 @@ const accessBadge = computed(() => billingStateMeta(data.value?.billing.state))
 /**
  * The sentence the customer's own /account renders right now. A support person
  * reads this line out loud, so it has to be the customer's wording rather than
- * a near-copy — see app/pages/account.vue and app/components/Billing/.
+ * a near-copy — see app/pages/account.vue and layers/billing/app/components/Billing/.
  */
 const planReadsAs = computed(() => {
   const entitlement = viewAs.value?.entitlement

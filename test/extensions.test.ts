@@ -15,6 +15,7 @@ import { requireAccess } from '../server/utils/access-gate'
 import {
   clearExtensionsForTest,
   getAdminViewAsContributors,
+  getDeletionGuards,
   getRegisteredLifecycleSteps,
 } from '../server/utils/extensions'
 import { collectFleetCounters } from '../server/utils/fleet-status'
@@ -55,14 +56,9 @@ describe('core without feature contributors', () => {
 
   // A fork that never vendored billing: nothing guards deletion, so the
   // free-product behaviour is the plain delete the guard seam replaced.
-  it('deletes an account that has a live-looking subscription row, unguarded', async () => {
-    await db.insert(schema.entitlements).values({
-      userId: USER,
-      paddleSubscriptionId: 'sub_live',
-      status: 'active',
-    })
+  it('has no deletion guard, so deletion goes straight through', async () => {
+    expect(getDeletionGuards()).toEqual([])
     expect(await deleteAccount(db, USER)).toEqual({ outcome: 'deleted' })
-    await db.delete(schema.entitlements)
   })
 
   it('exports without an entitlements section', async () => {
@@ -70,16 +66,11 @@ describe('core without feature contributors', () => {
   })
 
   it('reports no entitlements group and a paid funnel stage of 0', async () => {
-    await db.insert(schema.entitlements).values({
-      userId: USER,
-      paddleSubscriptionId: 'txn_1',
-      status: 'active',
-    })
     const counters = await collectFleetCounters(db)
     expect(counters).not.toHaveProperty('entitlements')
+    expect(Object.keys(counters).sort()).toEqual(['extra', 'funnel', 'opsEvents', 'users'])
     expect(counters.funnel).toMatchObject({ paid: 0 })
     expect((await collectFleetFunnel(db)).paid).toBe(0)
-    await db.delete(schema.entitlements)
   })
 
   it('contributes no onboarding entitlement signal, lifecycle step or view-as section', async () => {

@@ -2,11 +2,11 @@
 //
 // /privacy promises "deletion of your account and its contents" through the
 // support inbox; this is that promise made self-serve instead, which matters
-// for the same reason app/utils/churn.ts refuses to make cancelling hard —
+// for the same reason layers/billing/app/utils/churn.ts refuses to make cancelling hard —
 // routing deletion through a support inbox is friction at the exact same exit
 // door. The mechanics (what "contents" means, why the users row survives as a
 // tombstone, why a live subscription is the one refusal) live in
-// server/utils/account.ts and server/utils/billing-extensions.ts.
+// server/utils/account.ts and layers/billing/server/utils/billing-extensions.ts.
 //
 // `confirmEmail` is a typed-confirmation safeguard, not an obstacle: it stops
 // a stray click on a destructive button, and unlike an "are you sure?" dialog

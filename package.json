@@ -38,6 +38,7 @@
     "crons:check": "bun run scripts/check-crons.ts",
     "layers:pull": "bun run scripts/layers-pull.ts",
     "layers:check": "bun run scripts/check-layers.ts",
+    "billing:replay": "bun run layers/billing/test/replay/billing-replay.ts",
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
     "test:watch": "vitest",

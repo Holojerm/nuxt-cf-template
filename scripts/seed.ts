@@ -32,7 +32,7 @@
 //
 // ── Subscription rows reuse upsertSubscription(); pass/comp rows don't ──────
 // The five `sub_…` rows below are written through
-// server/utils/entitlements.ts's own upsertSubscription() — the exact
+// layers/billing/server/utils/entitlements.ts's own upsertSubscription() — the exact
 // function the Paddle webhook calls — rather than a hand-built insert, so
 // the row shape can't drift from what a real subscription.* event produces.
 // It's driver-agnostic (plain Drizzle query-builder calls: `.query.findFirst`,
@@ -60,8 +60,8 @@ import { existsSync } from 'node:fs'
 
 import * as schema from '../server/db/schema'
 import { generateReferralCode } from '../server/utils/users'
-import { upsertSubscription } from '../server/utils/entitlements'
-import type { EntitlementDb } from '../server/utils/entitlements'
+import { upsertSubscription } from '../layers/billing/server/utils/entitlements'
+import type { EntitlementDb } from '../layers/billing/server/utils/entitlements'
 
 const DB_PATH = resolve(import.meta.dir, '../.data/db/sqlite.db')
 
@@ -135,7 +135,7 @@ const seedUsers: SeedUser[] = [
     email: 'seed-past-due@example.com',
     name: 'Past-Due Subscriber',
     role: 'user',
-    // Recent, so server/utils/billing-state.ts's PAST_DUE_STALE_AFTER_DAYS
+    // Recent, so layers/billing/server/utils/billing-state.ts's PAST_DUE_STALE_AFTER_DAYS
     // window reads this as live dunning rather than a subscription Paddle
     // already gave up on and no webhook ever closed out.
     entitlement: {
@@ -183,7 +183,7 @@ const seedUsers: SeedUser[] = [
     name: 'Lapsed Pass Holder',
     role: 'user',
     // Status stays 'active' — a txn_ row has no lifecycle event that ever
-    // flips it (see server/utils/paddle-refs.ts). It grants nothing once
+    // flips it (see layers/billing/server/utils/paddle-refs.ts). It grants nothing once
     // current_period_end is in the past; that date, not the status, is what
     // makes this one expired.
     entitlement: {

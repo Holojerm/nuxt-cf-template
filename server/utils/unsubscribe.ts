@@ -1,7 +1,7 @@
 // One-click List-Unsubscribe (RFC 8058) — token minting/verification, and the
 // shared guts of GET/POST /api/email/unsubscribe.
 //
-// Web Crypto only (no node:crypto), same reasoning as server/utils/paddle.ts:
+// Web Crypto only (no node:crypto), same reasoning as layers/billing/server/utils/paddle.ts:
 // it runs identically on Cloudflare Workers and in local dev.
 //
 // ── Why no new secret ─────────────────────────────────────────────────────
@@ -18,7 +18,7 @@
 //
 // ── Verification shape ────────────────────────────────────────────────────
 // Recompute-and-compare, not crypto.subtle.verify, to match the existing
-// convention in server/utils/paddle.ts (hmacSha256Hex + timingSafeEqual)
+// convention in layers/billing/server/utils/paddle.ts (hmacSha256Hex + timingSafeEqual)
 // rather than introduce a second way of doing the same thing. The comparison
 // is fixed-cost XOR accumulation over equal-length strings, not `===`, which
 // short-circuits on the first differing byte and would leak how much of a

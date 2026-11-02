@@ -1,8 +1,8 @@
 // Proves fixtures.ts's `signPaddleWebhook` isn't quietly wrong.
 //
-// server/utils/paddle.ts's own HMAC helper (`hmacSha256Hex`) is a local,
+// layers/billing/server/utils/paddle.ts's own HMAC helper (`hmacSha256Hex`) is a local,
 // unexported function, so the fixture can't import it and instead mirrors the
-// construction by hand — same shape as test/paddle.test.ts's `sign` helper on
+// construction by hand — same shape as layers/billing/test/paddle.test.ts's `sign` helper on
 // the vitest side. A hand-written mirror is exactly the kind of thing that can
 // drift from what it mirrors without either copy's own tests noticing, so this
 // file checks the fixture against the REAL verifier rather than trusting it by

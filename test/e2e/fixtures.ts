@@ -66,12 +66,12 @@ export function uniquePaddleRef(prefix: 'sub_' | 'txn_', caseName: string): stri
   return `${prefix}e2e_${RUN_TOKEN}_${caseName}`
 }
 
-// ─── Signing — mirrors server/utils/paddle.ts's verifier exactly ────────────
+// ─── Signing — mirrors layers/billing/server/utils/paddle.ts's verifier exactly ────────────
 // `hmacSha256Hex` in that file is a local, unexported helper, so it can't be
 // imported directly; `toHex` is exported and IS imported, which is what keeps
 // the hex-encoding step from becoming a second copy that could quietly stop
 // matching. The HMAC construction itself (`${ts}:${rawBody}`, `ts=…;h1=…`) is
-// mirrored here the same way test/paddle.test.ts's own `sign` helper mirrors
+// mirrored here the same way layers/billing/test/paddle.test.ts's own `sign` helper mirrors
 // it for the vitest suite — see webhook-signing.spec.ts, which checks this
 // copy against the real `verifyPaddleSignature` rather than trusting it by
 // inspection.
@@ -89,13 +89,13 @@ async function hmacSha256Hex(secret: string, message: string): Promise<string> {
 }
 
 /**
- * The `Paddle-Signature` header value, built the way server/utils/paddle.ts
+ * The `Paddle-Signature` header value, built the way layers/billing/server/utils/paddle.ts
  * verifies it.
  *
  * ── Timing contract ─────────────────────────────────────────────────────────
  * `ts` is stamped from `Date.now()` the instant this is called, and the
  * server checks it against a 5-SECOND window (`toleranceSeconds` in
- * server/utils/paddle.ts — production's value; not touched here). Call this
+ * layers/billing/server/utils/paddle.ts — production's value; not touched here). Call this
  * as the LAST step before `apiRequest.post(...)`, with the request body
  * already fully built — never earlier, never cached and reused. `sendPaddleEvent`
  * below is the only real caller and does exactly that; see globalSetup.ts for
@@ -111,8 +111,8 @@ export async function signPaddleWebhook(
 }
 
 // ─── Paddle event builders ───────────────────────────────────────────────────
-// Snake_case, matching server/utils/entitlements.ts's `paddleEventSchema` wire
-// shape field-for-field — see test/entitlements.test.ts for the same
+// Snake_case, matching layers/billing/server/utils/entitlements.ts's `paddleEventSchema` wire
+// shape field-for-field — see layers/billing/test/entitlements.test.ts for the same
 // convention on the vitest side.
 
 export interface PaddleEventData {
@@ -203,7 +203,7 @@ export async function expectWebhookAccepted(response: APIResponse): Promise<void
 //
 // There used to be one. This suite's first run found every gated redirect
 // logging "Hydration completed but contains mismatches.", because
-// app/middleware/subscription.ts fetched the entitlement during SSR with a
+// layers/billing/app/middleware/subscription.ts fetched the entitlement during SSR with a
 // bare `$fetch`, which sends no cookies — so the server rendered a gated
 // shell the client then had to navigate away from mid-hydration. That is
 // fixed (it uses `useRequestFetch()` now), the counted tolerance is gone, and

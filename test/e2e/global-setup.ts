@@ -1,14 +1,14 @@
 // Warm the two API routes test/e2e/fixtures.ts races against a clock.
 //
 // ── Why this exists ──────────────────────────────────────────────────────
-// server/utils/paddle.ts verifies a Paddle webhook's `ts` against a 5-second
+// layers/billing/server/utils/paddle.ts verifies a Paddle webhook's `ts` against a 5-second
 // tolerance — production's value, left alone here (see
 // signPaddleWebhook's timing contract in fixtures.ts). Nitro's dev server
 // compiles each route handler lazily, on its first hit, and the three
 // Playwright projects (a11y, csp, e2e) share one single-threaded dev server
 // with `retries: 0`. A cold compile of /paddle/webhook or /api/auth/dev can
 // easily eat that whole 5-second budget on a slow run — and
-// server/routes/paddle/webhook.post.ts collapses every rejection reason
+// layers/billing/server/routes/paddle/webhook.post.ts collapses every rejection reason
 // (stale timestamp, bad signature, malformed header) into the same 401
 // "Invalid signature", so a compile-time flake reads exactly like a real
 // HMAC bug. Hitting both routes once, here, before any timed assertion runs,
@@ -28,7 +28,7 @@
 // with a route name and a proper diff.
 //
 // /paddle/webhook is hit with NO `paddle-signature` header at all, which
-// server/utils/paddle.ts rejects before it ever reads a clock — a
+// layers/billing/server/utils/paddle.ts rejects before it ever reads a clock — a
 // deterministic, instant 401 that still pulls the whole route module (and
 // its imports: entitlements, referral, notifications) through Nitro's
 // compiler. /api/auth/dev is hit with a real, throwaway address on the same

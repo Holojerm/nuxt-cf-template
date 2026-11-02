@@ -140,6 +140,66 @@ for (const mirror of MIRRORS) {
   }
 }
 
+// ── The access predicate, pinned by text ────────────────────────────────────
+// "Does this account have access" exists twice: findActiveEntitlement() in the
+// billing layer (Drizzle) and the raw D1 SQL in mcp/src/server.ts. Unlike the
+// rule above it cannot be evaluated here (one side needs a database), so this
+// pins the clauses that make it what it is: change a status list, the `sub_`
+// prefix, the LIKE escape or the expiry comparison on one side without the
+// other and this fails, which is the whole point — the two disagreeing is how a
+// lapsed pass kept MCP access for good, or `subs_fake` read as a subscription.
+// A text check can only catch the edits that touch these fragments; it is
+// the cheap half of a promise that used to be kept by a comment.
+
+const BILLING_UTILS = 'layers/billing/server/utils'
+const PREDICATE_PINS: { file: string; fragment: string; why: string }[] = [
+  {
+    file: `${BILLING_UTILS}/entitlements.ts`,
+    fragment: "export const ACTIVE_STATUSES = ['active', 'trialing']",
+    why: "statuses that grant access (the SQL's status IN ('active', 'trialing'))",
+  },
+  {
+    file: `${BILLING_UTILS}/paddle-refs.ts`,
+    fragment: "export const SUBSCRIPTION_REF_PREFIX = 'sub_'",
+    why: "the prefix whose rows pass on status alone (the SQL's LIKE 'sub\\_%')",
+  },
+  {
+    file: `${BILLING_UTILS}/entitlements.ts`,
+    fragment: 'likePrefix(tables.entitlements.paddleSubscriptionId, SUBSCRIPTION_REF_PREFIX)',
+    why: 'the escaped prefix match (ESCAPE) that findActiveEntitlement ORs with the expiry',
+  },
+  {
+    file: `${BILLING_UTILS}/entitlements.ts`,
+    fragment: 'gt(tables.entitlements.currentPeriodEnd, now)',
+    why: "everything else must still be in its window (the SQL's current_period_end > ?3)",
+  },
+  {
+    file: 'mcp/src/server.ts',
+    fragment: "status IN ('active', 'trialing')",
+    why: 'the same status list, in SQL',
+  },
+  {
+    file: 'mcp/src/server.ts',
+    fragment: "LIKE 'sub\\\\_%' ESCAPE '\\\\'",
+    why: 'the same escaped prefix match, in SQL',
+  },
+  {
+    file: 'mcp/src/server.ts',
+    fragment: 'current_period_end > ?3',
+    why: 'the same expiry comparison, in SQL',
+  },
+]
+
+for (const pin of PREDICATE_PINS) {
+  const source = readFileSync(join(ROOT, pin.file), 'utf8')
+  if (!source.includes(pin.fragment)) {
+    problems.push(
+      `access predicate: ${pin.file} no longer contains \`${pin.fragment}\` — ${pin.why}\n` +
+        `    findActiveEntitlement() and mcp/src/server.ts must still mean the same thing.`,
+    )
+  }
+}
+
 // ── Pass 2: reference resolution ────────────────────────────────────────────
 
 const dead = findDeadReferences(ROOT)

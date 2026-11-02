@@ -12,14 +12,9 @@
 
 import { env } from 'cloudflare:test'
 import { drizzle } from 'drizzle-orm/d1'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import {
-  PADDLE_EVENT_RETENTION_SECONDS,
-  registerBillingExtensions,
-} from '../server/utils/billing-extensions'
-import { clearExtensionsForTest, getPurgeContributors } from '../server/utils/extensions'
 import { PURGE_GRACE_SECONDS, purgeExpiredTokens } from '../server/utils/purge'
 
 const db = drizzle(env.DB, { schema })
@@ -37,7 +32,6 @@ const RECENTLY = new Date(NOW - 1 * HOUR)
 const SOON = new Date(NOW + 1 * HOUR)
 
 beforeEach(async () => {
-  await env.DB.exec('DELETE FROM paddle_events')
   await env.DB.exec('DELETE FROM mcp_connect_codes')
   await env.DB.exec('DELETE FROM magic_link_tokens')
   await env.DB.exec('DELETE FROM users')
@@ -73,40 +67,6 @@ async function remainingIds(table: 'mcp_connect_codes' | 'magic_link_tokens'): P
       : await db.select({ id: schema.magicLinkTokens.id }).from(schema.magicLinkTokens)
   return rows.map((row) => row.id).sort()
 }
-
-describe('billing purge contributor — applied Paddle event ids', () => {
-  beforeEach(() => registerBillingExtensions())
-  afterEach(() => clearExtensionsForTest())
-
-  /** Billing's sweep, run the way the purge task runs a contributor. */
-  async function sweepPaddleEvents(options: { now: number; limit?: number }) {
-    const contributor = getPurgeContributors().find((c) => c.key === 'paddleEvents')
-    expect(contributor).toBeDefined()
-    return contributor!.run(db, options)
-  }
-
-  async function addEvent(eventId: string, receivedAt: Date): Promise<void> {
-    await db
-      .insert(schema.paddleEvents)
-      .values({ eventId, eventType: 'subscription.updated', occurredAt: receivedAt, receivedAt })
-  }
-
-  it('keeps an event id for the whole retention window, not just the grace window', async () => {
-    // Paddle retries for days; a row swept after 24h would let a late
-    // redelivery re-apply. Inside retention it stays, past it it goes.
-    await addEvent('evt-old', new Date(NOW - (PADDLE_EVENT_RETENTION_SECONDS + 60) * 1000))
-    await addEvent('evt-week', new Date(NOW - 7 * DAY))
-    await addEvent('evt-fresh', RECENTLY)
-
-    const result = await sweepPaddleEvents({ now: NOW })
-
-    expect(result).toEqual({ count: 1, truncated: false })
-    // The token sweep itself no longer touches the table.
-    expect(await purgeExpiredTokens(db, { now: NOW })).not.toHaveProperty('paddleEvents')
-    const remaining = await db.select({ id: schema.paddleEvents.eventId }).from(schema.paddleEvents)
-    expect(remaining.map((row) => row.id).sort()).toEqual(['evt-fresh', 'evt-week'])
-  })
-})
 
 describe('purgeExpiredTokens — what it deletes', () => {
   it('deletes rows that expired longer ago than the grace window', async () => {

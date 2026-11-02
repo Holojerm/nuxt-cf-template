@@ -10,7 +10,7 @@
 // cancelling happens on Paddle's hosted portal, a different origin where no
 // survey of ours can run, so this is the only moment the reason can be asked at
 // all. The prompt's primary button leaves whether or not anything is answered,
-// and no retention offer is inserted — see app/utils/churn.ts.
+// and no retention offer is inserted — see layers/billing/app/utils/churn.ts.
 
 definePageMeta({ middleware: 'auth' })
 
@@ -161,7 +161,7 @@ async function signOutEverywhere(): Promise<void> {
 // ── Your data ────────────────────────────────────────────────────────────────
 // Self-serve export and deletion — exactly what /privacy promises under "your
 // rights", moved off the support inbox. Routing account deletion through email
-// is the same friction app/utils/churn.ts refuses to add at the cancellation
+// is the same friction layers/billing/app/utils/churn.ts refuses to add at the cancellation
 // flow, at the same exit door: the whole point is that leaving isn't hard.
 const exportPending = ref(false)
 
