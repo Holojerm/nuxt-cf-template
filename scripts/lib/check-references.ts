@@ -109,8 +109,8 @@ const PATH_EXT =
 /**
  * `layers/<name>` directories vendored from the template (listed in
  * layers.lock.json). Their comments are the template's text: they point at the
- * template's own files (`server/utils/referral.ts`), which a fork that dropped
- * that feature rightly lacks, and the layer cannot be edited to fix a pointer.
+ * template's own files, which a fork that dropped a feature rightly lacks, and
+ * the layer cannot be edited to fix a pointer.
  * They are still part of the corpus a reference resolves against; only the
  * claims they make are not checked here. The template has no lock file, so it
  * checks every layer.
