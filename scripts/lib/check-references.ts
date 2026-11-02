@@ -106,6 +106,26 @@ const SOURCE_EXT = ['.ts', '.vue']
 const PATH_EXT =
   /\.(ts|tsx|vue|md|json|jsonc|toml|sql|css|txt|xml|svg|png|webmanifest|lock|example)$/
 
+/**
+ * `layers/<name>` directories vendored from the template (listed in
+ * layers.lock.json). Their comments are the template's text: they point at the
+ * template's own files (`server/utils/referral.ts`), which a fork that dropped
+ * that feature rightly lacks, and the layer cannot be edited to fix a pointer.
+ * They are still part of the corpus a reference resolves against; only the
+ * claims they make are not checked here. The template has no lock file, so it
+ * checks every layer.
+ */
+function vendoredLayerDirs(root: string): string[] {
+  try {
+    const lock = JSON.parse(readFileSync(join(root, 'layers.lock.json'), 'utf8')) as {
+      layers?: Record<string, unknown>
+    }
+    return Object.keys(lock.layers ?? {}).map((name) => `layers/${name}/`)
+  } catch {
+    return []
+  }
+}
+
 function walk(dir: string, exts: string[]): string[] {
   let out: string[] = []
   let entries: string[]
@@ -258,9 +278,11 @@ export function collectReferences(root: string): Reference[] {
     for (const pointer of pointersIn(text)) add(file, line, pointer.kind, pointer.token)
   }
 
+  const vendored = vendoredLayerDirs(root)
   for (const dir of SOURCE_DIRS) {
     for (const file of walk(join(root, dir), SOURCE_EXT)) {
       const rel = relative(root, file)
+      if (vendored.some((prefix) => rel.startsWith(prefix))) continue
       const source = readFileSync(file, 'utf8')
       const lines = source.split('\n')
       for (const [line, text] of commentsOf(source)) push(rel, line, text, lines)
