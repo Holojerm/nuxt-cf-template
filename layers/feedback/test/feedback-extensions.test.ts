@@ -40,6 +40,8 @@ describe('account deletion', () => {
       email: 'ada@example.com',
       userAgent: 'Mozilla/5.0',
       ipHash: 'abc123',
+      posthogDistinctId: 'ph-123',
+      replayUrl: 'https://us.posthog.com/replay/abc',
     })
 
     expect((await deleteAccount(db, USER)).outcome).toBe('deleted')
@@ -49,6 +51,8 @@ describe('account deletion', () => {
     expect(row?.email).toBeNull()
     expect(row?.userAgent).toBeNull()
     expect(row?.ipHash).toBeNull()
+    expect(row?.posthogDistinctId).toBeNull()
+    expect(row?.replayUrl).toBeNull()
     // Never a foreign key — left pointing at the now-anonymized account rather
     // than nulled, so "how many people gave feedback" survives.
     expect(row?.userId).toBe(USER)
@@ -64,6 +68,28 @@ describe('account deletion', () => {
       where: and(eq(schema.auditLog.targetId, USER), eq(schema.auditLog.action, 'account.deleted')),
     })
     expect(audit?.metadata).toMatchObject({ feedbackCount: 2 })
+  })
+
+  it('honours the per-app options: detach user_id, keep an older count key', async () => {
+    clearExtensionsForTest()
+    registerFeedbackExtensions({ anonymiseUserId: true, deletionCountKey: 'feedbackAnonymised' })
+    try {
+      await db.insert(schema.feedback).values({ id: 'fb-1', userId: USER, message: 'one' })
+      await deleteAccount(db, USER)
+      const row = await db.query.feedback.findFirst({ where: eq(schema.feedback.id, 'fb-1') })
+      expect(row?.userId).toBeNull()
+      const audit = await db.query.auditLog.findFirst({
+        where: and(
+          eq(schema.auditLog.targetId, USER),
+          eq(schema.auditLog.action, 'account.deleted'),
+        ),
+      })
+      expect(audit?.metadata).toMatchObject({ feedbackAnonymised: 1 })
+      expect(audit?.metadata).not.toHaveProperty('feedbackCount')
+    } finally {
+      clearExtensionsForTest()
+      registerFeedbackExtensions()
+    }
   })
 })
 

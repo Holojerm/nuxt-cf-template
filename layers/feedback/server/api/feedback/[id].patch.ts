@@ -33,7 +33,9 @@ export default defineEventHandler(async (event) => {
       metadata: {
         from: existing.status,
         to: body.status ?? existing.status,
-        issueUrl: body.issueUrl ?? null,
+        // Whether a link was set, not which: an issue URL can name a private
+        // repo, and this table is append-only.
+        issueUrlSet: body.issueUrl !== undefined && body.issueUrl !== null,
       },
       ipHash: await auditIpHash(event),
     },

@@ -152,7 +152,7 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
     notificationPreferencesCount: notificationTotal?.total ?? 0,
   }
   contributors.forEach((c, i) => {
-    metadata[`${c.key}Count`] = contributorCounts[i] ?? 0
+    metadata[c.countKey ?? `${c.key}Count`] = contributorCounts[i] ?? 0
   })
 
   return withAudit(

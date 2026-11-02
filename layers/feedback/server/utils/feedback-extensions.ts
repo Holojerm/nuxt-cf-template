@@ -7,11 +7,13 @@
 // A feedback row's `message` is product feedback the person chose to leave —
 // content ABOUT the app, not content IN it, the same distinction that keeps an
 // audit row about them from being erasable. So the message stays; what gets
-// scrubbed is the PII riding alongside it — `email`, `user_agent`, `ip_hash`.
-// `feedback.user_id` is deliberately not touched: it was never a foreign key
+// scrubbed is the PII riding alongside it — `email`, `user_agent`, `ip_hash`,
+// the PostHog distinct id and the session-replay link.
+// `feedback.user_id` is not touched by default: it was never a foreign key
 // (see schema.ts), so once the `users` row is anonymized it already points at
 // nobody identifiable, and leaving it is what keeps "how many distinct people
-// gave feedback" answerable without keeping a name attached.
+// gave feedback" answerable without keeping a name attached. An app that wants
+// the row fully detached sets `runtimeConfig.feedback.anonymiseUserId`.
 
 import { count, desc, eq } from 'drizzle-orm'
 import * as tables from '../db/schema'
@@ -60,9 +62,18 @@ declare module '#server/utils/extensions' {
   }
 }
 
-export function registerFeedbackExtensions(): void {
+/** Per-app choices, from `runtimeConfig.feedback` (layers/feedback/nuxt.config.ts). */
+export interface FeedbackExtensionOptions {
+  /** Also null `user_id` on account deletion. */
+  anonymiseUserId?: boolean
+  /** Audit metadata name for the deletion count; empty means `feedbackCount`. */
+  deletionCountKey?: string
+}
+
+export function registerFeedbackExtensions(options: FeedbackExtensionOptions = {}): void {
   registerAccountContributor({
     key: 'feedback',
+    countKey: options.deletionCountKey || undefined,
     async countForDeletion(db, userId) {
       const [row] = await db
         .select({ total: count() })
@@ -73,7 +84,14 @@ export function registerFeedbackExtensions(): void {
     deletionStatements: (db, userId) => [
       db
         .update(tables.feedback)
-        .set({ email: null, userAgent: null, ipHash: null })
+        .set({
+          email: null,
+          userAgent: null,
+          ipHash: null,
+          posthogDistinctId: null,
+          replayUrl: null,
+          ...(options.anonymiseUserId ? { userId: null } : {}),
+        })
         .where(eq(tables.feedback.userId, userId)),
     ],
     async exportSection(db, userId) {

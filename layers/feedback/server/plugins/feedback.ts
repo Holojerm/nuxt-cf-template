@@ -5,5 +5,5 @@
 import { registerFeedbackExtensions } from '../utils/feedback-extensions'
 
 export default defineNitroPlugin(() => {
-  registerFeedbackExtensions()
+  registerFeedbackExtensions(useRuntimeConfig().feedback)
 })

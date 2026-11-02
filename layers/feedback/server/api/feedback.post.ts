@@ -30,6 +30,10 @@ export default defineEventHandler(async (event) => {
   // token unconditionally would turn every one of those into a 400 the moment a
   // fork configured Turnstile. The abuse surface is the anonymous one anyway.
   //
+  // Before the ip_hash counter, not after: a bot that could spend that budget
+  // without solving anything would lock real people behind a shared address
+  // out of reporting at all.
+  //
   // No-ops entirely without NUXT_TURNSTILE_SECRET_KEY. See server/utils/turnstile.ts.
   if (!userId) await requireTurnstile(event, body.turnstileToken)
 
@@ -59,7 +63,9 @@ export default defineEventHandler(async (event) => {
       feedback_id: row.id,
       feedback_kind: row.kind,
       feedback_rating: row.rating,
-      feedback_path: row.path,
+      // Path only: the D1 row keeps the query (a triager needs it), but a query
+      // can carry ids or tokens, and analytics access is handed out more freely.
+      feedback_path: pathForLog(row.path ?? undefined) ?? null,
       authenticated: Boolean(userId),
       $session_recording_url: row.replayUrl,
     },

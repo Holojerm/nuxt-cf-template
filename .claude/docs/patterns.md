@@ -122,8 +122,10 @@ hash is the template's.
 - **Updating**: `bun run layers:pull --all` re-pulls every locked layer at its recorded ref
   (`main` unless you passed `--ref`). The PR diff is exactly what the template changed.
 - **Customizing**: app files shadow a layer's components, pages and API routes. `server/utils`
-  cannot be shadowed (the layer's export wins), so change server behaviour through an
-  extension point or upstream in the template.
+  cannot be shadowed (the layer's export wins), so change server behaviour through the
+  layer's `runtimeConfig` options (set in the app's `nuxt.config.ts`), an extension point,
+  or upstream in the template. Feedback's options: `feedback.anonymiseUserId`,
+  `feedback.deletionCountKey`.
 - **Why not `extends: ['github:…']`**: NuxtHub's merged schema types leave layers under
   `node_modules` untyped, so a remote layer's tables lose their types.
 - **In the template itself**, layers are authored, not vendored: its lock stays empty.

@@ -47,6 +47,12 @@ export interface AccountContributor<K extends string = string> {
    */
   countForDeletion: (db: ExtensionDb, userId: string) => Promise<number>
   /**
+   * Overrides the `<key>Count` metadata name. For an app whose audit history
+   * already records this count under another name: rows are append-only, so a
+   * rename would split that history in two.
+   */
+  countKey?: string
+  /**
    * Work that cannot join the batch, run just before it (after the audit row):
    * e.g. sweeping R2 objects while their rows still name them. Must not throw
    * for a best-effort failure — the person is waiting on their deletion.
