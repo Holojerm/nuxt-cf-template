@@ -19,7 +19,7 @@ import { FleetManifestSchema } from '#shared/utils/fleet-manifest'
 
 import rawManifest from '../../../fleet.json'
 import { getOpsMailer } from '../../utils/ops-mail'
-import { drainOpsEvents } from '../../utils/ops'
+import { drainOpsEvents, pruneOpsEvents } from '../../utils/ops'
 
 interface CloudflareTaskContext {
   cloudflare?: { env?: Record<string, unknown> }
@@ -36,8 +36,10 @@ export default defineTask({
     const env = (context as CloudflareTaskContext | undefined)?.cloudflare?.env
     const mailer = getOpsMailer(env)
     if (!mailer) {
-      console.warn(JSON.stringify({ kind: 'ops_alert_unconfigured' }))
-      return { result: { skipped: 'unconfigured' } }
+      // Nothing can be sent, but the spool must not grow without bound.
+      const pruned = await pruneOpsEvents(db)
+      console.warn(JSON.stringify({ kind: 'ops_alert_unconfigured', pruned }))
+      return { result: { skipped: 'unconfigured', pruned } }
     }
 
     const { appName, appUrl } = useRuntimeConfig().public

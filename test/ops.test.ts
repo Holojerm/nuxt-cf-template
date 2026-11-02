@@ -14,6 +14,7 @@ import {
   buildOpsDigest,
   drainOpsEvents,
   OPS_EVENT_RETENTION_DAYS,
+  pruneOpsEvents,
   recordOpsEvent,
   type OpsDigest,
 } from '../server/utils/ops'
@@ -214,6 +215,18 @@ describe('drainOpsEvents', () => {
     const result = await drainOpsEvents(db, mail, OPTIONS)
     expect(sent).toHaveLength(0)
     expect(result.pruned).toBe(2)
+  })
+})
+
+describe('pruneOpsEvents', () => {
+  it('deletes only rows past retention, with no mailer involved', async () => {
+    const old = new Date(NOW.getTime() - (OPS_EVENT_RETENTION_DAYS + 1) * DAY_MS)
+    await spool('server_error', 2, old)
+    await spool('server_error', 1, NOW)
+
+    expect(await pruneOpsEvents(db, NOW)).toBe(2)
+    expect(await db.select().from(schema.opsEvents)).toHaveLength(1)
+    expect(await pruneOpsEvents(db, NOW)).toBe(0)
   })
 })
 

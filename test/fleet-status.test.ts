@@ -7,9 +7,10 @@
 
 import { env } from 'cloudflare:test'
 import { drizzle } from 'drizzle-orm/d1'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
+import { clearExtensionsForTest, registerFleetExtraContributor } from '../server/utils/extensions'
 import {
   collectFleetCounters,
   compareMigrations,
@@ -92,6 +93,33 @@ describe('collectFleetCounters', () => {
     await env.DB.exec('DELETE FROM audit_log')
     await env.DB.exec('DELETE FROM ops_events')
     await env.DB.exec('DELETE FROM users')
+  })
+
+  describe('extra contributors', () => {
+    afterEach(() => clearExtensionsForTest())
+
+    it('merges every contributor into `extra` and leaves the rest of the shape alone', async () => {
+      registerFleetExtraContributor({
+        key: 'coaching',
+        collect: async () => ({ athletes: 3, plans: 5 }),
+      })
+      registerFleetExtraContributor({
+        key: 'sessions',
+        collect: async (_db, now) => ({ sessionsLogged: now.getTime() === NOW.getTime() ? 7 : 0 }),
+      })
+
+      const counters = await collectFleetCounters(db, NOW)
+      expect(counters.extra).toEqual({ athletes: 3, plans: 5, sessionsLogged: 7 })
+      expect(Object.keys(counters).sort()).toEqual(
+        ['entitlements', 'extra', 'funnel', 'opsEvents', 'users'].sort(),
+      )
+    })
+
+    it('replaces rather than duplicates a contributor registered twice', async () => {
+      registerFleetExtraContributor({ key: 'k', collect: async () => ({ a: 1 }) })
+      registerFleetExtraContributor({ key: 'k', collect: async () => ({ a: 2 }) })
+      expect((await collectFleetCounters(db, NOW)).extra).toEqual({ a: 2 })
+    })
   })
 
   it('is all zeros on an empty database', async () => {

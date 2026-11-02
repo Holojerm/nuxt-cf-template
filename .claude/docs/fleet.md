@@ -20,10 +20,12 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   signup sources, from `server/utils/fleet-funnel.ts`): `Authorization: Bearer …`, 404 when the token is unset, 401
   on a bad one (`requireFleetToken()`). `/api/health` stays public for dumb
   uptime checks. Both are allowlisted in `server/middleware/auth.ts` because
-  the session guard must not 401 them first. Add a fork-specific counter to `collectFleetCounters()`'s `extra`, not
-  a second endpoint. An optional feature's counter group (feedback's) is
-  contributed via `registerFleetCounterContributor()` in
-  `server/utils/extensions.ts`, and is absent when the feature is removed.
+  the session guard must not 401 them first. Never edit `collectFleetCounters()` to add a fork-specific counter, and don't add a second endpoint:
+  register a contributor from a Nitro plugin (the app's, or a fork-owned layer's) in
+  `server/utils/extensions.ts`. `registerFleetExtraContributor({ key, collect })` returns plain
+  numbers that are merged into `extra`, which is the shape the dashboard already renders;
+  `registerFleetCounterContributor()` adds a typed group beside `users` and `funnel`
+  (feedback's). With nothing registered the response is unchanged (`extra` stays `{}`).
 - **`app-owned.json`** (template root) lists the template paths every app owns by
   design: brand, home page and layout, generated email and colour output, the
   schema composition root, the seed and the fork's own event and lifecycle
@@ -44,6 +46,7 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   for every 5xx — and `server/tasks/ops/alert.ts` drains the spool into one
   digest email every 30 minutes via the `[[send_email]] ALERT_EMAIL` binding.
   Unconfigured = one `ops_alert_unconfigured` log line per tick and nothing
-  sent. Rows are marked notified only after the send resolves, so a mail
+  sent, but the retention sweep (`pruneOpsEvents()`) still runs, so the spool
+  cannot grow without bound. Rows are marked notified only after the send resolves, so a mail
   hiccup retries instead of losing the alert. Always `await` the record call:
   a 5xx is exactly the path that ends the request before a floated promise runs.
