@@ -68,10 +68,13 @@ watch(
       Skip to content
     </a>
 
-    <!-- Navigation -->
-    <header class="border-b border-default">
+    <!-- Navigation. Sticky so the nav stays one reach away on long pages.
+         Height comes from NuxtUI's --ui-header-height, which main.css also uses
+         for scroll-padding — anything else pinned below it should use
+         top-(--ui-header-height). z-40 sits under overlays and the skip link. -->
+    <header class="sticky top-0 z-40 border-b border-default bg-default/75 backdrop-blur">
       <UContainer>
-        <div class="flex h-16 items-center justify-between gap-4">
+        <div class="flex h-(--ui-header-height) items-center justify-between gap-4">
           <!-- The mark and the wordmark both come from BrandLogo, which is also
                what every generated icon is derived from (DESIGN.md › Brand mark).
                Redesign it there and the tab, the home screen, and the share
