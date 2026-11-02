@@ -1,0 +1,17 @@
+{
+  "$comment": "Template paths every app is expected to own. A sync never overwrites them, and fleet leaves them out of template drift. Add a path only when owning it is the design (brand, home page, generated output, the schema composition root), never to hide a customization: those go in the fork's fleet.json › template.customized. See .claude/docs/fleet.md.",
+  "paths": [
+    "app/app.config.ts",
+    "app/assets/css/main.css",
+    "app/components/Brand/Logo.vue",
+    "app/layouts/default.vue",
+    "app/pages/design-system.vue",
+    "app/pages/index.vue",
+    "scripts/seed.ts",
+    "server/db/schema.ts",
+    "server/emails/generated.ts",
+    "server/utils/lifecycle-app-steps.ts",
+    "shared/utils/app-events.ts",
+    "shared/utils/brand-colors.generated.ts"
+  ]
+}

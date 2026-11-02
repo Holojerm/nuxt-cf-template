@@ -56,6 +56,11 @@ doesn't exist are the owner's calls. Shipping the template's `/terms` and `/priv
 with no billing is worse than shipping nothing: a privacy policy naming a payment processor you
 don't use is inaccurate in a legally meaningful way.
 
+Never overwrite a path in the template's `app-owned.json`: the fork owns it by design. A path in
+the fork's `fleet.json` › `template.customized` is a declared divergence: port the template's
+change into it by hand, or say why not. Every other template-owned file should end the sync
+byte-identical to the template; fleet's drift view counts the ones that are not.
+
 ## Migrations: assume a collision
 
 Every fork has its own migration sequence. **Never copy a migration file from the template.**
