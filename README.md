@@ -321,29 +321,35 @@ See [`test/example.test.ts`](./test/example.test.ts) for the starter pattern. Co
 
 ### End-to-end (Playwright)
 
-`test/e2e/` covers the three flows the product exists for, in a real browser against a real (dev)
-server — the a11y and CSP suites only ever look at signed-out routes, so this is the only place
-`/dashboard` and `/account` get exercised at all:
+`test/e2e/` and each layer's `layers/<name>/test/e2e/` cover the flows the product exists for, in a
+real browser against a real (dev) server — the a11y and CSP suites only ever look at signed-out
+routes, so this is the only place `/dashboard` and `/account` get exercised at all. Core's specs
+need no optional layer; billing's money path lives in the billing layer, so a fork that does not
+vendor billing has none of it to delete:
 
 | Spec | Proves |
 | --- | --- |
-| [`sign-in-gated-page.spec.ts`](./test/e2e/sign-in-gated-page.spec.ts) | Signed-out → `/login?redirect=…`. Signed-in with no entitlement → `/pricing?from=…` with the gated alert on screen, and the session cookie the dev endpoint set is one `GET /api/_auth/session` actually accepts. |
-| [`purchase-access.spec.ts`](./test/e2e/purchase-access.spec.ts) | A one-time pass and a subscription each unlock `/dashboard` and flip `GET /api/billing/entitlement` to `active: true` with the right `kind`. |
-| [`cancel-lose-access.spec.ts`](./test/e2e/cancel-lose-access.spec.ts) | Cancelling a subscription revokes access (`/dashboard` → `/pricing`, `/account` shows the ended state). A `past_due` subscription routes to `/account` instead — the dunning alert, not a re-sell. |
+| [`sign-in-gated-page.spec.ts`](./test/e2e/sign-in-gated-page.spec.ts) | Signed-out → `/login?redirect=…`. |
+| [`sign-out-everywhere.spec.ts`](./test/e2e/sign-out-everywhere.spec.ts) | Revoking from one device signs the other out, and only the other. |
+| [`gated-without-plan.spec.ts`](./layers/billing/test/e2e/gated-without-plan.spec.ts) (billing) | Signed-in with no entitlement → `/pricing?from=…` with the gated alert on screen, and the session cookie the dev endpoint set is one `GET /api/_auth/session` actually accepts. |
+| [`purchase-access.spec.ts`](./layers/billing/test/e2e/purchase-access.spec.ts) (billing) | A one-time pass and a subscription each unlock `/dashboard` and flip `GET /api/billing/entitlement` to `active: true` with the right `kind`. |
+| [`cancel-lose-access.spec.ts`](./layers/billing/test/e2e/cancel-lose-access.spec.ts) (billing) | Cancelling a subscription revokes access (`/dashboard` → `/pricing`, `/account` shows the ended state). A `past_due` subscription routes to `/account` instead — the dunning alert, not a re-sell. |
 
 **State is driven through the server, not around it.** `bun seed`'s `bun:sqlite` writes are invisible
 to an already-running dev server (see .claude/docs/gotchas.md › "The dev server caches its DB
 connection"), so these specs sign in via
 `POST /api/auth/dev` — the same dev-only shortcut described under [Auth](#auth) — and then create or
 end entitlements by POSTing **signed Paddle webhooks** to `/paddle/webhook`, exactly as a real
-purchase or cancellation would arrive. `test/e2e/fixtures.ts` signs each one with the same HMAC
-construction `layers/billing/server/utils/paddle.ts` verifies; [`webhook-signing.spec.ts`](./test/e2e/webhook-signing.spec.ts)
+purchase or cancellation would arrive. `layers/billing/test/e2e/fixtures.ts` signs each one with the same HMAC
+construction `layers/billing/server/utils/paddle.ts` verifies; [`webhook-signing.spec.ts`](./layers/billing/test/e2e/webhook-signing.spec.ts)
 checks that mirror against the real verifier rather than trusting it by inspection. Every user is
 fresh and unique per run (`e2e-<run>-<case>@example.com`) — nothing here reads the rows `bun seed`
 writes, on purpose, since the whole point is proving the flow works starting from nothing.
 
-Runs as its own Playwright project (`e2e`, alongside `a11y` and `csp` in `playwright.config.ts`),
-sharing the one dev server the other two boot — `bun run test:a11y` runs all three.
+Runs as Playwright projects (`e2e` for core, one `e2e-<layer>` per layer that ships specs, alongside `a11y`
+and `csp` in `playwright.config.ts`), sharing the one dev server the others boot — `bun run test:a11y` runs
+all of them. A layer adds its server environment and warm-ups in `layers/<name>/test/e2e/e2e.config.ts`
+(see `test/e2e/layers.ts`).
 
 ---
 

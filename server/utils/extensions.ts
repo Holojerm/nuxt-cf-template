@@ -26,7 +26,7 @@ import { clearBillingOutcomeHandlersForTest } from './billing-outcome'
 import { clearEarnedAccessForTest } from './earned-access'
 import { clearEntitlementViewFieldsForTest } from './entitlement-view-fields'
 import { clearSignupContributorsForTest } from './signup-contributors'
-import type { LifecycleStep } from './lifecycle'
+import type { LifecycleStep } from '../types/extension-types'
 import type { PurgeOptions } from './purge'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
@@ -106,6 +106,17 @@ export interface FleetExtraContributor {
 }
 
 /**
+ * What deleteAccount() knows about the request, handed to every guard and
+ * resolver so the audit rows they write describe it the way the route's own
+ * rows do. Optional on both sides: a caller with no request (a test, a script)
+ * passes none, and a guard or resolver that ignores it keeps working.
+ */
+export interface DeletionContext {
+  /** Salted IP hash for an audit row (`auditIpHash(event)`); null when unknown. */
+  ipHash?: string | null
+}
+
+/**
  * Why an account may not be deleted right now. `code` and `data` reach the
  * client verbatim on a 409, so a UI can branch on them; `message` is the text
  * the person reads.
@@ -124,7 +135,11 @@ export interface DeletionBlock {
  */
 export interface DeletionGuard {
   key: string
-  check: (db: ExtensionDb, userId: string) => Promise<DeletionBlock | null>
+  check: (
+    db: ExtensionDb,
+    userId: string,
+    context?: DeletionContext,
+  ) => Promise<DeletionBlock | null>
 }
 
 /**
@@ -139,7 +154,11 @@ export interface DeletionGuard {
  */
 export interface DeletionResolver {
   key: string
-  resolve: (db: ExtensionDb, userId: string) => Promise<DeletionBlock | null>
+  resolve: (
+    db: ExtensionDb,
+    userId: string,
+    context?: DeletionContext,
+  ) => Promise<DeletionBlock | null>
 }
 
 /**

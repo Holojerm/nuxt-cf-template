@@ -161,7 +161,7 @@ Five rules that each cost real mail when they were broken:
   `ack()`/`retry()` runs inside `waitUntil` after the handler returned; the
   opposite flag would turn `retry()` into a silent no-op. Don't remove it.
 
-Billing emails are decided by `decideNotification()` on **status transitions**,
+Billing emails are decided by `layers/billing/server/utils/billing-notifications.ts` › `decideNotification` on **status transitions**,
 not on events: Paddle fires `subscription.updated` for trivial changes, and
 emailing per event trains people to filter you — taking the payment-failed email
 with it. Add a case to that function, not an ad-hoc send in a handler.

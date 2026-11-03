@@ -18,13 +18,29 @@
 // (server/utils/extensions.ts and its siblings). Tests are exempt: a test may
 // drive two layers together to pin how they fit. The app schema's re-export of
 // each layer's tables is the one composition root. In a fork only the vendored
-// layers are checked, since its own domain layers may use any of them.
+// layers are checked, since its own domain layers may use any of them, and core
+// may import them.
+//
+// Which repo is the template is decided by fleet.json › template.syncedSha
+// (null there, a commit in a fork), not by an empty lock: a fork that vendors
+// nothing but owns `layers/<domain>/` has an empty lock too. A fork whose
+// manifest still says null is judged as the template until its first sync
+// records a sha.
 
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 
-import { downloadRepo, hashLayer, LAYERS_DIR, LOCK_FILE, readLock, ROOT } from './lib/layers'
+import {
+  downloadRepo,
+  hashLayer,
+  isTemplateRepo,
+  LAYERS_DIR,
+  LOCK_FILE,
+  readLock,
+  ROOT,
+  TEMPLATE_LAYERS,
+} from './lib/layers'
 
 const REMEDY =
   'Layers meet at core seams, never by importing each other (docs: .claude/docs/patterns.md, "Other seams"). Vendored layers are not edited in place. Shadow the component, page or route from the app, use an extension point (server/utils/extensions.ts), or change it in the template and run `bun run layers:pull <name>`.'
@@ -81,10 +97,22 @@ function importsOf(file: string): string[] {
   ].map((m) => m[1]!)
 }
 
-const templateMode = names.length === 0
+const templateMode = isTemplateRepo()
 const layerNames = templateMode
   ? readdirSync(LAYERS_DIR).filter((d) => statSync(join(LAYERS_DIR, d)).isDirectory())
   : names
+if (templateMode) {
+  // scripts/lib/layers.ts › TEMPLATE_LAYERS is what a fork's reference gate
+  // treats as "a layer the template has, which this fork left out".
+  const missing = layerNames.filter((name) => !TEMPLATE_LAYERS.includes(name))
+  const stale = TEMPLATE_LAYERS.filter((name) => !layerNames.includes(name))
+  for (const name of missing)
+    problems.push(`layers/${name} is not in TEMPLATE_LAYERS (scripts/lib/layers.ts): add it`)
+  for (const name of stale)
+    problems.push(
+      `TEMPLATE_LAYERS (scripts/lib/layers.ts) names ${name}, but layers/${name} does not exist`,
+    )
+}
 for (const name of layerNames) {
   for (const file of sourceFiles(join(LAYERS_DIR, name))) {
     for (const specifier of importsOf(file)) {

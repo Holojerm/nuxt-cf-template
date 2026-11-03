@@ -20,6 +20,43 @@ export const LAYERS_DIR = join(ROOT, 'layers')
 export const LOCK_FILE = join(ROOT, 'layers.lock.json')
 export const DEFAULT_REPO = 'Holojerm/nuxt-cf-template'
 
+/**
+ * Every layer the template ships. A fork may vendor any subset, so a comment or
+ * doc of the template's that names `layers/<one of these>/...` is true in the
+ * template and merely points at a layer the fork left out in a fork. The
+ * reference gate reads this list to tell that apart from a typo.
+ * `layers:check` fails in the template if it drifts from `layers/` on disk.
+ */
+export const TEMPLATE_LAYERS: readonly string[] = [
+  'billing',
+  'feedback',
+  'files',
+  'referral',
+  'social',
+]
+
+/**
+ * Is this checkout the template itself (as opposed to a fork of it)?
+ *
+ * The signal is `fleet.json › template.syncedSha`: null in the template, which
+ * has no upstream, and the template commit a fork last synced to once it has
+ * one. An empty `layers.lock.json` is NOT the signal: a fork that vendors
+ * nothing but owns its own `layers/<domain>/` has an empty lock too, and
+ * treating it as the template made every import of its own layer a violation.
+ * Without a readable fleet.json the lock is the fallback, since a repo with no
+ * manifest has nothing else to go on.
+ */
+export function isTemplateRepo(root: string = ROOT): boolean {
+  try {
+    const manifest = JSON.parse(readFileSync(join(root, 'fleet.json'), 'utf8')) as {
+      template?: { syncedSha?: string | null } | null
+    }
+    return !manifest.template?.syncedSha
+  } catch {
+    return Object.keys(readLock().layers).length === 0
+  }
+}
+
 export interface LockedLayer {
   /** What was asked for (a branch, tag or sha), kept so a re-pull can follow it. */
   ref: string

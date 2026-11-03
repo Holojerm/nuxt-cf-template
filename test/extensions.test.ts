@@ -185,6 +185,43 @@ describe('deletion resolvers', () => {
     expect(ran).toEqual(['a'])
   })
 
+  it('hands the request context to every guard and resolver, and tolerates a caller with none', async () => {
+    const seen: unknown[] = []
+    registerDeletionGuard({
+      key: 'guard',
+      check: async (_db, _userId, context) => {
+        seen.push(context)
+        return null
+      },
+    })
+    registerDeletionResolver({
+      key: 'resolver',
+      resolve: async (_db, _userId, context) => {
+        seen.push(context)
+        return null
+      },
+    })
+    // An existing two-argument implementation keeps working: it just ignores it.
+    registerDeletionResolver({ key: 'legacy', resolve: async (_db, _userId) => null })
+
+    expect(await deleteAccount(db, USER, { ipHash: 'hashed-ip' })).toEqual({ outcome: 'deleted' })
+    expect(seen).toEqual([{ ipHash: 'hashed-ip' }, { ipHash: 'hashed-ip' }])
+  })
+
+  it('passes an empty context when the caller has no request', async () => {
+    let seen: unknown = 'unset'
+    registerDeletionResolver({
+      key: 'resolver',
+      resolve: async (_db, _userId, context) => {
+        seen = context
+        return null
+      },
+    })
+
+    await deleteAccount(db, USER)
+    expect(seen).toEqual({})
+  })
+
   it('is forgotten by clearExtensionsForTest', () => {
     registerDeletionResolver({ key: 'a', resolve: async () => null })
     clearExtensionsForTest()

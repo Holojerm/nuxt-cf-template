@@ -21,6 +21,18 @@
 // ALREADY been dead on main (`server/utils/onboarding.ts` cited reasoning
 // AGENTS.md gives for `user_signed_up`, which AGENTS.md never mentioned).
 //
+// ── Layers a fork left out ──────────────────────────────────────────────────
+// Template core is full of comments that point into a feature layer
+// (`layers/billing/server/utils/entitlements.ts`): true in the template, and a
+// pointer to a layer this fork chose not to vendor in a fork. Failing those made
+// every fork add `refs-check-ignore` to comments it does not own and cannot
+// usefully reword. So a path under `layers/<name>/` is satisfied when <name> is
+// a layer the TEMPLATE ships (scripts/lib/layers.ts › TEMPLATE_LAYERS) and
+// `layers/<name>/` does not exist here, and a `file › symbol` pointer into such
+// a path is dropped whole, since its symbol lives in code this repo never had.
+// Once the layer IS present nothing is excused: a renamed file inside it still
+// fails, and a typo (`layers/biling/…`) is not a template layer, so it fails.
+//
 // ── The rule, deliberately narrow ───────────────────────────────────────────
 // A reference fails only when it resolves to NOTHING IN THIS REPO. Not "is not
 // defined here" — `useFetch()` is a Nuxt auto-import and defined nowhere in
@@ -53,8 +65,10 @@
 // a correct comment, which is the one thing this gate must never do.
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
+
+import { TEMPLATE_LAYERS } from './layers'
 
 export interface Reference {
   file: string
@@ -192,11 +206,17 @@ function commentsOf(source: string): Array<[number, string]> {
  */
 const POINTER = /([^\s`(]+\.(?:ts|vue))`?\s*›\s*`?([A-Za-z_$][\w$]*(?:\(\))?)(?![\w$.])/g
 
-function pointersIn(text: string): Array<Pick<Reference, 'kind' | 'token'>> {
+function pointersIn(
+  text: string,
+  isOmitted: (file: string) => boolean = () => false,
+): Array<Pick<Reference, 'kind' | 'token'>> {
   const out: Array<Pick<Reference, 'kind' | 'token'>> = []
   for (const match of text.matchAll(POINTER)) {
     const file = (match[1] ?? '').trim()
     const symbol = (match[2] ?? '').trim()
+    // Names a file in a template layer this repo does not have: its symbol is
+    // not defined here either, and that is not a stale pointer.
+    if (isOmitted(file)) continue
     // Routed through classify() rather than trusted: it applies the same
     // placeholder and extension guards every other path reference gets, and it
     // drops bare `nuxt.config.ts` for the same reason a backticked one is
@@ -275,7 +295,8 @@ export function collectReferences(root: string): Reference[] {
       const kind = classify(token)
       if (kind) add(file, line, kind, token)
     }
-    for (const pointer of pointersIn(text)) add(file, line, pointer.kind, pointer.token)
+    const isOmitted = (target: string) => inOmittedTemplateLayer(root, file, target)
+    for (const pointer of pointersIn(text, isOmitted)) add(file, line, pointer.kind, pointer.token)
   }
 
   const vendored = vendoredLayerDirs(root)
@@ -456,6 +477,7 @@ export function findDeadReferences(root: string): DeadReference[] {
         resolve(root, ref.token.replace(/^\.\//, '').replace(/^\//, '')),
       ]
       if (candidates.some((path) => existsQuiet(path))) continue
+      if (inOmittedTemplateLayer(root, ref.file, ref.token)) continue
       // A leading-slash token is usually a URL this app SERVES, not a file it
       // contains: `/sitemap.xml` lives at server/routes/sitemap.xml.get.ts, and refs-check-ignore
       // `/api/onboarding` at server/api/onboarding.get.ts. Resolving those the
@@ -518,6 +540,26 @@ function servedRouteExists(root: string, route: string): boolean {
   return false
 }
 
+/**
+ * Does `token`, written in `fromFile`, point under `layers/<name>/` for a layer
+ * the template ships and this repo does not have? See "Layers a fork left out".
+ */
+function inOmittedTemplateLayer(root: string, fromFile: string, token: string): boolean {
+  const candidates = [
+    resolve(root, dirname(fromFile), token),
+    resolve(root, token.replace(/^\.\//, '').replace(/^\//, '')),
+  ]
+  return candidates.some((path) => {
+    const [first, name] = relative(root, path).split(/[\\/]/)
+    return (
+      first === 'layers' &&
+      !!name &&
+      TEMPLATE_LAYERS.includes(name) &&
+      !existsQuiet(join(root, 'layers', name))
+    )
+  })
+}
+
 function existsQuiet(path: string): boolean {
   try {
     statSync(path)
@@ -546,8 +588,11 @@ function declaredByADependency(root: string, name: string): boolean {
   const cached = dependencyCache.get(name)
   if (cached !== undefined) return cached
 
-  const modules = join(root, 'node_modules')
-  if (!existsSync(modules)) return true
+  const installed = join(root, 'node_modules')
+  if (!existsSync(installed)) return true
+  // grep -r does not follow a symlinked directory, so a checkout that links
+  // node_modules (scripts/check-forkless.ts does) would find nothing.
+  const modules = realpathSync(installed)
 
   const result = spawnSync(
     'grep',

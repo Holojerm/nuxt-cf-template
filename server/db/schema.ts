@@ -190,7 +190,7 @@ export const magicLinkTokens = sqliteTable(
     // Deliberately NOT a foreign key to `users.referral_code`, matching
     // `users.referred_by`: this is an unverified claim copied off a cookie, and
     // it is resolved to a real, live, other account at redemption
-    // (server/utils/users.ts › findReferrerByCode). A constraint here would let
+    // (layers/referral/server/utils/referral-codes.ts › findReferrerByCode). A constraint here would let
     // a junk cookie value fail somebody's sign-in.
     referralCode: text('referral_code'),
     // The canonical mailbox (server/utils/users.ts › canonicalizeEmailForLimiting)

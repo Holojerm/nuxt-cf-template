@@ -18,36 +18,19 @@
 // a threshold would mail every user the app has ever had.
 
 import { eq } from 'drizzle-orm'
-import type { drizzle } from 'drizzle-orm/d1'
 
 import type { OptionalNotificationEventType } from '#shared/utils/notifications'
 import { isMandatoryNotification } from '#shared/utils/notifications'
 import * as tables from '../db/schema'
-import type { Branding, EmailContent } from './email-templates'
+import type { Branding } from './email-templates'
+import type { LifecycleDb, LifecycleRecipient, LifecycleStep } from '../types/extension-types'
 import type { SendEmailOptions, SendEmailResult } from './email'
 import { isNotificationEnabled } from './notifications'
 import { isUndeliverableAddress } from './users'
 
-export type LifecycleDb = ReturnType<typeof drizzle<typeof tables>>
-
-export interface LifecycleRecipient {
-  userId: string
-  email: string
-  name: string
-  /** '' for once-per-account; otherwise what makes a repeat legitimate. */
-  subjectKey: string
-  /** Step-specific values `render` needs (a date, a count). */
-  data?: Record<string, string>
-}
-
-export interface LifecycleStep {
-  /** Stored in lifecycle_sends. Never rename: a renamed step re-sends to everyone. */
-  id: string
-  /** An optional preference, or a mandatory `billing.` / `account.` type. */
-  notification: OptionalNotificationEventType | `billing.${string}` | `account.${string}`
-  due(db: LifecycleDb, now: Date, limit: number): Promise<LifecycleRecipient[]>
-  render(brand: Branding, recipient: LifecycleRecipient): EmailContent
-}
+// The step shapes live in server/types/extension-types.ts so core's seams do not depend on
+// this file; re-exported so `import … from './lifecycle'` still works.
+export type { LifecycleDb, LifecycleRecipient, LifecycleStep }
 
 export interface LifecycleDeps {
   send: (opts: SendEmailOptions) => Promise<SendEmailResult>

@@ -18,18 +18,24 @@
 // share the single `webServer` below, because booting one dev server twice is
 // the slowest thing in `bun run ci`.
 //
-//   test/e2e/    the three flows the product exists for, end to end: sign in
-//               → gated page, buy → access, cancel → lose access. Unlike the
-//               two suites above, it writes real state — a signed-in session,
-//               real entitlement rows via signed Paddle webhooks — so it needs
-//               its own webhook secret on the shared server (see below) and a
-//               real user-per-scenario rather than a fixed route list.
+//   test/e2e/    the flows the product exists for, end to end. Unlike the two
+//               suites above, it writes real state — a signed-in session —
+//               so it needs a real user-per-scenario rather than a fixed
+//               route list. Core's specs are the sign-in ones; each optional
+//               layer's own specs live in layers/<name>/test/e2e/ and run as
+//               their own `e2e-<name>` project (billing: buy → access,
+//               cancel → lose access, with signed Paddle webhooks, so it
+//               adds its webhook secret to the shared server below).
 
 import { defineConfig, devices } from '@playwright/test'
 
 import { playwrightPort } from './scripts/worktree-port'
-import { E2E_PADDLE_PRICES } from './test/e2e/paddle-prices'
-import { PADDLE_TEST_WEBHOOK_SECRET } from './test/e2e/webhook-secret'
+import { discoverLayerE2e } from './test/e2e/layers'
+
+// Layers that ship browser specs of their own (billing's money path) contribute
+// a project, server environment and warm-ups from layers/<name>/test/e2e/. A repo
+// without the layer has none of it. See test/e2e/layers.ts.
+const layerE2e = await discoverLayerE2e(import.meta.dirname)
 
 // Derived from the checkout path rather than fixed at 3000, so parallel git
 // worktrees each get their own server. See scripts/worktree-port.ts for why a
@@ -56,16 +62,25 @@ export default defineConfig({
   // to give. `globalSetup` absorbs the cold build once instead.
   fullyParallel: true,
   // Runs after `webServer` (Playwright starts that as a plugin, and plugin
-  // setup precedes globalSetup), so the server is reachable by then. Two
-  // independent warm-ups, run in order: the client bundle (a real page,
-  // test/warmup/) first, then the two API routes test/e2e/fixtures.ts races
-  // a signature clock against (test/e2e/global-setup.ts) — unrelated
-  // concerns, same array rather than one file doing two things.
-  globalSetup: ['./test/warmup/global-setup.ts', './test/e2e/global-setup.ts'],
-  // Pairs with the second globalSetup entry above: sweeps the e2e-* rows
-  // that entry (and every E2E spec) writes to the local dev DB, so `bun run
-  // ci` doesn't grow .data/db/sqlite.db forever. See that file for why.
-  globalTeardown: './test/e2e/global-teardown.ts',
+  // setup precedes globalSetup), so the server is reachable by then. Independent
+  // warm-ups, run in order: the client bundle (a real page, test/warmup/) first,
+  // then the sign-in route every signed-in spec calls first
+  // (test/e2e/global-setup.ts), then whatever each layer needs warm (billing's
+  // webhook) — unrelated concerns, same array rather than one file doing
+  // several things.
+  globalSetup: [
+    './test/warmup/global-setup.ts',
+    './test/e2e/global-setup.ts',
+    ...layerE2e.flatMap((layer) => layer.globalSetup),
+  ],
+  // Pairs with the e2e globalSetup entries above: sweeps the e2e-* rows they
+  // (and every E2E spec) write to the local dev DB, so `bun run ci` doesn't
+  // grow .data/db/sqlite.db forever. Layers go first, so rows that point at a
+  // user are gone before the user is. See test/e2e/global-teardown.ts.
+  globalTeardown: [
+    ...layerE2e.flatMap((layer) => layer.globalTeardown),
+    './test/e2e/global-teardown.ts',
+  ],
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
 
@@ -84,6 +99,11 @@ export default defineConfig({
     { name: 'a11y', testDir: './test/a11y', use: { ...devices['Desktop Chrome'] } },
     { name: 'csp', testDir: './test/csp', use: { ...devices['Desktop Chrome'] } },
     { name: 'e2e', testDir: './test/e2e', use: { ...devices['Desktop Chrome'] } },
+    ...layerE2e.map((layer) => ({
+      name: `e2e-${layer.name}`,
+      testDir: layer.dir,
+      use: { ...devices['Desktop Chrome'] },
+    })),
   ],
 
   webServer: {
@@ -110,23 +130,16 @@ export default defineConfig({
     // NUXT_TYPECHECK=false keeps vue-tsc off the critical path; `bun run ci`
     // has already typechecked before this suite runs. NUXT_PORT is what makes
     // `nuxt dev` listen on the derived port instead of its own default 3000.
-    // NUXT_PADDLE_WEBHOOK_SECRET only matters to the `e2e` project — a11y and
-    // csp never call the webhook — but it has to be set here, on the ONE
-    // server all three projects share, rather than per-project: Playwright
-    // has one `webServer` per config, not one per project. test/e2e/fixtures.ts
-    // signs every event with the same constant (see test/e2e/webhook-secret.ts
-    // for why it's imported rather than retyped).
+    // A layer's own variables (billing's webhook secret and price ids) come from
+    // its e2e.config.ts. They only matter to that layer's project — a11y and csp
+    // never call the webhook — but they have to be set here, on the ONE server
+    // all the projects share, rather than per-project: Playwright has one
+    // `webServer` per config, not one per project.
     env: {
       NUXT_DEVTOOLS: 'false',
       NUXT_TYPECHECK: 'false',
       NUXT_PORT: String(PORT),
-      NUXT_PADDLE_WEBHOOK_SECRET: PADDLE_TEST_WEBHOOK_SECRET,
-      // The webhook grants only for a configured price, so the ids the
-      // fixtures stamp on their events must be the ones this server knows.
-      // No client token is set, so /pricing stays disabled — a11y and csp see
-      // the same page they always did.
-      NUXT_PUBLIC_PADDLE_PRICE_MONTHLY: E2E_PADDLE_PRICES.monthly,
-      NUXT_PUBLIC_PADDLE_PRICE_PASS: E2E_PADDLE_PRICES.pass,
+      ...Object.assign({}, ...layerE2e.map((layer) => layer.env)),
     },
   },
 })

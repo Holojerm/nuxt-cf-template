@@ -155,6 +155,23 @@ describe('option on: cancel, then delete', () => {
     })
   })
 
+  it('writes the request’s ip hash on the cancel audit row, and none without a request', async () => {
+    const cancelRow = () =>
+      db.query.auditLog.findFirst({
+        where: eq(schema.auditLog.action, 'account.subscription_cancel_requested'),
+      })
+
+    await entitle('sub_ip')
+    await deleteAccount(db, USER, { ipHash: 'salted-ip-hash' })
+    expect((await cancelRow())?.ipHash).toBe('salted-ip-hash')
+
+    await db.delete(schema.auditLog)
+    await db.update(schema.users).set({ email: 'cancel@example.com' })
+    await db.update(schema.entitlements).set({ status: 'active' })
+    await deleteAccount(db, USER)
+    expect((await cancelRow())?.ipHash).toBeNull()
+  })
+
   it('cancels every live subscription, across product keys, and only the live ones', async () => {
     await entitle('sub_a')
     await entitle('sub_b', 'trialing', { productKey: 'addon' })

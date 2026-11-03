@@ -33,7 +33,7 @@ import {
   getDeletionGuards,
   getDeletionResolvers,
 } from './extensions'
-import type { AccountExportSections } from './extensions'
+import type { AccountExportSections, DeletionContext } from './extensions'
 import { OPTIONAL_NOTIFICATION_EVENT_TYPES } from '#shared/utils/notifications'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
@@ -96,19 +96,23 @@ export type DeleteAccountOutcome =
  * metadata, and the actual deletes run inside withAudit()'s callback, so a
  * failed audit write blocks the destruction entirely rather than following it.
  */
-export async function deleteAccount(db: AccountDb, userId: string): Promise<DeleteAccountOutcome> {
+export async function deleteAccount(
+  db: AccountDb,
+  userId: string,
+  context: DeletionContext = {},
+): Promise<DeleteAccountOutcome> {
   const user = await db.query.users.findFirst({ where: eq(tables.users.id, userId) })
   if (!user) return { outcome: 'not_found' }
 
   for (const guard of getDeletionGuards()) {
-    const block = await guard.check(db, userId)
+    const block = await guard.check(db, userId, context)
     if (block) return { outcome: 'blocked', ...block, data: block.data ?? {} }
   }
 
   // Only once nothing refuses: a resolver may act (billing cancels the
   // subscription at Paddle), and must not run for a request a guard turns away.
   for (const resolver of getDeletionResolvers()) {
-    const block = await resolver.resolve(db, userId)
+    const block = await resolver.resolve(db, userId, context)
     if (block) return { outcome: 'blocked', ...block, data: block.data ?? {} }
   }
 

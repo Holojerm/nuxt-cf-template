@@ -14,6 +14,8 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Result } from 'axe-core'
 import { expect, test } from '@playwright/test'
 
+import { hasLayer } from '../lib/layers'
+
 // Public routes only. /dashboard and /account redirect to /login when signed
 // out, so scanning them here would just scan /login a second time; they need a
 // session fixture to be worth anything.
@@ -36,7 +38,8 @@ import { expect, test } from '@playwright/test'
 // email, by people who are not signed in and may never have been.
 const ROUTES = [
   '/',
-  '/pricing',
+  // billing's page: a repo without that layer has no /pricing to scan.
+  ...(hasLayer('billing') ? ['/pricing'] : []),
   '/blog',
   // One post stands in for all of them — see BLOG_POST_PREFIX below. This one
   // is chosen because it exercises the most rendered markdown: h2s, lists,
