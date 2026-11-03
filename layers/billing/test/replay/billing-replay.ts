@@ -32,6 +32,8 @@
 //                             cancels live subscriptions first. The dump gains `paddleApi`,
 //                             the calls the stub saw. Without the flag the output is exactly
 //                             that of a build without the option.
+//           --no-referral  leave the referral loop out (a fork whose `users` table has no
+//                             referral columns, or that never took the referral code)
 //           --shared-account  run as an app that shares its Paddle account: sets
 //                             NUXT_PADDLE_PRODUCT_ID and turns the unmatched-refund
 //                             alert off (NUXT_BILLING_ALERT_UNMATCHED_ADJUSTMENTS=false)
@@ -45,9 +47,12 @@ import { defaults, seal } from 'iron-webcrypto'
 
 import {
   CANCEL_USERS,
+  MAGIC_LINK_SIGNUPS,
   PRICE_MONTHLY,
   PRICE_PASS,
   PRODUCT_OWN,
+  REFERRAL_CODE,
+  REFERRAL_USERS,
   REPLAY_SECRET,
   STUB_ANSWERS,
   USERS,
@@ -67,6 +72,7 @@ const flagAll = (name: string) =>
   args.flatMap((a, i) => (a === name && args[i + 1] ? [args[i + 1]!] : []))
 
 const cancelOnDeletion = args.includes('--cancel-on-deletion')
+const referral = !args.includes('--no-referral')
 const root = resolve(flag('--root') ?? process.cwd())
 const out = flag('--out')
 const port = Number(flag('--port') ?? 8799)
@@ -129,6 +135,30 @@ const dbFile = findDb()
     db.query(
       'insert into users (id, email, name, role, created_at, updated_at) values (?, ?, ?, ?, ?, ?)',
     ).run(u.id, u.email, u.name, u.role, now, now)
+  }
+  if (referral) {
+    for (const u of Object.values(REFERRAL_USERS)) {
+      db.query(
+        'insert into users (id, email, name, role, referral_code, referred_by, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(u.id, u.email, u.name, u.role, u.referralCode, u.referredBy, now, now)
+    }
+    // The sign-in links the invited people will redeem. Only the hash is ever
+    // stored by the app; the replay holds the plaintext, as the email would.
+    for (const link of Object.values(MAGIC_LINK_SIGNUPS)) {
+      const hash = new Bun.CryptoHasher('sha256').update(link.token).digest('hex')
+      db.query(
+        'insert into magic_link_tokens (id, email, mailbox, token_hash, expires_at, referral_code, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(
+        crypto.randomUUID(),
+        link.email,
+        link.email,
+        hash,
+        now + 3600,
+        link.referralCode,
+        now,
+        now,
+      )
+    }
   }
   db.close()
 }
@@ -230,9 +260,12 @@ async function waitReady() {
 }
 
 // ── 3. Sessions: sealed exactly the way h3/nuxt-auth-utils seal them ─────────
-async function sessionCookie(
-  user: (typeof USERS)[keyof typeof USERS] | (typeof CANCEL_USERS)[keyof typeof CANCEL_USERS],
-): Promise<string> {
+async function sessionCookie(user: {
+  id: string
+  email: string
+  name: string
+  role: string
+}): Promise<string> {
   const session = {
     id: crypto.randomUUID(),
     createdAt: Date.now(),
@@ -285,7 +318,23 @@ function scrub(value: unknown): unknown {
   }
   if (typeof value === 'string' && wallClock(value)) return '<now>'
   if (typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(value)) return '<uuid>'
+  // Inside a longer string (audit metadata is JSON text): ids and the salted
+  // mailbox hash in a welcome ref are minted per run.
+  if (typeof value === 'string') {
+    return value
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<uuid>')
+      .replace(/welcome_[0-9a-f]{16,}/g, 'welcome_<hash>')
+  }
   return value
+}
+
+// A code minted at sign-in is random; the ones the fixtures hold are not.
+const FIXED_CODES = new Set([
+  REFERRAL_CODE,
+  ...Object.values(REFERRAL_USERS).map((u) => u.referralCode),
+])
+function mintedCode(code: unknown): unknown {
+  return typeof code === 'string' && !FIXED_CODES.has(code) ? '<minted>' : code
 }
 
 // Object key order is not part of any wire contract here (JSON consumers read
@@ -304,6 +353,13 @@ function sortKeys(value: unknown): unknown {
 
 function normaliseBody(path: string, body: unknown): unknown {
   const clone = scrub(body) as Record<string, unknown> | unknown[] | string
+  if (path === '/api/referral/me' && clone && typeof clone === 'object' && 'code' in clone) {
+    const me = clone as Record<string, unknown>
+    if (mintedCode(me.code) === '<minted>') {
+      me.code = '<minted>'
+      me.shareUrl = String(me.shareUrl).replace(/\?ref=.*$/, '?ref=<minted>')
+    }
+  }
   const sortBy = (rows: unknown, key: string) =>
     Array.isArray(rows)
       ? [...rows].sort((a, b) => String((a as never)[key]).localeCompare(String((b as never)[key])))
@@ -354,13 +410,21 @@ interface StepResult {
   body?: unknown
 }
 
-const cookies: Record<UserKey, string> = {
+const cookies: Partial<Record<UserKey, string>> = {
   buyer: await sessionCookie(USERS.buyer),
   live: await sessionCookie(USERS.live),
   free: await sessionCookie(USERS.free),
   admin: await sessionCookie(USERS.admin),
   blocked: await sessionCookie(CANCEL_USERS.blocked),
   settled: await sessionCookie(CANCEL_USERS.settled),
+  ...(referral
+    ? {
+        referrer: await sessionCookie(REFERRAL_USERS.referrer),
+        refereePass: await sessionCookie(REFERRAL_USERS.refereePass),
+        refereeSub: await sessionCookie(REFERRAL_USERS.refereeSub),
+        twin: await sessionCookie(REFERRAL_USERS.twin),
+      }
+    : {}),
 }
 
 async function run(step: Step): Promise<StepResult> {
@@ -375,13 +439,18 @@ async function run(step: Step): Promise<StepResult> {
   const req = step as RequestStep
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   if (req.as === 'fleet') headers.authorization = `Bearer ${FLEET_TOKEN}`
-  else if (req.as !== 'anonymous') headers.cookie = cookies[req.as]
+  else if (req.as !== 'anonymous') headers.cookie = cookies[req.as] ?? ''
   const res = await fetch(`${base}${req.path}`, {
     method: req.method,
     headers,
     body: req.json === undefined ? undefined : JSON.stringify(req.json),
     redirect: 'manual',
   })
+  if (req.capture) {
+    // The session this sign-in just issued, kept so later steps can be that person.
+    const session = res.headers.getSetCookie().find((c) => c.startsWith('nuxt-session='))
+    if (session) cookies[req.capture] = session.split(';')[0]!
+  }
   const location = res.headers.get('location') ?? undefined
   return {
     step: req.name,
@@ -440,7 +509,11 @@ function dumpTables() {
     audit_log: rows(
       'select action, actor_type, target_type, target_id, metadata from audit_log order by action, target_id',
     ),
-    users: rows('select id, email, role from users order by id'),
+    users: referral
+      ? rows('select id, email, role, referral_code, referred_by from users order by email').map(
+          (r) => ({ ...r, referral_code: mintedCode(r.referral_code) }),
+        )
+      : rows('select id, email, role from users order by email'),
   }
   db.close()
   return dump
@@ -449,7 +522,7 @@ function dumpTables() {
 try {
   await waitReady()
   const results: StepResult[] = []
-  for (const step of buildSteps({ cancelOnDeletion })) results.push(await run(step))
+  for (const step of buildSteps({ cancelOnDeletion, referral })) results.push(await run(step))
   if (process.env.REPLAY_HOLD) {
     // Debugging aid: leave the Worker up until the named file is deleted.
     writeFileSync(process.env.REPLAY_HOLD, `${cookies.live}\n`)

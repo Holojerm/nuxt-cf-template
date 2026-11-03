@@ -22,6 +22,10 @@ import type { SQLWrapper } from 'drizzle-orm'
 import type * as tables from '../db/schema'
 import type { OnboardingInputs } from '#shared/utils/onboarding'
 import { clearAccessGateForTest } from './access-gate'
+import { clearBillingOutcomeHandlersForTest } from './billing-outcome'
+import { clearEarnedAccessForTest } from './earned-access'
+import { clearEntitlementViewFieldsForTest } from './entitlement-view-fields'
+import { clearSignupContributorsForTest } from './signup-contributors'
 import type { LifecycleStep } from './lifecycle'
 import type { PurgeOptions } from './purge'
 
@@ -318,4 +322,8 @@ export function clearExtensionsForTest(): void {
   funnelStageContributors.clear()
   lifecycleSteps.clear()
   clearAccessGateForTest()
+  clearBillingOutcomeHandlersForTest()
+  clearEarnedAccessForTest()
+  clearEntitlementViewFieldsForTest()
+  clearSignupContributorsForTest()
 }

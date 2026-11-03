@@ -22,17 +22,20 @@ import { paddleSubscriptionEvent } from '#shared/utils/analytics-events'
 import { registerBillingExtensions } from '../server/utils/billing-extensions'
 import {
   clearBillingOutcomeHandlersForTest,
-  isUnknownUserExpected,
   registerBillingOutcomeHandler,
-  registerUnknownUserExpectation,
   runBillingOutcomeHandlers,
-} from '../server/utils/billing-outcome'
+} from '~~/server/utils/billing-outcome'
+import {
+  clearUnknownUserExpectationsForTest,
+  isUnknownUserExpected,
+  registerUnknownUserExpectation,
+} from '../server/utils/billing-expectations'
 import {
   adjustmentMatchedNothing,
   applyPaddleEvent,
   paddleEventSchema,
 } from '../server/utils/entitlements'
-import { clearEntitlementViewFieldsForTest } from '../server/utils/entitlement-view-fields'
+import { clearEntitlementViewFieldsForTest } from '~~/server/utils/entitlement-view-fields'
 import { verifyPaddleSignature } from '../server/utils/paddle'
 import { isForeignProduct, paddlePriceCatalogue } from '../server/utils/paddle-prices'
 
@@ -104,6 +107,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   clearBillingOutcomeHandlersForTest()
+  clearUnknownUserExpectationsForTest()
   clearExtensionsForTest()
   clearEntitlementViewFieldsForTest()
   vi.unstubAllGlobals()

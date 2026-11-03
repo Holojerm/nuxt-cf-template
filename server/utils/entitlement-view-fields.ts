@@ -6,7 +6,7 @@
 // more field on GET /api/billing/entitlement, on the admin views, or on each
 // history row registers it here instead:
 //
-//   declare module '#layers/billing/server/utils/entitlement-view-fields' {
+//   declare module '#server/utils/entitlement-view-fields' {
 //     interface EntitlementHistoryFields { referralKind: 'welcome' | 'reward' | null }
 //   }
 //   registerEntitlementViewFields({
@@ -15,6 +15,14 @@
 //   })
 //
 // The augmentation types the field all the way to the page that reads it.
+//
+// ── Why this is core's file, not billing's ───────────────────────────────────
+// The referral loop adds fields to this view and must not import the billing
+// layer to do it. The registry therefore lives here, typed against the one fact
+// a contributor can always rely on (the ref in `paddleSubscriptionId`); the
+// billing layer widens `EntitlementViewRow` and the context with its own types
+// by augmentation (layers/billing/server/utils/entitlement-view.ts), which is
+// how billing's own code and tests see the full row and the overview.
 //
 // ── Rules ────────────────────────────────────────────────────────────────────
 // - Registered from a Nitro plugin, like every other seam; tests call it directly.
@@ -29,8 +37,7 @@
 //   an optional field must not take them down.
 // - `history` is a pure function of the row. `view` may read, never write.
 
-import type { Entitlement } from '../db/schema'
-import type { EntitlementDb, BillingOverview } from './entitlements'
+import type { ExtensionDb } from './extensions'
 
 /** Fields added to the top level of the view. Augment with `declare module`. */
 export interface EntitlementViewFields {}
@@ -38,13 +45,20 @@ export interface EntitlementViewFields {}
 /** Fields added to every `history[]` row. Augment with `declare module`. */
 export interface EntitlementHistoryFields {}
 
+/**
+ * One entitlement row, as far as a contributor may depend on it. The billing
+ * layer augments this with the whole row.
+ */
+export interface EntitlementViewRow {
+  /** The ref: `sub_…`, `txn_…`, `comp_…`, or a derived grant's own prefix. */
+  paddleSubscriptionId: string
+}
+
 export interface EntitlementViewFieldsContext {
-  db: EntitlementDb
+  db: ExtensionDb
   userId: string
-  /** The overview the view is built from (one query, shared). */
-  overview: BillingOverview
   /** The row that describes the plan: a live subscription, else the access row, else null. */
-  describing: Entitlement | null
+  describing: EntitlementViewRow | null
 }
 
 export interface EntitlementViewFieldsContributor {
@@ -54,7 +68,7 @@ export interface EntitlementViewFieldsContributor {
     context: EntitlementViewFieldsContext,
   ) => Partial<EntitlementViewFields> | Promise<Partial<EntitlementViewFields>>
   /** Extra fields for one history row. */
-  history?: (entitlement: Entitlement) => Partial<EntitlementHistoryFields>
+  history?: (entitlement: EntitlementViewRow) => Partial<EntitlementHistoryFields>
 }
 
 // Keyed, so a plugin and a test (or a dev reload) registering the same
@@ -115,7 +129,7 @@ export async function applyEntitlementViewFields<T extends object>(
 /** As `applyEntitlementViewFields`, for one history row. */
 export function applyEntitlementHistoryFields<T extends object>(
   row: T,
-  entitlement: Entitlement,
+  entitlement: EntitlementViewRow,
 ): T & EntitlementHistoryFields {
   if (contributors.size === 0) return row as T & EntitlementHistoryFields
   const base = new Set(Object.keys(row))

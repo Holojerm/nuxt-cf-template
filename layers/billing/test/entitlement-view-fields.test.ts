@@ -10,9 +10,9 @@ import { buildEntitlementView } from '../server/utils/entitlement-view'
 import {
   clearEntitlementViewFieldsForTest,
   registerEntitlementViewFields,
-} from '../server/utils/entitlement-view-fields'
+} from '~~/server/utils/entitlement-view-fields'
 
-declare module '../server/utils/entitlement-view-fields' {
+declare module '~~/server/utils/entitlement-view-fields' {
   interface EntitlementViewFields {
     seamTestPlan?: string
   }
@@ -65,7 +65,6 @@ describe('entitlement view fields', () => {
       'currentPeriodEnd',
       'kind',
       'comped',
-      'referralKind',
       'cancelsAt',
       'cancellable',
       'portalAvailable',
@@ -76,7 +75,6 @@ describe('entitlement view fields', () => {
         'ref',
         'kind',
         'comped',
-        'referral',
         'status',
         'currentPeriodEnd',
         'purchasedAt',

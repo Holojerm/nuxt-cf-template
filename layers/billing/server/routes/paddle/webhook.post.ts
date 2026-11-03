@@ -13,8 +13,8 @@
 // This handler only authenticates, parses, and reports. What the event DOES to
 // entitlements lives in ../../utils/entitlements.ts (applyPaddleEvent), which
 // the workerd test suite drives directly. Anything else that should follow money
-// arriving (the referral reward) registers a handler in
-// ../../utils/billing-outcome.ts instead of being called from here.
+// arriving (the referral reward) registers a handler in core's
+// server/utils/billing-outcome.ts instead of being called from here.
 //
 // ── What raises an ops alert ─────────────────────────────────────────────────
 // Every way this endpoint can drop or fail to apply a delivery that Paddle
@@ -102,8 +102,9 @@ export default defineEventHandler(async (event) => {
   })
 
   // Whatever else cares what the event did: the referral reward and its
-  // clawback paperwork are the shipped handlers (server/plugins/referral.ts in
-  // core). Awaited, in registration order, and never throwing, for the same
+  // clawback paperwork are the shipped handlers (server/plugins/referral.ts).
+  // Core's registry (server/utils/billing-outcome.ts), so no feature imports
+  // billing and billing imports none. Awaited, in registration order, and never throwing, for the same
   // reason as the email above.
   await runBillingOutcomeHandlers({ db, event: paddleEvent, outcome })
 

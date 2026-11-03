@@ -12,15 +12,16 @@
 //     for a bespoke page. Both are client files, so an app copy wins over this one;
 //   - the Paddle hosts in its Content-Security-Policy (nuxt.config.ts › CSP);
 //   - entitlement-grant rules beyond the shipped ones, through
-//     registerBillingOutcomeHandler() (server/utils/billing-outcome.ts).
+//     registerBillingOutcomeHandler() (core's server/utils/billing-outcome.ts).
 // A layer's server/utils export always wins over an app file at the same path
 // and cannot be shadowed: a fork whose own util collides (a `billing.ts`, an
 // `entitlements.ts`) must rename it before vendoring this layer.
 //
 // Expects core's server utils (extensions, access-gate, lifecycle, purge, ops,
-// posthog, email), the `users` table and `db`, and the auth session. Referral
-// stays in core and registers itself as an outcome handler. Auto-registered
-// because it lives under layers/.
+// posthog, email), the `users` table and `db`, and the auth session. The
+// referral loop (an app's own feature, or a layer) reacts to money through
+// core's outcome-handler, view-field and earned-access seams and never imports
+// this layer. Auto-registered because it lives under layers/.
 //
 // ── Every key below is a deployed env var name ─────────────────────────────
 // Nuxt only applies NUXT_* overrides to keys declared in runtimeConfig, so these

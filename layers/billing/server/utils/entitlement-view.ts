@@ -9,39 +9,39 @@
 //
 // One function, two callers, no drift by construction.
 
-import { isCompRef, isPass, isReferralRef, isSubscriptionRef, referralRefKind } from './paddle-refs'
+import { isCompRef, isPass, isSubscriptionRef } from './paddle-refs'
 import { deriveBillingState } from './billing-state'
 import type { BillingState } from './billing-state'
 import { ACTIVE_STATUSES, getBillingOverview } from './entitlements'
-import type { EntitlementDb } from './entitlements'
+import type { BillingOverview, EntitlementDb } from './entitlements'
+import type { Entitlement } from '../db/schema'
 import {
   applyEntitlementHistoryFields,
   applyEntitlementViewFields,
-} from './entitlement-view-fields'
-import type { EntitlementHistoryFields, EntitlementViewFields } from './entitlement-view-fields'
+} from '#server/utils/entitlement-view-fields'
+import type {
+  EntitlementHistoryFields,
+  EntitlementViewFields,
+} from '#server/utils/entitlement-view-fields'
+
+// Core's field registry knows an entitlement only by its ref. Here the row is
+// the whole row, and the context carries the overview the view is built from
+// (one query, shared), so a contributor written in this layer is fully typed.
+declare module '#server/utils/entitlement-view-fields' {
+  interface EntitlementViewRow extends Entitlement {}
+  interface EntitlementViewFieldsContext {
+    overview: BillingOverview
+  }
+}
 
 // The fields this util builds itself. The exported EntitlementHistoryView /
-// EntitlementView add whatever an app registered (entitlement-view-fields.ts),
+// EntitlementView add whatever an app registered (server/utils/entitlement-view-fields.ts),
 // so a registered field is typed all the way to the page that reads it.
 interface EntitlementHistoryBase {
   ref: string
   kind: 'pass' | 'subscription'
   /** True when this row was comped by an admin rather than paid for. */
   comped: boolean
-  /**
-   * True when the referral loop granted this row — either side of it.
-   *
-   * A sibling of `comped` rather than a widening of it, because they are
-   * different facts with different consequences: a comp is revocable from the
-   * admin console (revokeCompPass refuses anything else), a referral grant is
-   * not. Collapsing them into one "free" flag would put a revoke button on a
-   * row the server will always refuse to revoke.
-   *
-   * Unlabelled, these rows read as purchases in billing history, which starts a
-   * support conversation about a charge that never happened — the same problem
-   * `comped` exists to solve.
-   */
-  referral: boolean
   status: string
   currentPeriodEnd: string | null
   purchasedAt: string
@@ -64,17 +64,6 @@ interface EntitlementViewBase {
   /** 'pass' = one-time, nothing to cancel; 'subscription' = renewing. */
   kind: 'pass' | 'subscription' | null
   comped: boolean
-  /**
-   * Which side of the referral loop the DESCRIBING row came from, or null.
-   *
-   * Without it /account told somebody whose only access was a welcome grant
-   * "You have a one-time pass. It will not renew." — technically the shape of
-   * the row and completely wrong about where it came from, to a person who had
-   * just signed up through a friend's link and bought nothing. Two values
-   * rather than a boolean because the two sides need different sentences; see
-   * referralRefKind().
-   */
-  referralKind: 'welcome' | 'reward' | null
   /**
    * When an already-requested cancellation takes effect, ISO, or null.
    *
@@ -150,7 +139,6 @@ export async function buildEntitlementView(
     currentPeriodEnd: describing?.currentPeriodEnd?.toISOString() ?? null,
     kind: describing ? (isPass(describing.paddleSubscriptionId) ? 'pass' : 'subscription') : null,
     comped: describing ? isCompRef(describing.paddleSubscriptionId) : false,
-    referralKind: describing ? referralRefKind(describing.paddleSubscriptionId) : null,
     cancelsAt:
       describing?.scheduledChangeAction === 'cancel'
         ? (describing.scheduledChangeAt?.toISOString() ?? null)
@@ -163,7 +151,6 @@ export async function buildEntitlementView(
           ref: entitlement.paddleSubscriptionId,
           kind: isPass(entitlement.paddleSubscriptionId) ? 'pass' : 'subscription',
           comped: isCompRef(entitlement.paddleSubscriptionId),
-          referral: isReferralRef(entitlement.paddleSubscriptionId),
           status: entitlement.status,
           currentPeriodEnd: entitlement.currentPeriodEnd?.toISOString() ?? null,
           purchasedAt: entitlement.createdAt.toISOString(),
@@ -173,7 +160,7 @@ export async function buildEntitlementView(
     ),
   }
 
-  // Fields an app or another feature registered (entitlement-view-fields.ts).
+  // Fields an app or another feature registered (server/utils/entitlement-view-fields.ts).
   // Nothing registered: `view` comes back untouched.
   return applyEntitlementViewFields(view, { db, userId, overview, describing })
 }

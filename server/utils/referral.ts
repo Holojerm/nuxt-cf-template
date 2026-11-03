@@ -53,16 +53,16 @@
 // Step 4 gets the same treatment from the other side. A signup costs one fresh
 // mailbox, so the welcome ref is keyed on the MAILBOX rather than the account
 // id — otherwise deleting and re-registering the same address refills the trial
-// forever (layers/billing/server/utils/paddle-refs.ts › referralWelcomeRef).
+// forever (server/utils/referral-refs.ts › referralWelcomeRef).
 //
 // ── Idempotency is structural, not a flag ────────────────────────────────────
 // There is no ledger table and no "already paid?" column, because both would
 // need a read-then-write that a webhook redelivery can race. Instead each grant
-// derives a DETERMINISTIC ref (layers/billing/server/utils/paddle-refs.ts) from the account it
+// derives a DETERMINISTIC ref (server/utils/referral-refs.ts) from the account it
 // concerns, and the unique index on `entitlements.paddle_subscription_id`
 // refuses the second one. Five redeliveries compute one ref and write one row.
 
-import { and, count, eq, isNull, ne } from 'drizzle-orm'
+import { and, count, eq, isNull } from 'drizzle-orm'
 
 import {
   REFERRAL_CODE_MINT_ATTEMPTS,
@@ -73,33 +73,15 @@ import {
 import * as tables from '../db/schema'
 import type { User } from '../db/schema'
 import { writeAudit } from './audit'
-// Core → domain: referral stays in core for now and reads billing's entitlement
-// rules through the layer path (see layers/billing/nuxt.config.ts).
-import {
-  DERIVED_REVOKED_STATUS,
-  getBillingOverview,
-  stackingBase,
-  toSeconds,
-} from '#layers/billing/server/utils/entitlements'
-import type { EntitlementDb, RevokeResult } from '#layers/billing/server/utils/entitlements'
+import { getEarnedAccess } from './earned-access'
+import type { EarnedAccessProvider, EarnedGrantPlan } from './earned-access'
+import type { BillingAdjustmentResult } from './billing-outcome'
+import type { ExtensionDb } from './extensions'
 import { saltedHash } from './hash'
 import { getIdentitySalt } from './identity'
-import {
-  REFERRAL_REF_PREFIX,
-  referralRewardRef,
-  referralWelcomeRef,
-} from '#layers/billing/server/utils/paddle-refs'
-import { likePrefix } from './sql'
-import {
-  canonicalizeEmailForLimiting,
-  findReferrerByCode,
-  findUserById,
-  generateReferralCode,
-  isReferralCodeCollision,
-  isSameMailbox,
-} from './users'
-
-const DAY_MS = 24 * 60 * 60 * 1000
+import { generateReferralCode, findReferrerByCode, isReferralCodeCollision } from './referral-codes'
+import { REFERRAL_REF_PREFIX, referralRewardRef, referralWelcomeRef } from './referral-refs'
+import { canonicalizeEmailForLimiting, findUserById, isSameMailbox } from './users'
 
 /** The sentinel actor on an audit row nobody clicked. See server/utils/audit.ts. */
 const SYSTEM_ACTOR = 'system'
@@ -118,166 +100,7 @@ export type ReferralGrantOutcome =
   /** This exact ref already exists — a redelivery, or a second purchase. */
   | 'already_granted'
 
-export interface ReferralGrantPlan {
-  ref: string
-  days: number
-  /** When the window opens — the stacking base, stored so the clawback can measure it. */
-  startsAt: Date
-  /** Truncated to whole seconds, because that is D1's resolution for a timestamp. */
-  endsAt: Date
-  /** The expiry these days were laid on top of, or null if access starts today. */
-  stackedOn: Date | null
-  productKey: string
-  userId: string
-  /** The Paddle ref whose purchase earned this, or null for a welcome grant. */
-  earnedFromRef: string | null
-}
-
-/**
- * Work out what a grant would do, without writing anything.
- *
- * Split from the write so the caller can decide — and audit — before acting.
- * server/utils/audit.ts's policy is that the audit row describes intent and is
- * written first; a row saying "rewarded" in front of a grant that was about to
- * be refused would be the opposite of a record.
- *
- * ── A live subscriber IS paid, unlike a comp ─────────────────────────────────
- * This used to refuse whenever a subscription was already granting access,
- * copied from grantCompPasses(). It was the wrong rule in the wrong place, and
- * the reason is that a comp and an earned reward differ in who is owed what.
- *
- * A comp is an apology an operator chooses to send, so refusing it and naming a
- * better instrument (a Paddle credit) is good support. A referral reward has
- * already been EARNED, by somebody who read "you get 30 days when they pay" on
- * their own account page and then went and did it. Refusing costs them the
- * reward permanently — the trigger is a one-time transaction, so nothing ever
- * retries — and it fails precisely the referrers most worth having, since the
- * people who recommend a product are overwhelmingly the ones already paying for
- * it. Silently not paying your best customers is not a fraud control.
- *
- * So the days are written, stacked from the running expiry, which for a
- * subscriber is their renewal date: the reward begins when the subscription
- * ends. That is honest and it is what the share card now says. The old worry —
- * that the granted row outranks the subscription in findActiveEntitlement's
- * `ORDER BY current_period_end DESC` and makes /account misdescribe the plan —
- * was fixed independently in entitlement-view.ts, which pins the description to
- * a live `sub_` row whatever the dates say.
- *
- * The stacking base is `overview.active`, the longest-running granting row,
- * rather than the subscription specifically: if a pass runs past the renewal,
- * stacking on the renewal would throw away days the customer already holds.
- * A `sub_` row with no `current_period_end` (Paddle always sends one; a null
- * would mean a malformed event) has nothing to anchor on and starts today.
- */
-async function planReferralGrant(
-  db: EntitlementDb,
-  params: {
-    userId: string
-    ref: string
-    days: number
-    earnedFromRef?: string | null
-    productKey?: string
-    now?: Date
-  },
-): Promise<ReferralGrantPlan> {
-  const productKey = params.productKey ?? 'default'
-  const now = params.now ?? new Date()
-
-  const overview = await getBillingOverview(db, params.userId, productKey)
-
-  // The shared rule, not a second copy of it — admin-grants.ts stacks comps
-  // with the same helper, and "nobody loses days they already have" must not be
-  // able to differ between two ways of granting.
-  const stackedOn = stackingBase(overview.active, now)
-  const base = stackedOn ?? now
-
-  return {
-    ref: params.ref,
-    days: params.days,
-    startsAt: toSeconds(base),
-    endsAt: toSeconds(new Date(base.getTime() + params.days * DAY_MS)),
-    stackedOn,
-    productKey,
-    userId: params.userId,
-    earnedFromRef: params.earnedFromRef ?? null,
-  }
-}
-
-/**
- * Write one planned grant. Idempotent on the ref, by the unique index.
- *
- * ── Why DO NOTHING rather than grantPass's DO UPDATE ─────────────────────────
- * grantPass() infers "did this insert land?" by comparing the date it computed
- * against the date that came back from an upsert: on a redelivery the stored
- * value is whatever the first delivery wrote and the recomputed one has stacked
- * on top of it, so they differ. That inference is sound for a purchased pass
- * and NOT sound here, and the difference is the welcome grant.
- *
- * A welcome grant lands on an account with no entitlements, so its date is
- * always `now + 7 days` — recomputed identically on every attempt. Two attempts
- * inside the same second therefore produce the same truncated timestamp, the
- * comparison says "matches", and a conflict that wrote nothing is reported as a
- * fresh grant. The row stays correct (the index still refuses the duplicate),
- * but the RETURN VALUE lies, and it lies in the direction of "we just gave this
- * person a trial" — which is what the delete-and-re-register test caught.
- *
- * `DO NOTHING … RETURNING` has no inference in it: SQLite returns a row when it
- * inserted one and no rows when it skipped, so `granted` is the database's own
- * answer. The only thing given up is the `updated_at` bump on a redelivery,
- * which recorded nothing anybody reads.
- */
-async function writeReferralGrant(
-  db: EntitlementDb,
-  plan: ReferralGrantPlan,
-): Promise<{ granted: boolean; endsAt: Date }> {
-  const inserted = await db
-    .insert(tables.entitlements)
-    .values({
-      userId: plan.userId,
-      paddleSubscriptionId: plan.ref,
-      productKey: plan.productKey,
-      status: 'active',
-      // Both ends of the window. The start is what the clawback measures the
-      // unspent remainder from — see `period_start` in server/db/schema.ts.
-      periodStart: plan.startsAt,
-      currentPeriodEnd: plan.endsAt,
-      // The purchase this row exists because of, or null for a welcome grant
-      // (nobody bought anything). This is what lets a refund find the reward it
-      // paid for — see `earned_from_ref` in server/db/schema.ts.
-      earnedFromRef: plan.earnedFromRef,
-    })
-    .onConflictDoNothing({ target: tables.entitlements.paddleSubscriptionId })
-    .returning({ currentPeriodEnd: tables.entitlements.currentPeriodEnd })
-
-  const row = inserted[0]
-  if (row?.currentPeriodEnd) return { granted: true, endsAt: row.currentPeriodEnd }
-
-  // Skipped: this ref already exists. Report the window that is actually in
-  // force rather than the one this call would have written, so a caller never
-  // tells somebody about days they do not have.
-  const existing = await db.query.entitlements.findFirst({
-    where: eq(tables.entitlements.paddleSubscriptionId, plan.ref),
-    columns: { currentPeriodEnd: true },
-  })
-  return { granted: false, endsAt: existing?.currentPeriodEnd ?? plan.endsAt }
-}
-
-/**
- * Has this exact grant already been made?
- *
- * A point lookup on the unique index, and its only job is to keep the audit row
- * honest: audit-before-act means a payout that the index was always going to
- * refuse would otherwise leave a `referral.rewarded` row behind a grant that
- * never happened. The index is still the real guard — this read can be raced,
- * and losing that race costs one spurious audit row and no extra days.
- */
-async function referralGrantExists(db: EntitlementDb, ref: string): Promise<boolean> {
-  const row = await db.query.entitlements.findFirst({
-    where: eq(tables.entitlements.paddleSubscriptionId, ref),
-    columns: { id: true },
-  })
-  return Boolean(row)
-}
+export type ReferralGrantPlan = EarnedGrantPlan
 
 /** One structured line per decision. Skips are the ones worth reading. */
 function logReferral(kind: string, fields: Record<string, string | number | undefined>): void {
@@ -301,6 +124,11 @@ export type ReferralOutcome =
    * degraded — see grantRefereeWelcome for why an unsalted ref is not an option.
    */
   | 'unconfigured'
+  /**
+   * Nothing is registered to hold earned access (no billing). Codes are still
+   * captured and attributed; nothing is granted, and nothing errors.
+   */
+  | 'unavailable'
   /** Something threw. Logged, swallowed, and safe to retry on redelivery. */
   | 'error'
 
@@ -328,7 +156,8 @@ export interface ReferralResult {
  * an unrecorded grant is not.
  */
 async function payReferral(
-  db: EntitlementDb,
+  db: ExtensionDb,
+  earned: EarnedAccessProvider,
   plan: ReferralGrantPlan,
   context: { side: ReferralSide; refereeId: string; referrerId: string },
 ): Promise<ReferralResult> {
@@ -350,7 +179,7 @@ async function payReferral(
     },
   })
 
-  const written = await writeReferralGrant(db, plan)
+  const written = await earned.write(db, plan)
   return {
     outcome: written.granted ? 'granted' : 'already_granted',
     referrerId: context.referrerId,
@@ -441,12 +270,18 @@ export async function legacyWelcomeRefForEmail(
  * payout time" is a property worth having in code that hands out access.
  */
 export async function grantRefereeWelcome(
-  db: EntitlementDb,
+  db: ExtensionDb,
   user: Pick<User, 'id' | 'email' | 'referredBy'>,
   options: { sessionPassword?: string; productKey?: string; now?: Date } = {},
 ): Promise<ReferralResult> {
   try {
     if (!user.referredBy) return { outcome: 'no_referrer' }
+
+    const earned = getEarnedAccess()
+    if (!earned) {
+      logReferral('referral_welcome_skipped', { reason: 'unavailable', userId: user.id })
+      return { outcome: 'unavailable' }
+    }
 
     // Provisioned once and never rotated — see server/utils/identity.ts for why
     // this cannot be derived from sessionPassword the way the unsubscribe key is.
@@ -459,7 +294,7 @@ export async function grantRefereeWelcome(
     // Before anything else that would be recorded: this mailbox may already
     // have spent its trial on an account that has since been deleted, and the
     // audit row must not claim otherwise.
-    if (await referralGrantExists(db, ref)) return { outcome: 'already_granted' }
+    if (await earned.exists(db, ref)) return { outcome: 'already_granted' }
 
     // …and it may have spent it under the OLD ref construction. Introducing the
     // identity salt and the domain prefix recomputes every mailbox's ref, which
@@ -467,7 +302,7 @@ export async function grantRefereeWelcome(
     // deploy. Checking both closes that window without a backfill. Deletable
     // once no legacy row can still be granting; see legacyWelcomeRefForEmail.
     const legacyRef = await legacyWelcomeRefForEmail(user.email, options.sessionPassword ?? '')
-    if (legacyRef && (await referralGrantExists(db, legacyRef))) {
+    if (legacyRef && (await earned.exists(db, legacyRef))) {
       return { outcome: 'already_granted' }
     }
 
@@ -492,7 +327,7 @@ export async function grantRefereeWelcome(
       return { outcome: 'self_referral' }
     }
 
-    const plan = await planReferralGrant(db, {
+    const plan = await earned.plan(db, {
       userId: user.id,
       ref,
       days: REFERRAL_WELCOME_DAYS,
@@ -500,7 +335,7 @@ export async function grantRefereeWelcome(
       now: options.now,
     })
 
-    return await payReferral(db, plan, {
+    return await payReferral(db, earned, plan, {
       side: 'referee',
       refereeId: user.id,
       referrerId: referrer.id,
@@ -533,7 +368,7 @@ export async function grantRefereeWelcome(
  * layers/billing/server/utils/entitlements.ts, which needs `earnedFromRef` to find this row.
  */
 export async function rewardReferrerForFirstPurchase(
-  db: EntitlementDb,
+  db: ExtensionDb,
   refereeId: string,
   options: {
     /**
@@ -551,6 +386,12 @@ export async function rewardReferrerForFirstPurchase(
   try {
     const referee = await findUserById(db, refereeId)
     if (!referee?.referredBy) return { outcome: 'no_referrer' }
+
+    const earned = getEarnedAccess()
+    if (!earned) {
+      logReferral('referral_reward_skipped', { reason: 'unavailable', refereeId })
+      return { outcome: 'unavailable' }
+    }
 
     // Without `selfEmail` — see the note in grantRefereeWelcome above.
     const referrer = await findReferrerByCode(db, referee.referredBy)
@@ -573,27 +414,28 @@ export async function rewardReferrerForFirstPurchase(
 
     const ref = referralRewardRef(refereeId)
 
-    if (await referralGrantExists(db, ref)) {
+    if (await earned.exists(db, ref)) {
       return { outcome: 'already_granted', referrerId: referrer.id }
     }
 
-    const earned = await countReferralRewards(db, referrer.id)
-    if (earned >= REFERRAL_MAX_REWARDS) {
+    const paid = await countReferralRewards(db, referrer.id)
+    if (paid >= REFERRAL_MAX_REWARDS) {
       // Not a business rule being hit — a blast radius. At this volume somebody
       // should look, which is what the log line is for.
       logReferral('referral_reward_skipped', {
         reason: 'capped',
         refereeId,
         referrerId: referrer.id,
-        earned,
+        earned: paid,
       })
       return { outcome: 'capped', referrerId: referrer.id }
     }
 
     // Paid whether or not they are already subscribed — the days stack from
     // their renewal date and begin when the subscription ends. See
-    // planReferralGrant for why this is the opposite call from a comp's.
-    const plan = await planReferralGrant(db, {
+    // layers/billing/server/utils/billing-earned-access.ts for why this is the
+    // opposite call from a comp's.
+    const plan = await earned.plan(db, {
       userId: referrer.id,
       ref,
       days: REFERRAL_REWARD_DAYS,
@@ -602,7 +444,7 @@ export async function rewardReferrerForFirstPurchase(
       now: options.now,
     })
 
-    return await payReferral(db, plan, {
+    return await payReferral(db, earned, plan, {
       side: 'referrer',
       refereeId,
       referrerId: referrer.id,
@@ -630,8 +472,8 @@ export async function rewardReferrerForFirstPurchase(
  * Never throws — its caller is the Paddle webhook.
  */
 export async function recordReferralCascade(
-  db: EntitlementDb,
-  result: RevokeResult,
+  db: ExtensionDb,
+  result: BillingAdjustmentResult,
 ): Promise<void> {
   const derived = result.derived ?? []
   if (!derived.length) return
@@ -686,18 +528,9 @@ export async function recordReferralCascade(
  * the cap is a blast radius rather than an accounting figure. The audit trail
  * is what an investigation reads, and it records every payout regardless.
  */
-export async function countReferralRewards(db: EntitlementDb, userId: string): Promise<number> {
-  const [row] = await db
-    .select({ total: count() })
-    .from(tables.entitlements)
-    .where(
-      and(
-        eq(tables.entitlements.userId, userId),
-        // Escaped, because `_` is a LIKE wildcard — see server/utils/sql.ts.
-        likePrefix(tables.entitlements.paddleSubscriptionId, REFERRAL_REF_PREFIX),
-      ),
-    )
-  return row?.total ?? 0
+export async function countReferralRewards(db: ExtensionDb, userId: string): Promise<number> {
+  // Zero when nothing can hold earned access: there is nothing to have counted.
+  return (await getEarnedAccess()?.countByPrefix(db, userId, REFERRAL_REF_PREFIX)) ?? 0
 }
 
 /**
@@ -711,20 +544,14 @@ export async function countReferralRewards(db: EntitlementDb, userId: string): P
  * they would do is go looking for them.
  */
 export async function countStandingReferralRewards(
-  db: EntitlementDb,
+  db: ExtensionDb,
   userId: string,
 ): Promise<number> {
-  const [row] = await db
-    .select({ total: count() })
-    .from(tables.entitlements)
-    .where(
-      and(
-        eq(tables.entitlements.userId, userId),
-        likePrefix(tables.entitlements.paddleSubscriptionId, REFERRAL_REF_PREFIX),
-        ne(tables.entitlements.status, DERIVED_REVOKED_STATUS),
-      ),
-    )
-  return row?.total ?? 0
+  return (
+    (await getEarnedAccess()?.countByPrefix(db, userId, REFERRAL_REF_PREFIX, {
+      standingOnly: true,
+    })) ?? 0
+  )
 }
 
 /**
@@ -740,10 +567,10 @@ export async function countStandingReferralRewards(
  * reads back the winner's code. The retry loop around it handles the other
  * failure — a collision on the unique index — the same way provisioning does,
  * through the same predicate, because there is only one correct way to read
- * that error out of D1 (server/utils/users.ts › isReferralCodeCollision).
+ * that error out of D1 (server/utils/referral-codes.ts › isReferralCodeCollision).
  */
 export async function ensureReferralCode(
-  db: EntitlementDb,
+  db: ExtensionDb,
   userId: string,
   mintCode: () => string = generateReferralCode,
 ): Promise<string | null> {
@@ -804,7 +631,7 @@ export interface ReferralSummary {
  * first number sets up the support ticket that asks where the days are.
  */
 export async function getReferralSummary(
-  db: EntitlementDb,
+  db: ExtensionDb,
   userId: string,
 ): Promise<ReferralSummary | null> {
   const code = await ensureReferralCode(db, userId)

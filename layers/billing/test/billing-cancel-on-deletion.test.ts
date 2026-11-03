@@ -16,10 +16,11 @@ import {
   getDeletionResolvers,
 } from '~~/server/utils/extensions'
 import { registerBillingExtensions } from '../server/utils/billing-extensions'
-import { clearEntitlementViewFieldsForTest } from '../server/utils/entitlement-view-fields'
+import { clearEntitlementViewFieldsForTest } from '~~/server/utils/entitlement-view-fields'
 import { buildEntitlementView } from '../server/utils/entitlement-view'
 import { notifyBillingOutcome } from '../server/utils/billing-notifications'
-import { clearBillingOutcomeHandlersForTest } from '../server/utils/billing-outcome'
+import { clearBillingOutcomeHandlersForTest } from '~~/server/utils/billing-outcome'
+import { clearUnknownUserExpectationsForTest } from '../server/utils/billing-expectations'
 
 const db = drizzle(env.DB, { schema })
 const USER = 'user-cancel'
@@ -63,6 +64,7 @@ beforeEach(async () => {
   clearExtensionsForTest()
   clearEntitlementViewFieldsForTest()
   clearBillingOutcomeHandlersForTest()
+  clearUnknownUserExpectationsForTest()
   await env.DB.exec('DELETE FROM ops_events')
   await db.delete(schema.auditLog)
   await db.delete(schema.entitlements)
@@ -76,6 +78,7 @@ afterEach(() => {
   clearExtensionsForTest()
   clearEntitlementViewFieldsForTest()
   clearBillingOutcomeHandlersForTest()
+  clearUnknownUserExpectationsForTest()
 })
 
 async function entitle(ref: string, status = 'active', extra: Record<string, unknown> = {}) {
