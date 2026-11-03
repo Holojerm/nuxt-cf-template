@@ -23,10 +23,13 @@
 // about where it came from, to a person who had just signed up through a
 // friend's link and bought nothing.
 
-import type { EntitlementViewFieldsContext, EntitlementViewRow } from './entitlement-view-fields'
+import type {
+  EntitlementViewFieldsContext,
+  EntitlementViewRow,
+} from '#server/utils/entitlement-view-fields'
 import { isReferralRef, referralRefKind } from './referral-refs'
 
-declare module './entitlement-view-fields' {
+declare module '#server/utils/entitlement-view-fields' {
   interface EntitlementViewFields {
     /** Which side of the referral loop the DESCRIBING row came from, or null. */
     referralKind: 'welcome' | 'reward' | null

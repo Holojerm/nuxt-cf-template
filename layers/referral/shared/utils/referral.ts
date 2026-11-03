@@ -10,7 +10,7 @@
 // shared/utils/referral-code.ts, because the attribution cookie validates a
 // `?ref=` against it.
 
-import { normalizeReferralCode } from './referral-code'
+import { normalizeReferralCode } from '#shared/utils/referral-code'
 
 /**
  * Bounded retries when a freshly minted code hits the unique index.
@@ -42,7 +42,7 @@ export const REFERRAL_CODE_MINT_ATTEMPTS = 5
  * price was not "a fresh mailbox" but "two mailboxes, forever", and the
  * paragraph above was simply false. The ref is now a salted hash of the
  * canonical mailbox and the unique index refuses the second grant permanently
- * (server/utils/referral-refs.ts › referralWelcomeRef).
+ * (layers/referral/server/utils/referral-refs.ts › referralWelcomeRef).
  *
  * It is denominated in DAYS rather than passes for a separate reason: a pass is
  * "the thing the customer would have bought" (see layers/billing/server/utils/admin-grants.ts

@@ -12,10 +12,10 @@ import {
   REFERRAL_CODE_LENGTH,
   normalizeReferralCode,
 } from '#shared/utils/referral-code'
-import * as tables from '../db/schema'
-import type { User } from '../db/schema'
-import type { ExtensionDb as Db } from './extensions'
-import { isSameMailbox, isUndeliverableAddress } from './users'
+import * as tables from '#server/db/schema'
+import type { User } from '#server/db/schema'
+import type { ExtensionDb as Db } from '#server/utils/extensions'
+import { isSameMailbox, isUndeliverableAddress } from '#server/utils/users'
 
 /**
  * A crypto-random referral code. 30^8 ≈ 6.6e11 possibilities, which is both

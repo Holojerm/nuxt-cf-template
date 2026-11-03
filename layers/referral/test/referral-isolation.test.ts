@@ -11,16 +11,16 @@ import { env } from 'cloudflare:test'
 import { drizzle } from 'drizzle-orm/d1'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import * as schema from '../server/db/schema'
+import * as schema from '~~/server/db/schema'
 import { buildEntitlementView } from '#layers/billing/server/utils/entitlement-view'
 import { billingEarnedAccess } from '#layers/billing/server/utils/billing-earned-access'
 import {
   clearBillingOutcomeHandlersForTest,
   registerBillingOutcomeHandler,
   runBillingOutcomeHandlers,
-} from '../server/utils/billing-outcome'
-import { clearExtensionsForTest } from '../server/utils/extensions'
-import { getEarnedAccess, registerEarnedAccess } from '../server/utils/earned-access'
+} from '~~/server/utils/billing-outcome'
+import { clearExtensionsForTest } from '~~/server/utils/extensions'
+import { getEarnedAccess, registerEarnedAccess } from '~~/server/utils/earned-access'
 import { createReferralOutcomeHandler } from '../server/utils/referral-billing'
 import {
   countReferralRewards,
@@ -29,7 +29,7 @@ import {
   rewardReferrerForFirstPurchase,
 } from '../server/utils/referral'
 import { createReferralSignup } from '../server/utils/referral-signup'
-import { upsertOAuthUser } from '../server/utils/users'
+import { upsertOAuthUser } from '~~/server/utils/users'
 
 const db = drizzle(env.DB, { schema })
 const CODE = 'AB2CD3EF'

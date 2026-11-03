@@ -16,7 +16,8 @@ Read the row that matches what you are about to touch. Do not load them all.
 | [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md) | Silent failure modes — wrong-file databases, migrations that never run, empty sitemaps, rate limiters that quietly do nothing | Something "works" but produces no output; or you touch D1, migrations, deploy config, cron, `definePageMeta`, or a worktree |
 | [`.claude/docs/patterns.md`](.claude/docs/patterns.md) | Worked examples: components, API routes, Drizzle queries, forms, error handling, feedback | Writing a new component, route, form, or query — especially your first change here |
 | [`.claude/docs/auth.md`](.claude/docs/auth.md) | Magic link, OAuth, session revocation, `rateLimit()`, Turnstile | Anything under `server/api/auth/`, sessions, rate limiting, or bot protection |
-| [`.claude/docs/billing.md`](.claude/docs/billing.md) | Paddle, entitlements, clawbacks, referral economics, the `mcp/` worker | Anything that grants, revokes, or prices access |
+| [`.claude/docs/billing.md`](.claude/docs/billing.md) | Paddle, entitlements, clawbacks, the `mcp/` worker | Anything that grants, revokes, or prices access |
+| [`.claude/docs/referral.md`](.claude/docs/referral.md) | The referral layer: economics, anti-fraud design, its seams with billing and sign-up, vendoring | Anything under `layers/referral/`, the `?ref=` capture, or days nobody paid for |
 | [`.claude/docs/email.md`](.claude/docs/email.md) | Resend, the `EMAIL_QUEUE`, retry/dead-letter, notification decisions | Adding or changing any outbound email |
 | [`.claude/docs/seo.md`](.claude/docs/seo.md) | `useSeo()`, `publicPage` meta, structured data, the blog | Adding or editing a page, or writing in `content/blog/` |
 | [`.claude/docs/images.md`](.claude/docs/images.md) | `<NuxtImg>` at the edge vs. transforming a private R2 object in the Worker | Rendering any image, adding a thumbnail, or debugging a `/cdn-cgi/image/` 404 |
@@ -88,8 +89,9 @@ restart. The rest are in [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).
 │   └── blog/               # One markdown file per post; the filename is the URL
 ├── scripts/                # One-off scripts (bun seed, etc.)
 ├── layers/                 # Features that stand alone: billing/ (Paddle, entitlements, /pricing),
-│                           # feedback/, files/, social/. Each registers with core through
-│                           # server/utils/extensions.ts and reads like its own small app
+│                           # referral/, feedback/, files/, social/. Each registers with core
+│                           # through server/utils/extensions.ts (and its sibling seams), never
+│                           # imports another layer, and reads like its own small app
 ├── public/                 # Static assets — og.png, favicon.svg, apple-touch-icon.png
 ├── .github/                # Dependabot + browser-suites.yml (axe/CSP/E2E — the only CI
 │                           # not in Workers Builds; that image can't launch Chromium)
@@ -188,9 +190,11 @@ Each of these has a full contract in its own doc — this is the one-line versio
   Client validation is never the boundary. → [`patterns.md`](.claude/docs/patterns.md)
 - **Auth** — the client middleware is **not** a security boundary; every paid API route
   calls `requireSubscription(event)` itself. → [`auth.md`](.claude/docs/auth.md)
-- **Billing & referrals** — billing is `layers/billing/`; a referral reward is access
-  nobody paid for, so treat `server/utils/referral.ts` as billing code. Gate paid routes
-  with `requireAccess(event)`. → [`billing.md`](.claude/docs/billing.md)
+- **Billing & referrals** — billing is `layers/billing/`, referrals `layers/referral/`; a
+  referral reward is access nobody paid for, so treat
+  `layers/referral/server/utils/referral.ts` as billing code. Neither layer imports the
+  other. Gate paid routes with `requireAccess(event)`.
+  → [`billing.md`](.claude/docs/billing.md), [`referral.md`](.claude/docs/referral.md)
 - **Email** — `sendEmail()` never throws, and enqueues rather than POSTs when
   `EMAIL_QUEUE` exists. → [`email.md`](.claude/docs/email.md)
 - **SEO & AEO** — every page calls `useSeo()` exactly once and declares `publicPage`;

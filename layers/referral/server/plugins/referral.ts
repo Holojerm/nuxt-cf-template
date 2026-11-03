@@ -5,9 +5,9 @@
 // (server/utils/referral-view.ts). Billing registers the earned-access provider
 // these call. Remove this file with the loop (TEARDOWN.md) and core, the webhook
 // and the entitlement view keep working.
-import { registerBillingOutcomeHandler } from '../utils/billing-outcome'
-import { registerEntitlementViewFields } from '../utils/entitlement-view-fields'
-import { registerSignupContributor } from '../utils/signup-contributors'
+import { registerBillingOutcomeHandler } from '#server/utils/billing-outcome'
+import { registerEntitlementViewFields } from '#server/utils/entitlement-view-fields'
+import { registerSignupContributor } from '#server/utils/signup-contributors'
 import { createReferralOutcomeHandler } from '../utils/referral-billing'
 import { createReferralSignup } from '../utils/referral-signup'
 import { referralHistoryFields, referralViewFields } from '../utils/referral-view'

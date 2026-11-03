@@ -19,19 +19,19 @@ import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import * as schema from '../server/db/schema'
+import * as schema from '~~/server/db/schema'
 import {
   attributionFromRecord,
   consumeMagicLinkToken,
   createMagicLinkToken,
-} from '../server/utils/magic-link'
+} from '~~/server/utils/magic-link'
 import {
   REFERRAL_MAX_REWARDS,
   REFERRAL_REWARD_DAYS,
   REFERRAL_WELCOME_DAYS,
   referralShareUrl,
 } from '../shared/utils/referral'
-import { normalizeReferralCode } from '../shared/utils/referral-code'
+import { normalizeReferralCode } from '~~/shared/utils/referral-code'
 import {
   countReferralRewards,
   countStandingReferralRewards,
@@ -43,7 +43,7 @@ import {
   welcomeRefForEmail,
 } from '../server/utils/referral'
 import { COMP_REVOKED_STATUS } from '#layers/billing/server/utils/admin-grants'
-import { deleteAccount } from '../server/utils/account'
+import { deleteAccount } from '~~/server/utils/account'
 import {
   DERIVED_REVOKED_STATUS,
   PASS_DAYS,
@@ -54,16 +54,16 @@ import {
 } from '#layers/billing/server/utils/entitlements'
 import { buildEntitlementView } from '#layers/billing/server/utils/entitlement-view'
 import { billingEarnedAccess } from '#layers/billing/server/utils/billing-earned-access'
-import { registerEarnedAccess } from '../server/utils/earned-access'
-import { registerEntitlementViewFields } from '../server/utils/entitlement-view-fields'
+import { registerEarnedAccess } from '~~/server/utils/earned-access'
+import { registerEntitlementViewFields } from '~~/server/utils/entitlement-view-fields'
 import { referralHistoryFields, referralViewFields } from '../server/utils/referral-view'
 import { isReferralRef, referralRewardRef, referralWelcomeRef } from '../server/utils/referral-refs'
 import { generateReferralCode } from '../server/utils/referral-codes'
 import { createReferralSignup } from '../server/utils/referral-signup'
-import { registerSignupContributor } from '../server/utils/signup-contributors'
-import { upsertOAuthUser } from '../server/utils/users'
-import { getIdentitySalt } from '../server/utils/identity'
-import { saltedHash } from '../server/utils/hash'
+import { registerSignupContributor } from '~~/server/utils/signup-contributors'
+import { upsertOAuthUser } from '~~/server/utils/users'
+import { getIdentitySalt } from '~~/server/utils/identity'
+import { saltedHash } from '~~/server/utils/hash'
 import { legacyWelcomeRefForEmail } from '../server/utils/referral'
 
 const db = drizzle(env.DB, { schema })

@@ -495,7 +495,7 @@ useSeo({
                sits after everything else the account holds, which reads as an
                error unless the stacking rule is stated — and for a subscriber
                it can be a year out. Literally the same string the share card
-               promises, not a second copy of it (#shared/utils/referral). -->
+               promises, not a second copy of it (the referral layer's shared constants). -->
           <p v-if="billing.history.some((item) => item.referral)" class="text-sm text-muted">
             {{ REFERRAL_STACKING_NOTE }}
           </p>
