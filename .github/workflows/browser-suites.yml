@@ -71,6 +71,12 @@ jobs:
       # This is where a PR proves the two agree before a fork's deploy finds out.
       - run: bun run email:check
 
+      # The full version of the forkless gate `bun run ci` runs scripts-only:
+      # forks without billing, referral and lifecycle email, built in temp
+      # copies, with typecheck, the unit tests and the Playwright listing run on
+      # each. Here rather than in `ci` because it is the slow half.
+      - run: bun run ci:forkless
+
       # Succeeds here because the runner is root-capable. This is the exact
       # command that fails on Workers Builds.
       - run: bun run playwright:install

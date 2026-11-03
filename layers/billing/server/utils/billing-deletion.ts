@@ -86,7 +86,7 @@ export function createCancelOnDeletionResolver(opts: {
 }): DeletionResolver {
   return {
     key: 'billing',
-    async resolve(db, userId): Promise<DeletionBlock | null> {
+    async resolve(db, userId, context): Promise<DeletionBlock | null> {
       for (const subscriptionId of await findLiveSubscriptionRefs(db, userId)) {
         try {
           await withAudit(
@@ -98,6 +98,7 @@ export function createCancelOnDeletionResolver(opts: {
               targetType: 'user',
               targetId: userId,
               metadata: { subscriptionId },
+              ipHash: context?.ipHash,
             },
             () => opts.cancel(subscriptionId),
           )

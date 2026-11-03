@@ -14,7 +14,7 @@
 // waits on `globalSetup` because that runs once for the whole config, not
 // per project.
 
-import { verifyPaddleSignature } from '../../layers/billing/server/utils/paddle'
+import { verifyPaddleSignature } from '../../server/utils/paddle'
 import { expect, signPaddleWebhook, test } from './fixtures'
 import { PADDLE_TEST_WEBHOOK_SECRET as SECRET } from './webhook-secret'
 

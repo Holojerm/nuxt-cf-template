@@ -31,6 +31,7 @@
 import { expect, test } from '@playwright/test'
 
 import { recordConsole } from '../lib/console'
+import { hasLayer } from '../lib/layers'
 
 /**
  * Landing, the checkout entry point, and the auth surface — both halves of the
@@ -49,7 +50,25 @@ import { recordConsole } from '../lib/console'
  */
 const DUMMY_TOKEN = 'A'.repeat(43)
 
-const ROUTES = ['/', '/pricing', '/login', `/auth/verify#token=${DUMMY_TOKEN}`]
+// Billing's page, its Paddle.js and the hosts nuxt.config.ts allows for them exist
+// only where the layer does. Without it the same assertions invert (below): a
+// fork that dropped billing must also have dropped Paddle from the policy.
+const HAS_BILLING = hasLayer('billing')
+const PADDLE_HOSTS = [
+  'https://cdn.paddle.com',
+  'https://sandbox-cdn.paddle.com',
+  'https://buy.paddle.com',
+  'https://sandbox-buy.paddle.com',
+  'https://api.paddle.com',
+  'https://sandbox-api.paddle.com',
+]
+
+const ROUTES = [
+  '/',
+  ...(HAS_BILLING ? ['/pricing'] : []),
+  '/login',
+  `/auth/verify#token=${DUMMY_TOKEN}`,
+]
 
 /**
  * ── `eval` refusals are fatal, and used not to be ────────────────────────────
@@ -196,6 +215,7 @@ test.describe('the policy still permits what the vendors need', () => {
   })
 
   test('script-src does not block Paddle.js', async ({ page }) => {
+    test.skip(!HAS_BILLING, 'no billing layer, no Paddle.js')
     const recorder = recordConsole(page)
     await recorder.ready
     await page.goto('/')
@@ -232,6 +252,7 @@ test.describe('the policy still permits what the vendors need', () => {
   })
 
   test('the Paddle checkout hosts are allowlisted in both environments', async ({ page }) => {
+    test.skip(!HAS_BILLING, 'no billing layer, no Paddle hosts')
     // The overlay iframe and its API calls cannot be exercised without a client
     // token, so these are asserted against the policy text. The hosts come from
     // the env table inside Paddle's own bundle (checkoutFrontEndBase / apiBase),
@@ -247,6 +268,14 @@ test.describe('the policy still permits what the vendors need', () => {
     const connectSrc = /connect-src ([^;]+)/.exec(csp)?.[1] ?? ''
     expect(connectSrc).toContain('https://api.paddle.com')
     expect(connectSrc).toContain('https://sandbox-api.paddle.com')
+  })
+
+  test('without the billing layer the policy names no Paddle host', async ({ page }) => {
+    test.skip(HAS_BILLING, 'billing is present: the Paddle hosts are asserted above')
+    // TEARDOWN.md ("Remove billing entirely", step 9): a stale entry is a
+    // silently over-permissive policy, so the suite refuses it.
+    const csp = await policy(page)
+    expect(PADDLE_HOSTS.filter((host) => csp.includes(host))).toEqual([])
   })
 
   test('Turnstile has both directives it needs, before anyone configures it', async ({ page }) => {
@@ -362,11 +391,12 @@ test.describe('the directives that make the policy worth having', () => {
       .split(/\s+/)
       .filter((source) => source.startsWith('http') || source.startsWith('//'))
 
-    expect(externalHosts.sort()).toEqual([
-      'https://cdn.paddle.com',
-      'https://challenges.cloudflare.com',
-      'https://sandbox-cdn.paddle.com',
-      'https://static.cloudflareinsights.com',
-    ])
+    expect(externalHosts.sort()).toEqual(
+      [
+        ...(HAS_BILLING ? ['https://cdn.paddle.com', 'https://sandbox-cdn.paddle.com'] : []),
+        'https://challenges.cloudflare.com',
+        'https://static.cloudflareinsights.com',
+      ].sort(),
+    )
   })
 })

@@ -24,7 +24,7 @@ mistake available here. Ask if it isn't obvious from the request:
 | `await requireAdmin(event)` | Owner-facing endpoints | 401 / 403 |
 | none — add to the allowlist | Genuinely public (see below) | — |
 
-**`requireSubscription()` is the real paywall.** `layers/billing/app/middleware/subscription.ts`
+**`layers/billing/server/utils/billing.ts` › `requireSubscription` is the real paywall.** `layers/billing/app/middleware/subscription.ts`
 runs in the browser and only decides which page renders; delete it and the API
 still refuses. Skip the server call and the gate is decorative — a signed-in
 free user can `fetch()` the route directly. If the feature is behind a plan,

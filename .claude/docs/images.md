@@ -43,7 +43,7 @@ AVIF, and nothing would fail.
 
 Files uploaded through the R2 feature have no public URL. They are served by
 [`layers/files/server/api/files/[id].get.ts`](../../layers/files/server/api/files/[id].get.ts), which is itself the
-access-control boundary: `requireSubscription()`, then an ownership check scoped to
+access-control boundary: `requireAccess()`, then an ownership check scoped to
 `userId`.
 
 The edge cannot transform those. It resolves `/cdn-cgi/image/…/<src>` by **fetching the

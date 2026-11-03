@@ -134,12 +134,24 @@ and writes its days into billing's table, and neither file imports the other.
 
 | Seam | Register with | Core does | With nothing registered |
 | --- | --- | --- | --- |
-| Deletion guard | `registerDeletionGuard({ key, check })` | `deleteAccount()` asks every guard first; the first `{ code, message, data }` it gets back becomes outcome `blocked` and the route's 409 (`data.code`) | Deletion is unguarded |
-| Deletion resolver | `registerDeletionResolver({ key, resolve })` | After every guard has passed and before the counts and the audit row, `deleteAccount()` runs each resolver; it may write (billing cancels the subscription at Paddle) and returns a block to refuse (same 409 path as a guard) or null. Not rolled back; must fail closed | Nothing runs before the delete |
+| Deletion guard | `registerDeletionGuard({ key, check })` | `deleteAccount()` asks every guard first; the first `{ code, message, data }` it gets back becomes outcome `blocked` and the route's 409 (`data.code`). `check(db, userId, context?)` | Deletion is unguarded |
+| Deletion resolver | `registerDeletionResolver({ key, resolve })` | After every guard has passed and before the counts and the audit row, `deleteAccount()` runs each resolver; it may write (billing cancels the subscription at Paddle) and returns a block to refuse (same 409 path as a guard) or null. Not rolled back; must fail closed. `resolve(db, userId, context?)` | Nothing runs before the delete |
 | Paywall gate | `registerAccessGate(fn)` | Paywalled routes call `requireAccess(event, productKey?)` | `requireUserSession(event)`: free, sign-in required |
 | Lifecycle step | `registerLifecycleStep(step)` | `server/tasks/lifecycle-email.ts` runs template steps, then registered ones, then the app's. Never rename a step id | Only the template and app steps |
 | Funnel `paid` stage | `registerFunnelStageContributor({ key: 'paid', count })` | `collectFleetFunnel()` reports its count | `funnel.paid` is 0 |
 | View-as section | `registerAdminViewAsContributor({ key, load })` | The admin "view as" payload spreads each section and ANDs the gates each returns into `gates`/`dashboardReachable` | Only `gates.auth` |
+
+**Request context for deletion.** `deleteAccount(db, userId, { ipHash })` hands the same
+object to every guard and resolver as an optional third argument (`DeletionContext` in
+`server/utils/extensions.ts`). The route passes `auditIpHash(event)`; a caller with no request
+(a test, a script) passes none and gets `{}`. A guard or resolver that writes an audit row sets
+`ipHash: context?.ipHash`, which is how billing's `account.subscription_cancel_requested` row
+carries the caller's hash. An implementation written with two parameters keeps working.
+
+**Types a seam names live apart from the feature.** `LifecycleStep` and the types it needs are in
+`server/types/extension-types.ts` (re-exported by `lifecycle.ts`), so `extensions.ts` compiles
+in an app that deleted the lifecycle runner and its task: no stub `lifecycle.ts`. Add a type a
+registry names to that folder, never import it from the optional feature's own file.
 | Export section only | `registerAccountContributor({ key, exportSection })` | `countForDeletion` is optional: omit it and the audit row gains no count | n/a |
 | Billing outcome | `registerBillingOutcomeHandler(key, handler)` (`server/utils/billing-outcome.ts`) | The billing webhook runs every handler, in order, after the email and before the log lines; a throw is logged, never a 500 | Nothing follows the event |
 | Billing view fields | `registerEntitlementViewFields({ key, view?, history? })` (`server/utils/entitlement-view-fields.ts`) | `buildEntitlementView` appends each contributor's fields to the view and to every history row. Additive only | The view is exactly the base shape |
@@ -199,6 +211,36 @@ repo, and `layers.lock.json` records that commit and a content hash. Nuxt auto-r
 `layers/`, so nothing else needs configuring. `bun run layers:check` (part of `ci`) fails if
 a vendored copy has been edited. `--remote` also re-downloads each commit and confirms the
 hash is the template's.
+
+**Taking only some layers.** Every template layer is optional, and a fork that leaves one out
+carries no local patch for it. The checks that make that true:
+
+- **Which repo is the template.** `layers:check` applies the stricter rule (core imports no
+  layer; every layer on disk is checked) when `fleet.json › template.syncedSha` is null, which is
+  the template and only the template. A fork has a sha, so an empty lock plus its own
+  `layers/<domain>/` that declared core files import is fine. `isTemplateRepo()` in
+  `scripts/lib/layers.ts`; a fork whose manifest still says null is judged as the template until
+  its first sync records one.
+- **Comments and docs that name a layer you left out.** `mirror:check` resolves a
+  `layers/<name>/…` path as satisfied when `<name>` is a template layer
+  (`TEMPLATE_LAYERS`, same file) and `layers/<name>/` is absent, and drops a
+  `layers/<name>/…ts › symbol` pointer into one whole. Nothing is excused once the layer is
+  present, and a typo is not a template layer. Never add `refs-check-ignore` to a template
+  comment for this. A new template layer goes in `TEMPLATE_LAYERS`; `layers:check` fails in the
+  template if the list and `layers/` disagree. Backticked bare symbols from a layer
+  (`name()`) are not covered: point at them as `` `layers/<name>/…ts` › `name` ``.
+- **The billing access pins** in `scripts/check-mirrors.ts` are skipped when `layers/billing` is
+  absent, and enforced in full when it is present.
+- **The browser suites follow the layer.** A layer's specs live in `layers/<name>/test/e2e/`
+  (an `e2e-<name>` Playwright project; its server env and warm-ups in `e2e.config.ts`, read by
+  `test/e2e/layers.ts`). The a11y and CSP specs key on `hasLayer()` (`test/lib/layers.ts`).
+- **`bun run forkless:check`** (in `ci`, scripts only) and **`bun run ci:forkless`** (adds typecheck,
+  the unit tests and the Playwright listing) build forks without billing, without referral and
+  without lifecycle email in a temp copy, apply only the edits `TEARDOWN.md` lists, and run the
+  gates there. They also prove each rule still bites (a layer typo, a missing file in a present
+  layer, a changed billing pin, a template that imports a layer). Run `ci:forkless` after
+  touching `scripts/lib/`, `check-layers.ts`, `check-mirrors.ts`, a seam in `extensions.ts` or
+  anything under `layers/*/test/e2e/`.
 
 - **Updating**: `bun run layers:pull --all` re-pulls every locked layer at its recorded ref
   (`main` unless you passed `--ref`). The PR diff is exactly what the template changed.

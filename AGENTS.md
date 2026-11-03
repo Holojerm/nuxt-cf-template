@@ -240,6 +240,8 @@ bun run seo:check     # Fail on pages that bypass useSeo() or aren't declared pu
 bun run fleet:check   # Fail when fleet.json stops matching wrangler.toml (names, binding ids, crons)
 bun run crons:check   # Fail when [triggers] crons and nitro.scheduledTasks disagree, or a task has no file
 bun run methods:check # Fail when a get/head/delete server route reads a request body (hangs on Workers)
+bun run forkless:check # Build forks without billing / referral / lifecycle email in a temp copy; the layer,
+                      # mirror and reference gates must pass there with no patch (ci:forkless adds typecheck + tests)
 bun run test:a11y     # Playwright/Chromium browser suites: axe over every public route
                       # (light + dark) AND the Content-Security-Policy spec (test/csp/)
 bun typecheck         # TypeScript type checking

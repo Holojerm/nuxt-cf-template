@@ -157,7 +157,7 @@ removing the layer removes the route. `registerSessionGatedPrefixes` makes the
 middleware require a session for a non-`/api/` prefix too.
 
 Everything else, including every paid route, is behind the session guard and
-then its own `requireSubscription()` / `requireAdmin()`.
+then its own gate: `requireAccess()` (billing registers `requireSubscription` behind it, in `layers/billing/server/utils/billing.ts`) or `requireAdmin()`.
 
 ## Rate Limiting
 

@@ -30,7 +30,7 @@
 // has no filesystem, so no test in test/ can read mcp/src at all. This runs in
 // Bun, where it can.
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { extractFunction as sliceFunction } from './lib/brace-match'
@@ -151,6 +151,10 @@ for (const mirror of MIRRORS) {
 // A text check can only catch the edits that touch these fragments; it is
 // the cheap half of a promise that used to be kept by a comment.
 
+// A fork that does not vendor billing has no first side, and the SQL half would
+// pin a predicate nothing mirrors: both go, with the layer. The pins are skipped,
+// not weakened — with the layer present every one still has to match.
+const BILLING_PRESENT = existsSync(join(ROOT, 'layers/billing'))
 const BILLING_UTILS = 'layers/billing/server/utils'
 const PREDICATE_PINS: { file: string; fragment: string; why: string }[] = [
   {
@@ -190,7 +194,7 @@ const PREDICATE_PINS: { file: string; fragment: string; why: string }[] = [
   },
 ]
 
-for (const pin of PREDICATE_PINS) {
+for (const pin of BILLING_PRESENT ? PREDICATE_PINS : []) {
   const source = readFileSync(join(ROOT, pin.file), 'utf8')
   if (!source.includes(pin.fragment)) {
     problems.push(
@@ -208,7 +212,11 @@ const dead = findDeadReferences(ROOT)
 
 if (problems.length === 0 && dead.length === 0) {
   console.info(
-    `mirror:check — ${MIRRORS.length} mirrored rule(s) agree, every named reference resolves`,
+    `mirror:check — ${MIRRORS.length} mirrored rule(s) agree, ` +
+      (BILLING_PRESENT
+        ? `${PREDICATE_PINS.length} access-predicate pins hold, `
+        : 'access-predicate pins skipped (no layers/billing), ') +
+      'every named reference resolves',
   )
   process.exit(0)
 }
