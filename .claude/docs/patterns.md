@@ -133,6 +133,7 @@ It reaches the webhook through billing's own handler registry, `registerBillingO
 | Seam | Register with | Core does | With nothing registered |
 | --- | --- | --- | --- |
 | Deletion guard | `registerDeletionGuard({ key, check })` | `deleteAccount()` asks every guard first; the first `{ code, message, data }` it gets back becomes outcome `blocked` and the route's 409 (`data.code`) | Deletion is unguarded |
+| Deletion resolver | `registerDeletionResolver({ key, resolve })` | After every guard has passed and before the counts and the audit row, `deleteAccount()` runs each resolver; it may write (billing cancels the subscription at Paddle) and returns a block to refuse (same 409 path as a guard) or null. Not rolled back; must fail closed | Nothing runs before the delete |
 | Paywall gate | `registerAccessGate(fn)` | Paywalled routes call `requireAccess(event, productKey?)` | `requireUserSession(event)`: free, sign-in required |
 | Lifecycle step | `registerLifecycleStep(step)` | `server/tasks/lifecycle-email.ts` runs template steps, then registered ones, then the app's. Never rename a step id | Only the template and app steps |
 | Funnel `paid` stage | `registerFunnelStageContributor({ key: 'paid', count })` | `collectFleetFunnel()` reports its count | `funnel.paid` is 0 |

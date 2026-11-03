@@ -124,6 +124,21 @@ export interface DeletionGuard {
 }
 
 /**
+ * Work that has to happen before an account can be deleted, and may write:
+ * billing cancels the subscription at its provider here. Runs after every
+ * DeletionGuard has passed and before deleteAccount() reads its counts or writes
+ * its audit row. Returns a block to refuse (nothing is deleted; whatever the
+ * resolver already did stays done), or null to let deletion go on. It must fail
+ * closed: if it cannot do what deletion depends on, it returns a block, never
+ * null. A guard is for "may we delete", a resolver for "make it deletable".
+ * Register few: they run in registration order and are not rolled back.
+ */
+export interface DeletionResolver {
+  key: string
+  resolve: (db: ExtensionDb, userId: string) => Promise<DeletionBlock | null>
+}
+
+/**
  * One section of the admin "view as" payload, plus the gates it contributes
  * (route-level conditions the console reports as pass/fail). The payload is
  * `{ readOnly, user, ...sections, gates: { auth: true, ...gates }, dashboardReachable }`
@@ -172,6 +187,7 @@ const fleetExtraContributors = new Map<string, FleetExtraContributor>()
 const onboardingSignalContributors = new Map<string, OnboardingSignalContributor>()
 const purgeContributors = new Map<string, PurgeContributor>()
 const deletionGuards = new Map<string, DeletionGuard>()
+const deletionResolvers = new Map<string, DeletionResolver>()
 const adminViewAsContributors = new Map<string, AdminViewAsContributor>()
 const funnelStageContributors = new Map<string, FunnelStageContributor>()
 const lifecycleSteps = new Map<string, LifecycleStep>()
@@ -212,6 +228,10 @@ export function registerDeletionGuard(guard: DeletionGuard): void {
   deletionGuards.set(guard.key, guard)
 }
 
+export function registerDeletionResolver(resolver: DeletionResolver): void {
+  deletionResolvers.set(resolver.key, resolver)
+}
+
 export function registerAdminViewAsContributor<K extends keyof AdminViewAsSections>(
   contributor: AdminViewAsContributor<K>,
 ): void {
@@ -233,6 +253,10 @@ export function registerLifecycleStep(step: LifecycleStep): void {
 
 export function getDeletionGuards(): DeletionGuard[] {
   return [...deletionGuards.values()]
+}
+
+export function getDeletionResolvers(): DeletionResolver[] {
+  return [...deletionResolvers.values()]
 }
 
 export function getAdminViewAsContributors(): AdminViewAsContributor[] {
@@ -289,6 +313,7 @@ export function clearExtensionsForTest(): void {
   onboardingSignalContributors.clear()
   purgeContributors.clear()
   deletionGuards.clear()
+  deletionResolvers.clear()
   adminViewAsContributors.clear()
   funnelStageContributors.clear()
   lifecycleSteps.clear()

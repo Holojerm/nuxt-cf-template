@@ -35,6 +35,7 @@ export default defineEventHandler(async (event) => {
     return await createPortalSession({
       apiKey,
       environment: config.public.paddleEnv,
+      apiBase: config.paddle.apiBase,
       customerId: overview.paddleCustomerId,
       subscriptionIds: overview.cancellableSubscriptionIds,
     })

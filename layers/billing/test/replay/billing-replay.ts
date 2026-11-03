@@ -27,6 +27,11 @@
 //           --out <file>   write the dump there (default: stdout)
 //           --port <n>     dev port (default 8799)
 //           --extra-var K=V   extra Worker var, repeatable
+//           --cancel-on-deletion  run as an app with billing.cancelOnDeletion on, against
+//                             a stub Paddle API started here (NUXT_PADDLE_API_BASE): deletion
+//                             cancels live subscriptions first. The dump gains `paddleApi`,
+//                             the calls the stub saw. Without the flag the output is exactly
+//                             that of a build without the option.
 //           --shared-account  run as an app that shares its Paddle account: sets
 //                             NUXT_PADDLE_PRODUCT_ID and turns the unmatched-refund
 //                             alert off (NUXT_BILLING_ALERT_UNMATCHED_ADJUSTMENTS=false)
@@ -39,13 +44,16 @@ import { join, resolve } from 'node:path'
 import { defaults, seal } from 'iron-webcrypto'
 
 import {
+  CANCEL_USERS,
   PRICE_MONTHLY,
   PRICE_PASS,
   PRODUCT_OWN,
   REPLAY_SECRET,
+  STUB_ANSWERS,
   USERS,
   buildSteps,
   type RequestStep,
+  type UserKey,
   type Step,
   type WebhookStep,
 } from './fixtures'
@@ -58,6 +66,7 @@ const flag = (name: string) => {
 const flagAll = (name: string) =>
   args.flatMap((a, i) => (a === name && args[i + 1] ? [args[i + 1]!] : []))
 
+const cancelOnDeletion = args.includes('--cancel-on-deletion')
 const root = resolve(flag('--root') ?? process.cwd())
 const out = flag('--out')
 const port = Number(flag('--port') ?? 8799)
@@ -113,7 +122,10 @@ const dbFile = findDb()
 {
   const db = new Database(dbFile)
   const now = Math.floor(Date.now() / 1000)
-  for (const u of Object.values(USERS)) {
+  for (const u of [
+    ...Object.values(USERS),
+    ...(cancelOnDeletion ? Object.values(CANCEL_USERS) : []),
+  ]) {
     db.query(
       'insert into users (id, email, name, role, created_at, updated_at) values (?, ?, ?, ?, ?, ?)',
     ).run(u.id, u.email, u.name, u.role, now, now)
@@ -122,7 +134,40 @@ const dbFile = findDb()
 }
 
 // ── 2. Worker: throwaway secrets, the built bundle ───────────────────────────
+// A stand-in for api.paddle.com, only for --cancel-on-deletion: the Worker is
+// pointed at it through NUXT_PADDLE_API_BASE. It records what it was asked and
+// answers per subscription id (STUB_ANSWERS), 200 otherwise.
+const STUB_API_KEY = 'pdl_replay_stub_key'
+const stubCalls: unknown[] = []
+const stub = cancelOnDeletion
+  ? Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      async fetch(req) {
+        const id = /^\/subscriptions\/([^/]+)\/cancel$/.exec(new URL(req.url).pathname)?.[1]
+        stubCalls.push({
+          method: req.method,
+          path: new URL(req.url).pathname,
+          authorized: req.headers.get('authorization') === `Bearer ${STUB_API_KEY}`,
+          body: await req.json().catch(() => null),
+        })
+        const answer = (id && STUB_ANSWERS[id]) || { status: 200 }
+        return Response.json(
+          answer.code ? { error: { code: answer.code, detail: 'replay stub' } } : { data: {} },
+          { status: answer.status },
+        )
+      },
+    })
+  : null
+
 const extraVars = [
+  ...(stub
+    ? [
+        'NUXT_BILLING_CANCEL_ON_DELETION=true',
+        `NUXT_PADDLE_API_KEY=${STUB_API_KEY}`,
+        `NUXT_PADDLE_API_BASE=http://127.0.0.1:${stub.port}`,
+      ]
+    : []),
   ...flagAll('--extra-var'),
   ...(args.includes('--shared-account')
     ? [`NUXT_PADDLE_PRODUCT_ID=${PRODUCT_OWN}`, 'NUXT_BILLING_ALERT_UNMATCHED_ADJUSTMENTS=false']
@@ -185,7 +230,9 @@ async function waitReady() {
 }
 
 // ── 3. Sessions: sealed exactly the way h3/nuxt-auth-utils seal them ─────────
-async function sessionCookie(user: (typeof USERS)[keyof typeof USERS]): Promise<string> {
+async function sessionCookie(
+  user: (typeof USERS)[keyof typeof USERS] | (typeof CANCEL_USERS)[keyof typeof CANCEL_USERS],
+): Promise<string> {
   const session = {
     id: crypto.randomUUID(),
     createdAt: Date.now(),
@@ -307,11 +354,13 @@ interface StepResult {
   body?: unknown
 }
 
-const cookies = {
+const cookies: Record<UserKey, string> = {
   buyer: await sessionCookie(USERS.buyer),
   live: await sessionCookie(USERS.live),
   free: await sessionCookie(USERS.free),
   admin: await sessionCookie(USERS.admin),
+  blocked: await sessionCookie(CANCEL_USERS.blocked),
+  settled: await sessionCookie(CANCEL_USERS.settled),
 }
 
 async function run(step: Step): Promise<StepResult> {
@@ -400,7 +449,7 @@ function dumpTables() {
 try {
   await waitReady()
   const results: StepResult[] = []
-  for (const step of buildSteps()) results.push(await run(step))
+  for (const step of buildSteps({ cancelOnDeletion })) results.push(await run(step))
   if (process.env.REPLAY_HOLD) {
     // Debugging aid: leave the Worker up until the named file is deleted.
     writeFileSync(process.env.REPLAY_HOLD, `${cookies.live}\n`)
@@ -420,6 +469,7 @@ try {
       results,
       tables: dumpTables(),
       logs: logRecords(),
+      ...(cancelOnDeletion ? { paddleApi: stubCalls } : {}),
     }),
   )
   const text = JSON.stringify(dump, null, 2) + '\n'
@@ -428,6 +478,7 @@ try {
   else process.stdout.write(text)
 } finally {
   stopWorker('SIGKILL')
+  stub?.stop(true)
   rmSync(join(root, '.output/server/.dev.vars'), { force: true })
   if (!process.env.REPLAY_STATE_DIR) rmSync(stateDir, { recursive: true, force: true })
 }

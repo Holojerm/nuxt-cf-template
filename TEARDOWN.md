@@ -60,7 +60,7 @@ with core. Also delete `server/plugins/referral.ts`, `server/utils/referral-bill
 `server/utils/referral-view.ts` if referrals are still there (step 1 should have removed them).
 
 Core imports none of it, so nothing else in core needs editing: account deletion is
-unguarded, the data export drops `entitlements`, `/api/fleet` drops its `entitlements` group
+unguarded (and cancels nothing at Paddle), the data export drops `entitlements`, `/api/fleet` drops its `entitlements` group
 and reports `funnel.paid` as 0, the lifecycle run drops `pass_expiring`, the nightly purge
 drops the `paddleEvents` sweep, and `shared/utils/onboarding-steps.ts` loses its
 `entitlementActive` input (drop the `plan` step there). In a fork that vendored the layer,

@@ -16,6 +16,9 @@ import {
   clearExtensionsForTest,
   getAdminViewAsContributors,
   getDeletionGuards,
+  getDeletionResolvers,
+  registerDeletionGuard,
+  registerDeletionResolver,
   getRegisteredLifecycleSteps,
 } from '../server/utils/extensions'
 import { collectFleetCounters } from '../server/utils/fleet-status'
@@ -61,6 +64,10 @@ describe('core without feature contributors', () => {
     expect(await deleteAccount(db, USER)).toEqual({ outcome: 'deleted' })
   })
 
+  it('has no deletion resolver either, so nothing runs before the delete', async () => {
+    expect(getDeletionResolvers()).toEqual([])
+  })
+
   it('exports without an entitlements section', async () => {
     expect(await exportAccount(db, USER)).not.toHaveProperty('entitlements')
   })
@@ -98,5 +105,89 @@ describe('requireAccess with no gate registered', () => {
       throw Object.assign(new Error('Unauthorized'), { statusCode: 401 })
     })
     await expect(requireAccess({} as never)).rejects.toMatchObject({ statusCode: 401 })
+  })
+})
+
+// The seam billing's cancel-on-deletion option uses (layers/billing). Core's
+// side of the contract: when resolvers run, and what a refusal leaves behind.
+describe('deletion resolvers', () => {
+  afterEach(() => clearExtensionsForTest())
+
+  it('runs after the guards, and not at all when a guard refuses', async () => {
+    const order: string[] = []
+    registerDeletionGuard({
+      key: 'guard',
+      check: async () => {
+        order.push('guard')
+        return { code: 'no', message: 'No.' }
+      },
+    })
+    registerDeletionResolver({
+      key: 'resolver',
+      resolve: async () => {
+        order.push('resolver')
+        return null
+      },
+    })
+
+    expect(await deleteAccount(db, USER)).toMatchObject({ outcome: 'blocked', code: 'no' })
+    expect(order).toEqual(['guard'])
+  })
+
+  it('lets deletion go on when it returns null, before the audit row exists', async () => {
+    let auditRowsSeen = -1
+    registerDeletionResolver({
+      key: 'resolver',
+      resolve: async () => {
+        auditRowsSeen = (await db.query.auditLog.findMany()).length
+        return null
+      },
+    })
+
+    expect(await deleteAccount(db, USER)).toEqual({ outcome: 'deleted' })
+    expect(auditRowsSeen).toBe(0)
+  })
+
+  it('turns a returned block into the same blocked outcome, leaving the account untouched', async () => {
+    registerDeletionResolver({
+      key: 'resolver',
+      resolve: async () => ({ code: 'cannot', message: 'Could not.', data: { why: 'x' } }),
+    })
+
+    expect(await deleteAccount(db, USER)).toEqual({
+      outcome: 'blocked',
+      code: 'cannot',
+      message: 'Could not.',
+      data: { why: 'x' },
+    })
+    expect((await db.query.users.findFirst())?.email).toBe('ext@example.com')
+    expect(await db.query.auditLog.findMany()).toHaveLength(0)
+  })
+
+  it('first refusal wins, and later resolvers do not run', async () => {
+    const ran: string[] = []
+    registerDeletionResolver({
+      key: 'a',
+      resolve: async () => {
+        ran.push('a')
+        return { code: 'a_no', message: 'A.' }
+      },
+    })
+    registerDeletionResolver({
+      key: 'b',
+      resolve: async () => {
+        ran.push('b')
+        return null
+      },
+    })
+
+    expect(await deleteAccount(db, USER)).toMatchObject({ code: 'a_no' })
+    expect(ran).toEqual(['a'])
+  })
+
+  it('is forgotten by clearExtensionsForTest', () => {
+    registerDeletionResolver({ key: 'a', resolve: async () => null })
+    clearExtensionsForTest()
+    expect(getDeletionResolvers()).toEqual([])
   })
 })

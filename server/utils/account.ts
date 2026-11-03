@@ -27,7 +27,12 @@ import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
 import type { AuditMetadata } from '../db/schema'
 import { withAudit, writeAudit } from './audit'
-import { collectSections, getAccountContributors, getDeletionGuards } from './extensions'
+import {
+  collectSections,
+  getAccountContributors,
+  getDeletionGuards,
+  getDeletionResolvers,
+} from './extensions'
 import type { AccountExportSections } from './extensions'
 import { OPTIONAL_NOTIFICATION_EVENT_TYPES } from '#shared/utils/notifications'
 
@@ -79,6 +84,11 @@ export type DeleteAccountOutcome =
  * Passes and comps (`txn_…`, `comp_…`) don't block: nothing renews them, so
  * deleting the account simply forfeits whatever time was left.
  *
+ * An app can instead have billing cancel the subscription for the person
+ * (`billing.cancelOnDeletion`): billing then registers a DeletionResolver
+ * rather than the guard, which runs here after the guards and refuses the same
+ * way, with the same code, if Paddle will not confirm the cancel.
+ *
  * ── Audit before act ─────────────────────────────────────────────────────────
  * Row counts are read FIRST — server/utils/audit.ts's policy is that an audit
  * row describes intent, not outcome, and "how many rows this is about to
@@ -92,6 +102,13 @@ export async function deleteAccount(db: AccountDb, userId: string): Promise<Dele
 
   for (const guard of getDeletionGuards()) {
     const block = await guard.check(db, userId)
+    if (block) return { outcome: 'blocked', ...block, data: block.data ?? {} }
+  }
+
+  // Only once nothing refuses: a resolver may act (billing cancels the
+  // subscription at Paddle), and must not run for a request a guard turns away.
+  for (const resolver of getDeletionResolvers()) {
+    const block = await resolver.resolve(db, userId)
     if (block) return { outcome: 'blocked', ...block, data: block.data ?? {} }
   }
 
