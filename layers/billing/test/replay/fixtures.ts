@@ -32,6 +32,36 @@ export const USERS: Record<'buyer' | 'live' | 'free' | 'admin', ReplayUser> = {
   admin: { id: 'usr_replay_admin', email: 'admin@replay.test', name: 'Admin', role: 'admin' },
 }
 
+/**
+ * Only in the `--cancel-on-deletion` run, each holding a live subscription the
+ * stub Paddle API answers differently when account deletion tries to cancel it.
+ * Kept out of USERS so the default run's users table is untouched.
+ */
+export const CANCEL_USERS: Record<'blocked' | 'settled', ReplayUser> = {
+  /** The stub answers 403 (a key without Subscriptions: write): deletion must be refused. */
+  blocked: {
+    id: 'usr_replay_blocked',
+    email: 'blocked@replay.test',
+    name: 'Blocked',
+    role: 'user',
+  },
+  /** The stub says the subscription is already cancelled: that counts as success. */
+  settled: {
+    id: 'usr_replay_settled',
+    email: 'settled@replay.test',
+    name: 'Settled',
+    role: 'user',
+  },
+}
+
+export type UserKey = keyof typeof USERS | keyof typeof CANCEL_USERS
+
+/** What the stub answers for a subscription id; everything else gets 200. */
+export const STUB_ANSWERS: Record<string, { status: number; code?: string }> = {
+  sub_replay_blocked: { status: 403, code: 'forbidden' },
+  sub_replay_settled: { status: 400, code: 'subscription_is_canceled_action_invalid' },
+}
+
 /** `ts` offsets the signature timestamp from now, in seconds (negative = old). */
 export type Signing =
   | { kind: 'valid' }
@@ -51,7 +81,7 @@ export interface RequestStep {
   name: string
   method: 'GET' | 'POST'
   path: string
-  as: keyof typeof USERS | 'fleet' | 'anonymous'
+  as: UserKey | 'fleet' | 'anonymous'
   json?: unknown
 }
 
@@ -172,8 +202,17 @@ const post = (name: string, path: string, as: RequestStep['as'], json: unknown):
   json,
 })
 
+export interface BuildOptions {
+  /**
+   * Run as an app with `billing.cancelOnDeletion` on, against a stub Paddle API:
+   * deletion cancels live subscriptions first. Off (the default), the steps are
+   * exactly those of a build without the option.
+   */
+  cancelOnDeletion?: boolean
+}
+
 /** The full replay, in delivery order. */
-export function buildSteps(): Step[] {
+export function buildSteps(options: BuildOptions = {}): Step[] {
   seq = 0
   const buyer = USERS.buyer.id
   const live = USERS.live.id
@@ -504,6 +543,23 @@ export function buildSteps(): Step[] {
     ),
   )
 
+  if (options.cancelOnDeletion) {
+    for (const user of Object.values(CANCEL_USERS)) {
+      const id = `sub_replay_${user.id.replace('usr_replay_', '')}`
+      steps.push(
+        hook(
+          `${user.name.toLowerCase()} customer: subscription created`,
+          event({
+            id,
+            type: 'subscription.created',
+            at: T(25, 2),
+            data: subscription(user.id, id, 'active', T(28)),
+          }),
+        ),
+      )
+    }
+  }
+
   // ── What the rest of the app says once all that has happened ────────────────
   steps.push(get('entitlement: final (buyer)', '/api/billing/entitlement', 'buyer'))
   steps.push(get('entitlement: final (live customer)', '/api/billing/entitlement', 'live'))
@@ -526,20 +582,70 @@ export function buildSteps(): Step[] {
     post('delete account: signed out (401)', '/api/account/delete', 'anonymous', {
       confirmEmail: USERS.free.email,
     }),
-    post('delete account: live subscription refused (409)', '/api/account/delete', 'live', {
-      confirmEmail: USERS.live.email,
-    }),
+  )
+  if (options.cancelOnDeletion) {
+    // With the option on the same customer is not refused: Paddle (the stub) is
+    // asked to cancel, then the account is deleted; a refused cancel refuses the
+    // deletion; and the cancel's echo for a deleted customer is a 200 no-op.
+    steps.push(
+      post(
+        'delete account: stub refuses the cancel, nothing deleted (409)',
+        '/api/account/delete',
+        'blocked',
+        {
+          confirmEmail: CANCEL_USERS.blocked.email,
+        },
+      ),
+      post(
+        'delete account: live subscription cancelled, then deleted (200)',
+        '/api/account/delete',
+        'live',
+        {
+          confirmEmail: USERS.live.email,
+        },
+      ),
+      hook(
+        'the cancel’s echo for the deleted customer (200, no alert)',
+        event({
+          id: 'sub_replay_live',
+          type: 'subscription.canceled',
+          at: T(26, 1),
+          data: subscription(live, 'sub_replay_live', 'canceled', T(28), {
+            canceled_at: T(26, 1),
+          }),
+        }),
+      ),
+      post(
+        'delete account: already cancelled at Paddle counts as cancelled (200)',
+        '/api/account/delete',
+        'settled',
+        {
+          confirmEmail: CANCEL_USERS.settled.email,
+        },
+      ),
+    )
+  } else {
+    steps.push(
+      post('delete account: live subscription refused (409)', '/api/account/delete', 'live', {
+        confirmEmail: USERS.live.email,
+      }),
+    )
+  }
+  steps.push(
     post('delete account: plain account (200)', '/api/account/delete', 'free', {
       confirmEmail: USERS.free.email,
     }),
   )
-  steps.push({
-    type: 'request',
-    name: 'portal link without an API key (503)',
-    method: 'POST',
-    path: '/api/billing/portal',
-    as: 'buyer',
-    json: {},
-  })
+  // The stub run has a key configured; this step is the no-key refusal.
+  if (!options.cancelOnDeletion) {
+    steps.push({
+      type: 'request',
+      name: 'portal link without an API key (503)',
+      method: 'POST',
+      path: '/api/billing/portal',
+      as: 'buyer',
+      json: {},
+    })
+  }
   return steps
 }

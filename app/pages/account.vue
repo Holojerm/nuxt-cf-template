@@ -674,7 +674,11 @@ useSeo({
               variant="subtle"
               icon="i-lucide-triangle-alert"
               title="Cancel your subscription first"
-              description="Deleting your account wouldn't stop the charges — Paddle owns the subscription, not this account. Cancel it from the billing portal, then come back and delete."
+              :description="
+                billing?.cancelsOnDeletion
+                  ? 'We couldn\'t cancel your subscription, so nothing was deleted. Cancel it from the billing portal, then come back and delete.'
+                  : 'Deleting your account wouldn\'t stop the charges — Paddle owns the subscription, not this account. Cancel it from the billing portal, then come back and delete.'
+              "
             />
             <UButton
               :loading="portalPending"
@@ -697,6 +701,9 @@ useSeo({
               <ULink to="/privacy" class="text-primary underline underline-offset-2">
                 Privacy Policy </ULink
               >. There's no undo after this.
+            </p>
+            <p v-if="billing?.cancelsOnDeletion && billing.cancellable" class="text-muted">
+              Your subscription will be cancelled immediately and won't renew.
             </p>
             <UFormField label="Type your email to confirm" name="confirm-email">
               <UInput

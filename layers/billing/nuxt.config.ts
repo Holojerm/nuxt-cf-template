@@ -44,6 +44,10 @@ export default defineNuxtConfig({
       // product is logged as `paddle_webhook_foreign_product` instead of
       // raising an "unrecognised price" ops alert. A wrangler var, not a secret.
       productId: '',
+      // Paddle API host override (NUXT_PADDLE_API_BASE). Empty = Paddle's own
+      // host for the environment. Only the replay script and tests set it, to
+      // point the client at a stub: the API key is sent wherever this points.
+      apiBase: '',
     },
     // Options for apps; defaults are the template's behaviour.
     billing: {
@@ -61,6 +65,16 @@ export default defineNuxtConfig({
       // can still bill. Turn it off only when the app's own deletion flow
       // cancels the subscription at Paddle itself and fails closed.
       guardDeletion: true,
+      // Cancel the person's live subscription at Paddle, immediately, when they
+      // delete their account, rather than refusing until they cancel in the
+      // portal. Fails closed: if Paddle will not confirm, nothing is deleted and
+      // the 409 is returned. Needs Subscriptions: write on the API key. Replaces
+      // the guard (guardDeletion is then moot).
+      cancelOnDeletion: false,
+      // The 409 `data.code` for a deletion refused over a live subscription.
+      // The template's account page reads `live_subscription`; an app with its
+      // own client changes it.
+      deletionRefusalCode: 'live_subscription',
       // Send the customer emails billing decides on (purchase, payment failed,
       // access ended, comp granted and revoked). Turn it off for an app that
       // sends no customer email: nothing is looked up, rendered, sent or logged.

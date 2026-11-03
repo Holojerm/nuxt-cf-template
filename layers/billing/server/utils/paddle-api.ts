@@ -5,12 +5,22 @@
 // /account calls this, and without the key every call 503s and the toast
 // names the support address. No "reply to your receipt" fallback, by design.
 //
+// The key needs `customer_portal_session.write` for the portal and, with
+// `billing.cancelOnDeletion` on, `subscription.write` for cancelSubscription()
+// below (Developer tools › Authentication).
+//
 // Docs: developer.paddle.com/build/customers/integrate-customer-portal
 
 const SANDBOX_BASE = 'https://sandbox-api.paddle.com'
 const PRODUCTION_BASE = 'https://api.paddle.com'
 
-export function paddleApiBase(environment: string): string {
+/**
+ * `override` is NUXT_PADDLE_API_BASE: empty (the default) means Paddle's own
+ * host. It exists so the replay script and tests can point the client at a stub;
+ * the API key is sent wherever it points, so a deployment never sets it.
+ */
+export function paddleApiBase(environment: string, override = ''): string {
+  if (override) return override.replace(/\/+$/, '')
   return environment === 'production' ? PRODUCTION_BASE : SANDBOX_BASE
 }
 
@@ -44,11 +54,12 @@ interface PortalSessionResponse {
 export async function createPortalSession(opts: {
   apiKey: string
   environment: string
+  apiBase?: string
   customerId: string
   subscriptionIds?: string[]
 }): Promise<PortalLinks> {
   const res = await fetch(
-    `${paddleApiBase(opts.environment)}/customers/${opts.customerId}/portal-sessions`,
+    `${paddleApiBase(opts.environment, opts.apiBase)}/customers/${opts.customerId}/portal-sessions`,
     {
       method: 'POST',
       headers: {
@@ -73,4 +84,72 @@ export async function createPortalSession(opts: {
     cancelUrl: sub?.cancel_subscription ?? null,
     updatePaymentMethodUrl: sub?.update_subscription_payment_method ?? null,
   }
+}
+
+/**
+ * A failed Paddle call, reduced to what is safe to log: the HTTP status (0 when
+ * no response arrived) and Paddle's short snake_case error code. The response
+ * body is never kept — it can echo customer data — and neither is the key.
+ */
+export class PaddleApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string | null,
+  ) {
+    super(`Paddle API error: status ${status}, code ${code ?? 'none'}`)
+    this.name = 'PaddleApiError'
+  }
+}
+
+/** Paddle's answer when asked to cancel something already canceled. Final state, so not a failure. */
+const ALREADY_CANCELED_CODES = [
+  'subscription_is_canceled_action_invalid',
+  'subscription_update_when_canceled',
+]
+
+const CANCEL_TIMEOUT_MS = 10_000
+
+/**
+ * Cancel a subscription immediately: `POST /subscriptions/{id}/cancel` with
+ * `effective_from: "immediately"`. Needs the `subscription.write` permission on
+ * the API key; without it Paddle answers 403 and this throws.
+ *
+ * Resolves `'already_canceled'` when Paddle reports the subscription is already
+ * canceled — that state is final, so the goal (it will not bill again) holds.
+ * Every other failure throws a PaddleApiError.
+ */
+export async function cancelSubscription(opts: {
+  apiKey: string
+  environment: string
+  apiBase?: string
+  subscriptionId: string
+}): Promise<'canceled' | 'already_canceled'> {
+  let res: Response
+  try {
+    res = await fetch(
+      `${paddleApiBase(opts.environment, opts.apiBase)}/subscriptions/${encodeURIComponent(opts.subscriptionId)}/cancel`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${opts.apiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ effective_from: 'immediately' }),
+        signal: AbortSignal.timeout(CANCEL_TIMEOUT_MS),
+      },
+    )
+  } catch {
+    throw new PaddleApiError(0, 'network_error')
+  }
+  if (res.ok) return 'canceled'
+
+  let code: string | null = null
+  try {
+    const raw = ((await res.json()) as { error?: { code?: unknown } }).error?.code
+    if (typeof raw === 'string' && /^[a-z0-9_]{1,64}$/.test(raw)) code = raw
+  } catch {
+    // Not JSON (a gateway page): status alone is the signal.
+  }
+  if (res.status === 400 && code && ALREADY_CANCELED_CODES.includes(code)) return 'already_canceled'
+  throw new PaddleApiError(res.status, code)
 }

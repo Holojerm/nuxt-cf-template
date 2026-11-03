@@ -14,9 +14,12 @@ import { drizzle } from 'drizzle-orm/d1'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '~~/server/db/schema'
+import { deleteAccount } from '~~/server/utils/account'
+import { clearExtensionsForTest } from '~~/server/utils/extensions'
 import { pathForLog } from '~~/server/utils/log'
 import { recordOpsEvent } from '~~/server/utils/ops'
 import { paddleSubscriptionEvent } from '#shared/utils/analytics-events'
+import { registerBillingExtensions } from '../server/utils/billing-extensions'
 import {
   clearBillingOutcomeHandlersForTest,
   isUnknownUserExpected,
@@ -29,6 +32,7 @@ import {
   applyPaddleEvent,
   paddleEventSchema,
 } from '../server/utils/entitlements'
+import { clearEntitlementViewFieldsForTest } from '../server/utils/entitlement-view-fields'
 import { verifyPaddleSignature } from '../server/utils/paddle'
 import { isForeignProduct, paddlePriceCatalogue } from '../server/utils/paddle-prices'
 
@@ -100,6 +104,8 @@ beforeEach(async () => {
 
 afterEach(() => {
   clearBillingOutcomeHandlersForTest()
+  clearExtensionsForTest()
+  clearEntitlementViewFieldsForTest()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -237,6 +243,58 @@ describe('what it acknowledges but flags', () => {
       await deliver(canceled('user-ghost'))
 
       expect(await opsKinds()).toEqual(['paddle_webhook_unknown_user'])
+    })
+  })
+
+  describe('the echo of billing.cancelOnDeletion’s own cancel', () => {
+    const echo = (userId: string, status = 'canceled', type = 'subscription.canceled') =>
+      paddleEvent(type, {
+        id: 'sub_route_echo',
+        status,
+        custom_data: { userId },
+        items: [{ price: { id: PRICE_MONTHLY, product_id: OWN_PRODUCT } }],
+      })
+
+    beforeEach(() => {
+      registerBillingExtensions(
+        { cancelOnDeletion: true },
+        { cancelSubscription: async () => 'canceled' },
+      )
+    })
+
+    it('for a deleted account that kept its tombstone row: applied to the retained entitlement, 200, no alert', async () => {
+      await db.insert(schema.entitlements).values({
+        userId: USER,
+        paddleSubscriptionId: 'sub_route_echo',
+        status: 'active',
+        productKey: 'default',
+      })
+      expect(await deleteAccount(db, USER)).toEqual({ outcome: 'deleted' })
+
+      expect((await deliver(echo(USER))).status).toBe(200)
+
+      expect(await opsKinds()).toEqual([])
+      const [row] = await db.select().from(schema.entitlements)
+      expect(row?.status).toBe('canceled')
+    })
+
+    it('for an account whose row is gone: 200, an info log and no alert', async () => {
+      expect((await deliver(echo('user-ghost'))).status).toBe(200)
+
+      expect(await opsKinds()).toEqual([])
+      expect(logs.info).toHaveBeenCalledWith(
+        expect.stringContaining('"kind":"paddle_webhook_after_deletion"'),
+      )
+    })
+
+    it('stays narrow: anything but a cancelled subscription for a missing account still alerts', async () => {
+      await deliver(echo('user-ghost', 'active', 'subscription.created'))
+      await deliver(purchase(PRICE_PASS, null, 'user-ghost'))
+
+      expect(await opsKinds()).toEqual([
+        'paddle_webhook_unknown_user',
+        'paddle_webhook_unknown_user',
+      ])
     })
   })
 

@@ -12,16 +12,27 @@
 import { and, count, countDistinct, desc, eq, inArray, like, lt, or } from 'drizzle-orm'
 import * as tables from '../db/schema'
 import { requireSubscription } from './billing'
-import { setBillingNotify } from './billing-notifications'
+import {
+  DEFAULT_DELETION_REFUSAL_CODE,
+  createCancelOnDeletionResolver,
+  findLiveSubscriptionRefs,
+  isCancelEchoAfterDeletion,
+  paddleCancelFromConfig,
+} from './billing-deletion'
+import type { CancelSubscription } from './billing-deletion'
+import { registerUnknownUserExpectation } from './billing-outcome'
+import { registerEntitlementViewFields } from './entitlement-view-fields'
+import { setBillingNotify, setSkipUndeliverableRecipients } from './billing-notifications'
 import { passExpiringStep } from './billing-lifecycle'
 import { buildEntitlementView } from './entitlement-view'
 import type { EntitlementView } from './entitlement-view'
-import { isBillingLive, setPassDays, setStackAtBilled } from './entitlements'
+import { setPassDays, setStackAtBilled } from './entitlements'
 import {
   registerAccountContributor,
   registerAdminUserContributor,
   registerAdminViewAsContributor,
   registerDeletionGuard,
+  registerDeletionResolver,
   registerFleetCounterContributor,
   registerFunnelStageContributor,
   registerLifecycleStep,
@@ -30,7 +41,6 @@ import {
 } from '#server/utils/extensions'
 import type { ExtensionDb } from '#server/utils/extensions'
 import { registerAccessGate } from '#server/utils/access-gate'
-import { isSubscriptionRef } from './paddle-refs'
 import { PURGE_BATCH_LIMIT } from '#server/utils/purge'
 
 /** One entitlement as the data export shows it. */
@@ -55,6 +65,17 @@ declare module '#server/utils/extensions' {
   }
   interface FleetCounterSections {
     entitlements: { byStatus: Record<string, number> }
+  }
+}
+
+declare module '#layers/billing/server/utils/entitlement-view-fields' {
+  interface EntitlementViewFields {
+    /**
+     * Present (true) only with `billing.cancelOnDeletion` on: deleting the
+     * account cancels a live subscription first. The account page words its
+     * delete modal from it.
+     */
+    cancelsOnDeletion?: boolean
   }
 }
 
@@ -84,20 +105,9 @@ export async function findLiveSubscriptionRef(
   db: ExtensionDb,
   userId: string,
 ): Promise<string | null> {
-  const rows = await db
-    .select({
-      paddleSubscriptionId: tables.entitlements.paddleSubscriptionId,
-      status: tables.entitlements.status,
-      // Both columns isBillingLive reads. Without the scheduled change, an
-      // already-cancelled subscription reads as live for its whole notice
-      // period and blocks deletion for months.
-      scheduledChangeAction: tables.entitlements.scheduledChangeAction,
-    })
-    .from(tables.entitlements)
-    .where(eq(tables.entitlements.userId, userId))
-
-  const live = rows.find((row) => isSubscriptionRef(row.paddleSubscriptionId) && isBillingLive(row))
-  return live?.paddleSubscriptionId ?? null
+  // The scan lives in billing-deletion.ts beside the cancel path, which needs
+  // every live id; this is its first.
+  return (await findLiveSubscriptionRefs(db, userId))[0] ?? null
 }
 
 /** Per-app choices, from `runtimeConfig.billing` (layers/billing/nuxt.config.ts). */
@@ -112,6 +122,21 @@ export interface BillingOptions {
    * when Paddle's webhook arrives.
    */
   guardDeletion?: boolean
+  /**
+   * Cancel the person's live subscriptions at Paddle, immediately, when they
+   * delete their account, instead of refusing until they have done it in the
+   * portal. Default false. On, billing registers a DeletionResolver in place of
+   * the guard (so `guardDeletion` is moot) and deletion fails closed: if any
+   * cancel fails the 409 is the guard's, same code. Needs `subscription.write`
+   * on NUXT_PADDLE_API_KEY. See billing-deletion.ts.
+   */
+  cancelOnDeletion?: boolean
+  /**
+   * The 409 `data.code` for a deletion refused over a live subscription, by the
+   * guard and by a failed cancel alike. Default `live_subscription`, which the
+   * template's account page reads. An app with its own client sets its own.
+   */
+  deletionRefusalCode?: string
   /**
    * Send the customer emails (purchase, payment failed, access ended, comp
    * granted and revoked). Default true. An app that sends no customer email
@@ -128,7 +153,15 @@ export interface BillingOptions {
   stackAtBilledAt?: boolean
 }
 
-export function registerBillingExtensions(options: BillingOptions = {}): void {
+/** Test seam: replace the Paddle call the cancel-on-deletion resolver makes. */
+export interface BillingExtensionDeps {
+  cancelSubscription?: CancelSubscription
+}
+
+export function registerBillingExtensions(
+  options: BillingOptions = {},
+  deps: BillingExtensionDeps = {},
+): void {
   if (options.passDays !== undefined) setPassDays(options.passDays)
   if (options.notify !== undefined) setBillingNotify(options.notify)
   if (options.stackAtBilledAt !== undefined) setStackAtBilled(options.stackAtBilledAt)
@@ -137,14 +170,36 @@ export function registerBillingExtensions(options: BillingOptions = {}): void {
   // subscription's billing lifecycle independently: refusing up front, and
   // pointing at the portal, is the one place friction protects the customer.
   // The wire contract (409, data.code) is read by app/pages/account.vue.
-  if (options.guardDeletion !== false) {
+  setSkipUndeliverableRecipients(options.cancelOnDeletion === true)
+  const refusalCode = options.deletionRefusalCode || DEFAULT_DELETION_REFUSAL_CODE
+  if (options.cancelOnDeletion === true) {
+    // The resolver is the guard here: it refuses, with the guard's code, when it
+    // cannot cancel. Registering the guard too would refuse before it could run,
+    // because a row only turns `canceled` when Paddle's webhook arrives.
+    registerDeletionResolver(
+      createCancelOnDeletionResolver({
+        refusalCode,
+        cancel: deps.cancelSubscription ?? paddleCancelFromConfig(),
+      }),
+    )
+    // The echo of our own cancel (`subscription.canceled`) arrives after the
+    // account is gone. Here the tombstone row keeps the entitlement, so it is
+    // applied (and the access-ended email to the `.invalid` address is skipped).
+    // For an app whose deletion removes the row it names no account: expected,
+    // not an alert.
+    registerUnknownUserExpectation('billing-cancel-on-deletion', isCancelEchoAfterDeletion)
+    registerEntitlementViewFields({
+      key: 'billing-deletion',
+      view: () => ({ cancelsOnDeletion: true }),
+    })
+  } else if (options.guardDeletion !== false) {
     registerDeletionGuard({
       key: 'billing',
       async check(db, userId) {
         const subscriptionId = await findLiveSubscriptionRef(db, userId)
         if (!subscriptionId) return null
         return {
-          code: 'live_subscription',
+          code: refusalCode,
           message:
             'Deleting your account would not stop the charges — Paddle owns the subscription, ' +
             'not this account. Cancel it from the billing portal first, then delete your account.',

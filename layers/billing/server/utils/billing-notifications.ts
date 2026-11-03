@@ -22,6 +22,7 @@
 import type { EntitlementDb as Db } from './entitlements'
 import type { PaddleEventOutcome } from './entitlements'
 import type { EmailContent } from '#server/utils/email-templates'
+import { isUndeliverableAddress } from '#server/utils/users'
 
 // ── The off switch ──────────────────────────────────────────────────────────
 // `runtimeConfig.billing.notify` (applied at startup by registerBillingExtensions).
@@ -33,6 +34,17 @@ let notifyEnabled = true
 /** Turn the customer emails below on or off. Called once at startup. */
 export function setBillingNotify(enabled: boolean): void {
   notifyEnabled = enabled
+}
+
+// Off by default. `billing.cancelOnDeletion` turns it on: the cancel it makes
+// at Paddle is echoed by a `subscription.canceled` for an account that is now a
+// tombstone (`deleted-<id>@deleted.invalid`), and "your access has ended" to an
+// address that can never receive it is noise, so those recipients are skipped.
+let skipUndeliverable = false
+
+/** Skip notices to undeliverable (tombstone) addresses. Called once at startup. */
+export function setSkipUndeliverableRecipients(enabled: boolean): void {
+  skipUndeliverable = enabled
 }
 
 /** Statuses that mean "the customer has access right now". */
@@ -166,6 +178,7 @@ export async function notifyBillingOutcome(
       console.warn(JSON.stringify({ kind: 'billing_email_no_user', userId }))
       return
     }
+    if (skipUndeliverable && isUndeliverableAddress(user.email)) return
 
     const brand = emailBranding()
     const content =

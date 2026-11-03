@@ -114,6 +114,14 @@ export const AUDIT_ACTIONS = [
    */
   'account.deleted',
   /**
+   * Account deletion is about to ask Paddle to cancel a live subscription
+   * immediately — `actorType: 'user'`. Written BEFORE the call, so it records
+   * intent, not outcome (a refused call leaves this row and no `account.deleted`).
+   * Metadata carries the `sub_` id only. Written by the billing layer, and only
+   * with `billing.cancelOnDeletion` on.
+   */
+  'account.subscription_cancel_requested',
+  /**
    * A person signed out of every device from /account — `actorType: 'user'`.
    * Records that `sessions_invalid_before` moved (metadata: the watermark),
    * which is otherwise invisible: it kills cookies, and cookies leave no rows.
