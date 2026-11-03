@@ -54,7 +54,88 @@ export const CANCEL_USERS: Record<'blocked' | 'settled', ReplayUser> = {
   },
 }
 
-export type UserKey = keyof typeof USERS | keyof typeof CANCEL_USERS
+/**
+ * The referral loop's cast. All inserted with the other users, so they exist
+ * before the first request. `referredBy` is the referrer's code, resolved at
+ * signup in a real app and written directly here.
+ */
+export const REFERRAL_CODE = 'RFRR2222'
+/** Well-formed (so the attribution schema keeps it) but held by nobody. */
+export const UNHELD_CODE = 'ZZZZ2222'
+
+export interface ReferralReplayUser extends ReplayUser {
+  referralCode: string | null
+  referredBy: string | null
+}
+
+export const REFERRAL_USERS: Record<
+  'referrer' | 'refereePass' | 'refereeSub' | 'twin',
+  ReferralReplayUser
+> = {
+  /** Holds the code the others arrive on, and is paid when they do. */
+  referrer: {
+    id: 'usr_replay_referrer',
+    email: 'referrer@replay.test',
+    name: 'Referrer',
+    role: 'user',
+    referralCode: REFERRAL_CODE,
+    referredBy: null,
+  },
+  /** Arrived on the code; buys a pass, which is later refunded. */
+  refereePass: {
+    id: 'usr_replay_referee_pass',
+    email: 'referee.pass@replay.test',
+    name: 'Referee Pass',
+    role: 'user',
+    referralCode: 'RFEP2222',
+    referredBy: REFERRAL_CODE,
+  },
+  /** Arrived on the code; subscribes, then a chargeback is raised and won. */
+  refereeSub: {
+    id: 'usr_replay_referee_sub',
+    email: 'referee.sub@replay.test',
+    name: 'Referee Sub',
+    role: 'user',
+    referralCode: 'RFES2222',
+    referredBy: REFERRAL_CODE,
+  },
+  /** The referrer's own mailbox under a +tag: a self-referral, paid nothing. */
+  twin: {
+    id: 'usr_replay_twin',
+    email: 'referrer+twin@replay.test',
+    name: 'Twin',
+    role: 'user',
+    referralCode: 'RTWN2222',
+    referredBy: REFERRAL_CODE,
+  },
+}
+
+/**
+ * Sign-ins that CREATE an account, through the real magic-link route: a token
+ * row per person is written to D1 (its SHA-256 is all the server ever stores)
+ * and redeemed with POST /api/auth/magic-link/verify. The response's session
+ * cookie is kept under `key`, so later steps can be that person.
+ */
+export const MAGIC_LINK_SIGNUPS = {
+  /** Arrives on the referrer's code: gets the welcome days. */
+  invitee: {
+    token: 'replay-token-invitee-0123456789abcdefghijklmn',
+    email: 'invitee@replay.test',
+    referralCode: REFERRAL_CODE,
+  },
+  /** Arrives on a code nobody holds: an ordinary signup. */
+  stranger: {
+    token: 'replay-token-stranger-0123456789abcdefghijklm',
+    email: 'stranger@replay.test',
+    referralCode: UNHELD_CODE,
+  },
+} as const
+
+export type UserKey =
+  | keyof typeof USERS
+  | keyof typeof CANCEL_USERS
+  | keyof typeof REFERRAL_USERS
+  | keyof typeof MAGIC_LINK_SIGNUPS
 
 /** What the stub answers for a subscription id; everything else gets 200. */
 export const STUB_ANSWERS: Record<string, { status: number; code?: string }> = {
@@ -83,6 +164,8 @@ export interface RequestStep {
   path: string
   as: UserKey | 'fleet' | 'anonymous'
   json?: unknown
+  /** Keep the session cookie this response sets, as this user. */
+  capture?: keyof typeof MAGIC_LINK_SIGNUPS
 }
 
 export type Step = WebhookStep | RequestStep
@@ -193,16 +276,30 @@ const get = (name: string, path: string, as: RequestStep['as']): RequestStep => 
   as,
 })
 
-const post = (name: string, path: string, as: RequestStep['as'], json: unknown): RequestStep => ({
+const post = (
+  name: string,
+  path: string,
+  as: RequestStep['as'],
+  json: unknown,
+  capture?: RequestStep['capture'],
+): RequestStep => ({
   type: 'request',
   name,
   method: 'POST',
   path,
   as,
   json,
+  ...(capture ? { capture } : {}),
 })
 
 export interface BuildOptions {
+  /**
+   * Include the referral loop: welcome days through a real sign-in, a
+   * referrer's reward on a referee's first payment, its clawback and restore,
+   * a self-referral, and the share card's endpoint. Default true. A fork whose
+   * `users` table has no referral columns passes false (`--no-referral`).
+   */
+  referral?: boolean
   /**
    * Run as an app with `billing.cancelOnDeletion` on, against a stub Paddle API:
    * deletion cancels live subscriptions first. Off (the default), the steps are
@@ -560,6 +657,8 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
     }
   }
 
+  if (options.referral !== false) steps.push(...referralSteps())
+
   // ── What the rest of the app says once all that has happened ────────────────
   steps.push(get('entitlement: final (buyer)', '/api/billing/entitlement', 'buyer'))
   steps.push(get('entitlement: final (live customer)', '/api/billing/entitlement', 'live'))
@@ -647,5 +746,133 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
       json: {},
     })
   }
+  return steps
+}
+
+/**
+ * The referral loop, end to end. Every payout here is a decision the loop makes
+ * on its own, so each step is one: who gets days, who does not, and what a
+ * reversal puts back.
+ */
+function referralSteps(): Step[] {
+  const { referrer, refereePass, refereeSub, twin } = REFERRAL_USERS
+  const steps: Step[] = []
+
+  // ── The referee's half: welcome days through a real sign-in ─────────────────
+  steps.push(
+    post(
+      'sign-in: new account on the referrer’s code (welcome days)',
+      '/api/auth/magic-link/verify',
+      'anonymous',
+      { token: MAGIC_LINK_SIGNUPS.invitee.token },
+      'invitee',
+    ),
+    post(
+      'sign-in: new account on a code nobody holds (no welcome days)',
+      '/api/auth/magic-link/verify',
+      'anonymous',
+      { token: MAGIC_LINK_SIGNUPS.stranger.token },
+      'stranger',
+    ),
+    get('entitlement: invitee holds welcome days', '/api/billing/entitlement', 'invitee'),
+    get('entitlement: stranger holds nothing', '/api/billing/entitlement', 'stranger'),
+    get('share card: invitee', '/api/referral/me', 'invitee'),
+    get('share card: referrer before any reward', '/api/referral/me', 'referrer'),
+  )
+
+  // ── The referrer's half: paid when a referee first pays ────────────────────
+  const passTxn = 'txn_replay_ref_pass'
+  const passPurchase = event({
+    id: passTxn,
+    type: 'transaction.completed',
+    at: T(3, 3),
+    data: transaction(refereePass.id, passTxn, { billed_at: T(3, 3) }),
+  })
+  steps.push(hook('referee buys a pass (referrer is rewarded)', passPurchase))
+  steps.push(
+    hook(
+      'the same transaction under a new event id (no second reward)',
+      event({
+        id: passTxn,
+        type: 'transaction.completed',
+        at: T(3, 4),
+        data: transaction(refereePass.id, passTxn, { billed_at: T(3, 3) }),
+      }),
+    ),
+  )
+  const subId = 'sub_replay_ref_sub'
+  const subFirstTxn = 'txn_replay_ref_sub_first'
+  steps.push(
+    hook(
+      'referee subscribes (second reward, keyed on the first transaction)',
+      event({
+        id: subId,
+        type: 'subscription.created',
+        at: T(4, 3),
+        data: subscription(refereeSub.id, subId, 'active', T(11), {
+          transaction_id: subFirstTxn,
+        }),
+      }),
+    ),
+  )
+  steps.push(
+    hook(
+      'the twin buys a pass (self-referral, no reward)',
+      event({
+        id: 'txn_replay_ref_twin',
+        type: 'transaction.completed',
+        at: T(4, 4),
+        data: transaction(twin.id, 'txn_replay_ref_twin', { billed_at: T(4, 4) }),
+      }),
+    ),
+  )
+  steps.push(
+    get('entitlement: referrer after two rewards', '/api/billing/entitlement', 'referrer'),
+    get('share card: referrer after two rewards', '/api/referral/me', 'referrer'),
+  )
+
+  // ── Reversals: the reward goes with the purchase, and comes back with it ────
+  steps.push(
+    hook(
+      'refund of the referee’s pass (reward revoked)',
+      event({
+        id: 'adj_replay_ref_1',
+        type: 'adjustment.created',
+        at: T(6, 1),
+        data: adjustment('adj_replay_ref_1', passTxn),
+      }),
+    ),
+    get('entitlement: referrer after the refund', '/api/billing/entitlement', 'referrer'),
+    get('share card: referrer after the refund', '/api/referral/me', 'referrer'),
+    hook(
+      'chargeback on the referee’s subscription (reward revoked)',
+      event({
+        id: 'adj_replay_ref_2',
+        type: 'adjustment.created',
+        at: T(6, 2),
+        data: adjustment('adj_replay_ref_2', subFirstTxn, {
+          action: 'chargeback',
+          subscription_id: subId,
+        }),
+      }),
+    ),
+    hook(
+      'the chargeback is won (reward restored)',
+      event({
+        id: 'adj_replay_ref_3',
+        type: 'adjustment.updated',
+        at: T(6, 3),
+        data: adjustment('adj_replay_ref_3', subFirstTxn, {
+          action: 'chargeback_reverse',
+          subscription_id: subId,
+        }),
+      }),
+    ),
+    get('entitlement: referrer after the reversal', '/api/billing/entitlement', 'referrer'),
+    get('share card: referrer after the reversal', '/api/referral/me', 'referrer'),
+    get('data export: referrer', '/api/account/export', 'referrer'),
+    get('admin: one-customer view of the referrer', `/api/admin/users/${referrer.id}`, 'admin'),
+    get('admin: view as the referrer', `/api/admin/users/${referrer.id}/view-as`, 'admin'),
+  )
   return steps
 }
