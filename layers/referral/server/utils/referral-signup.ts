@@ -8,10 +8,10 @@
 // Core's users.ts and auth.ts know none of this; without the registration an
 // account is created with no code and no referrer, and nothing is granted.
 
-import { REFERRAL_CODE_MINT_ATTEMPTS } from '#shared/utils/referral'
+import { REFERRAL_CODE_MINT_ATTEMPTS } from '../../shared/utils/referral'
 import { generateReferralCode, findReferrerByCode, isReferralCodeCollision } from './referral-codes'
 import { grantRefereeWelcome } from './referral'
-import type { SignupContributor } from './signup-contributors'
+import type { SignupContributor } from '#server/utils/signup-contributors'
 
 export interface ReferralSignupOptions {
   /** Test seam: the code generator. Production uses generateReferralCode. */

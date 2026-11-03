@@ -1,122 +1,20 @@
-# Billing, entitlements, referrals, MCP worker
+# Billing, entitlements, MCP worker
 
-Paddle as merchant of record, the entitlement/clawback model, and the referral reward economics. Treat `server/utils/referral.ts` as billing code: a referral reward is access nobody paid for, granted automatically, on a signal from outside the building.
+Paddle as merchant of record and the entitlement/clawback model. The referral reward economics are in [referral.md](referral.md): a referral reward is access nobody paid for, granted automatically, on a signal from outside the building, so treat `layers/referral/server/utils/referral.ts` as billing code.
 
-> **Load this when:** touching `layers/billing/server/utils/entitlements.ts`, `server/utils/referral.ts`, `layers/billing/server/utils/paddle*.ts`, `layers/billing/server/routes/paddle/webhook.post.ts`, pricing, or the optional `mcp/` worker.
+> **Load this when:** touching `layers/billing/server/utils/entitlements.ts`, `layers/billing/server/utils/paddle*.ts`, `layers/billing/server/routes/paddle/webhook.post.ts`, pricing, or the optional `mcp/` worker.
 > Canonical index: [AGENTS.md](../../AGENTS.md).
 
 ---
 
 ## Referrals
 
-A referral reward is access nobody paid for, granted automatically, on a signal
-from outside the building. Treat `server/utils/referral.ts` as billing code.
-
-- **The referee's welcome grant is small and the referrer's reward is not, and
-  that asymmetry is the anti-fraud design.** A grant at signup costs its
-  recipient one fresh mailbox, so whatever `REFERRAL_WELCOME_DAYS` is, that is
-  the price of the product to anyone willing to rotate addresses — hence 7 days
-  rather than a whole pass. The referrer is paid `REFERRAL_REWARD_DAYS` only
-  when the referee **first pays**, observed in the webhook. Never move the
-  referrer's trigger to signup, and never raise the welcome grant to a full pass.
-- **Three things hold that cost story up, and all three are load-bearing.**
-  Remove any one and farming the loop becomes cheaper than buying the product:
-  1. **The reward is revoked when the PURCHASE behind it reverses.** Keyed on
-     `entitlements.earned_from_ref` — the transaction, never the person, or a
-     refund of somebody's second pass claws back the reward their first earned.
-     For a subscription that means its **first transaction**
-     (`entitlements.first_transaction_id`, which Paddle sends once on
-     `subscription.created`), not the `sub_` id: a refund of a later renewal
-     names the renewal's transaction, finds no reward keyed on it, and claws
-     nothing back. It still closes the buyer's current period (any approved
-     refund ends access), and the next paid period reopens it — see the
-     ordering bullet below. Only when Paddle never sent a transaction id does
-     the reward fall back to the subscription id, and then a renewal refund
-     does cascade.
-     The cascade follows the **buyer's own row**, never the adjustment's
-     `full`/`partial` label: that field is nullish in the schema and Paddle
-     labels an item-level 100% refund `partial`, so keying on it failed open.
-     Whenever the buyer's row is actually revoked, the reward goes with it.
-     **Revoking the reward row alone takes nothing away** — rewards stack, so
-     the rows above it still cover those days. The clawback measures the
-     revoked window's unspent remainder (from `period_start`) and slides every
-     row stacked on top of it down by that much; a chargeback the merchant
-     later **wins** restores the row from `restore_period_end` and slides the
-     stack back up. A reversal restores only when the buyer's own row is being
-     reinstated (a `txn_` row still reading `chargeback`; a `sub_` row not
-     reading `refunded`), and it restores the buyer's `txn_` pass too, since no
-     Paddle lifecycle event ever will. The cascade lives inside
-     `revokeForAdjustment` (`layers/billing/server/utils/entitlements.ts` ›
-     `revokeDerivedEntitlements`), not in the webhook route, so every caller
-     gets it; the route only writes the audit rows.
-  2. **The cap counts revoked rows.** Refund-churn burns budget instead of
-     recycling it; counting only live rows would make the ceiling unreachable.
-  3. **Self-referral is judged by mailbox, not address** (`isSameMailbox`), so
-     `me+1@gmail.com` on `me@gmail.com`'s code is refused.
-- **The welcome grant is once per MAILBOX, not once per account.** Its ref is
-  `welcome_<saltedHash('referral-welcome:v1:' + canonical mailbox)>`. Keyed on
-  the user id it was renewable forever by deleting the account and signing up
-  again on the same address.
-- **That salt is provisioned, never configured** (`server/utils/identity.ts`,
-  `instance_secrets`): 32 random bytes written to D1 on first use and never
-  rotated. It is deliberately not `sessionPassword` — an operator may rotate
-  that after a compromise, and rotating it would recompute every mailbox's ref
-  and silently re-arm every spent trial. It is deliberately not a new env var
-  either, for the reason `unsubscribe.ts` gives: a new secret is a human gate,
-  and the fork that never sets it is the fork that gets the bug. The digest is
-  domain-separated because unprefixed it was byte-identical to the magic-link
-  per-address rate-limit key. `grantRefereeWelcome` also checks the pre-2026-08-22
-  ref during transition; delete that once no legacy row can still be granting.
-- **Idempotency is structural.** There is no ledger table and no "already paid"
-  flag, because both need a read-then-write a webhook redelivery can race.
-  Each grant derives a deterministic ref (`layers/billing/server/utils/paddle-refs.ts`) and the
-  unique index on `paddle_subscription_id` refuses the second write. So the
-  webhook hook is called on *every* qualifying event: a redelivery is a repair
-  path, not a second payout. The cap is the one soft edge — it is read-then-write,
-  so the true ceiling is `REFERRAL_MAX_REWARDS` plus in-flight deliveries.
-- **The two prefixes are counted differently.** `REFERRAL_MAX_REWARDS` counts
-  `referral_` rows only; a person's own `welcome_` row must not eat the budget
-  they earn with. That is the whole reason they are not one prefix.
-- **`rewardedCount` on the share card counts rewards that still STAND**
-  (`countStandingReferralRewards`), while the cap counts every payout ever
-  triggered including revoked ones (`countReferralRewards`). Two queries on
-  purpose: showing a clawed-back reward as "earned you days" sends somebody
-  looking for days that are not there, and letting a refund refund the budget
-  slot makes the cap unreachable.
-- **A live subscriber IS paid** — unlike a comp, which still refuses. A comp is
-  an apology an operator chooses to send; a referral reward was earned by
-  somebody the product already promised. The days stack from the renewal date
-  and start when the subscription ends, and the share card says exactly that.
-  Refusing lost the reward permanently (the trigger never retries) and did it to
-  the referrers most worth having. Self-referral and tombstoned referrers are
-  still refused, and every skip is logged.
-- **"First paid" for a subscription is a status transition, not money** —
-  `previousStatus === null || 'trialing'`. `past_due → active` is a dunning
-  recovery, not a first payment. It is not keyed on `transaction.completed` with
-  a `subscription_id` because `applyPaddleEvent` classifies that as `ignored`
-  with no userId; see the reasoning at the webhook call site. The clawback is
-  the backstop for what a status cannot distinguish.
-- A `?ref=` code lands in the existing **first-touch** attribution cookie
-  (`shared/utils/attribution.ts`), so a returning visitor cannot be re-credited
-  to whoever sent them the most recent link. It becomes `users.referred_by` on
-  the INSERT branch of `upsertOAuthUser` and only when it resolves to a real,
-  live, other account. A magic link carries the code on its **token row**
-  (`magic_link_tokens.referral_code`), so a link requested on a laptop and
-  opened on a phone still attributes; `readAttributionCookie()` is the same-browser
-  backstop for rows minted before that column, and may only ever fill a hole,
-  never overwrite one.
-- Every grant writes a `referral.rewarded` audit row with `actorType: 'system'`.
-  Ids and day counts only — never a code or an address.
-- **The loop meets billing only at core's seams.** It writes its days through
-  `getEarnedAccess()` (billing stacks, stores and counts them), is paid from
-  `registerBillingOutcomeHandler`, adds its fields through
-  `registerEntitlementViewFields`, and is part of account creation through
-  `registerSignupContributor` (`server/utils/signup-contributors.ts`: the code per
-  account, `referred_by`, the welcome days after sign-in). With billing absent it
-  still captures and attributes codes and grants nothing (outcome `unavailable`,
-  no error). With the loop absent the billing layer has no referral fields and runs
-  no reward. Billing keeps only the generic `earned_from_ref` cascade, which revokes
-  any row that exists because of a purchase.
+The referral loop is its own layer, `layers/referral/`, and meets billing only at core's seams.
+Its economics, anti-fraud design, seams and what a fork does to vendor it are in
+[referral.md](referral.md). The two billing facts it leans on: a reward is a `referral_<refereeId>`
+row in `entitlements`, revoked by the generic `earned_from_ref` cascade inside
+`revokeForAdjustment` (`layers/billing/server/utils/entitlements.ts` › `revokeDerivedEntitlements`),
+and every grant is written through `getEarnedAccess()` (`layers/billing/server/utils/billing-earned-access.ts`).
 
 
 ## The billing layer
@@ -128,9 +26,9 @@ signature check, idempotent event handling, the `entitlements` and `paddle_event
 access queries, billing state and the entitlement view, notification decisions, comp grants, the
 `/pricing` scaffold, `usePaddle()`/`useEntitlement()`, the `subscription` route middleware, the
 past-due banner and alert, and its tests (`layers/billing/test/`, including the replay fixtures).
-The referral loop is a separate feature: it reaches billing only through core's seams
+The referral loop is a separate layer: it reaches billing only through core's seams
 (`server/utils/billing-outcome.ts`, `entitlement-view-fields.ts`, `earned-access.ts`; see
-[patterns.md](patterns.md)), and billing never imports it.
+[patterns.md](patterns.md) and [referral.md](referral.md)), and billing never imports it.
 
 **What the app provides**
 
@@ -175,8 +73,8 @@ are appended after the base fields; a field the base view already has is never o
 as `billing_view_field_collision`), and a contributor that throws is logged
 (`billing_view_fields_failed`) and skipped. Re-registering a key replaces it; between contributors the
 later one wins a clash. The referral loop registers `referral` and `referralKind` on each history
-row and `referralKind` on the view this way (`server/plugins/referral.ts`,
-`server/utils/referral-view.ts`); without it the view has none of them.
+row and `referralKind` on the view this way (`layers/referral/server/plugins/referral.ts`,
+`layers/referral/server/utils/referral-view.ts`); without it the view has none of them.
 
 **Shared Paddle account.** Paddle sends every event to every notification destination, so two
 apps on one account each receive the other's. Set `NUXT_PADDLE_PRODUCT_ID` to the product this app

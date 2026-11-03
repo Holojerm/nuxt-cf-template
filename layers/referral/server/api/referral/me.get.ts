@@ -16,7 +16,7 @@
 // server/api/auth/magic-link.post.ts: the auto-import typechecks everywhere and
 // is not always injected at runtime (.claude/docs/gotchas.md), and a symbol that
 // resolves to `undefined` here is a share link that quietly becomes 'undefined'.
-import { referralShareUrl } from '#shared/utils/referral'
+import { referralShareUrl } from '../../../shared/utils/referral'
 import { getReferralSummary } from '../../utils/referral'
 
 export default defineEventHandler(async (event) => {

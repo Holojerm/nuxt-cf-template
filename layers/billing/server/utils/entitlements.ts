@@ -942,7 +942,7 @@ async function reverseAdjustment(
  *
  * The cascade lives in here rather than at the call site so no caller can
  * forget it; the caller's only remaining job is writing the audit rows for what
- * it did (server/utils/referral.ts › recordReferralCascade).
+ * it did (layers/referral/server/utils/referral.ts › recordReferralCascade).
  */
 export async function revokeForAdjustment(
   db: EntitlementDb,

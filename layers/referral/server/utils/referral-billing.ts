@@ -8,7 +8,7 @@
 // Moved verbatim from the webhook route; the reasoning below was written for
 // that call site and holds here unchanged.
 
-import type { BillingOutcomeContext } from './billing-outcome'
+import type { BillingOutcomeContext } from '#server/utils/billing-outcome'
 import { recordReferralCascade, rewardReferrerForFirstPurchase } from './referral'
 
 export interface ReferralOutcomeDeps {

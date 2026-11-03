@@ -207,14 +207,14 @@ hash is the template's.
   layer's `runtimeConfig` options (set in the app's `nuxt.config.ts`), an extension point,
   or upstream in the template. Feedback's options: `feedback.anonymiseUserId`,
   `feedback.deletionCountKey`; billing's: `billing.passDays`,
-  `billing.alertUnmatchedAdjustments`, `paddle.productId`. A fork's own util whose file name
+  `billing.alertUnmatchedAdjustments`, `paddle.productId`. Referral has none. A fork's own util whose file name
   collides with a layer's must be renamed before vendoring.
 - **Why not `extends: ['github:…']`**: NuxtHub's merged schema types leave layers under
   `node_modules` untyped, so a remote layer's tables lose their types.
 - **In the template itself**, layers are authored, not vendored: its lock stays empty.
-  `layers/feedback/`, `layers/files/`, `layers/social/` and `layers/billing/` are the
+  `layers/feedback/`, `layers/files/`, `layers/social/`, `layers/billing/` and `layers/referral/` are the
   worked examples (billing is the largest: its own server routes, pages, composables and tests, plus a
-  replay script); each reaches core through
+  replay script; referral is the one that meets another layer, only through core's seams); each reaches core through
   `#server/utils/…`, reads other tables through `@nuxthub/db/schema`, and carries its own
   tests in `layers/<name>/test/`. A layer table may reference core's (files → `users`) by
   importing the app's `server/db/schema.ts` relatively; the path is the same in every app.

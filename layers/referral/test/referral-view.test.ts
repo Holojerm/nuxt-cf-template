@@ -8,11 +8,11 @@ import { drizzle } from 'drizzle-orm/d1'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { buildEntitlementView } from '#layers/billing/server/utils/entitlement-view'
-import * as schema from '../server/db/schema'
+import * as schema from '~~/server/db/schema'
 import {
   clearEntitlementViewFieldsForTest,
   registerEntitlementViewFields,
-} from '../server/utils/entitlement-view-fields'
+} from '~~/server/utils/entitlement-view-fields'
 import { referralHistoryFields, referralViewFields } from '../server/utils/referral-view'
 
 const registerReferral = () =>

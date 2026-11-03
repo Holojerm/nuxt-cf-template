@@ -6,10 +6,10 @@ import { env } from 'cloudflare:test'
 import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import * as schema from '../server/db/schema'
+import * as schema from '~~/server/db/schema'
 import { generateReferralCode } from '../server/utils/referral-codes'
 import { createReferralSignup } from '../server/utils/referral-signup'
-import { upsertOAuthUser } from '../server/utils/users'
+import { upsertOAuthUser } from '~~/server/utils/users'
 
 const db = drizzle(env.DB, { schema })
 const withReferral = (mintCode?: () => string) => ({

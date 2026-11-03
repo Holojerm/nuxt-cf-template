@@ -4,7 +4,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BillingOutcomeContext } from '../server/utils/billing-outcome'
+import type { BillingOutcomeContext } from '~~/server/utils/billing-outcome'
 import { createReferralOutcomeHandler } from '../server/utils/referral-billing'
 
 function setup() {

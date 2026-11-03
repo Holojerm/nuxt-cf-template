@@ -53,12 +53,12 @@
 // Step 4 gets the same treatment from the other side. A signup costs one fresh
 // mailbox, so the welcome ref is keyed on the MAILBOX rather than the account
 // id — otherwise deleting and re-registering the same address refills the trial
-// forever (server/utils/referral-refs.ts › referralWelcomeRef).
+// forever (layers/referral/server/utils/referral-refs.ts › referralWelcomeRef).
 //
 // ── Idempotency is structural, not a flag ────────────────────────────────────
 // There is no ledger table and no "already paid?" column, because both would
 // need a read-then-write that a webhook redelivery can race. Instead each grant
-// derives a DETERMINISTIC ref (server/utils/referral-refs.ts) from the account it
+// derives a DETERMINISTIC ref (layers/referral/server/utils/referral-refs.ts) from the account it
 // concerns, and the unique index on `entitlements.paddle_subscription_id`
 // refuses the second one. Five redeliveries compute one ref and write one row.
 
@@ -69,19 +69,20 @@ import {
   REFERRAL_MAX_REWARDS,
   REFERRAL_REWARD_DAYS,
   REFERRAL_WELCOME_DAYS,
-} from '#shared/utils/referral'
-import * as tables from '../db/schema'
-import type { User } from '../db/schema'
-import { writeAudit } from './audit'
-import { getEarnedAccess } from './earned-access'
-import type { EarnedAccessProvider, EarnedGrantPlan } from './earned-access'
-import type { BillingAdjustmentResult } from './billing-outcome'
-import type { ExtensionDb } from './extensions'
-import { saltedHash } from './hash'
-import { getIdentitySalt } from './identity'
+} from '../../shared/utils/referral'
+import * as tables from '#server/db/schema'
+import type { User } from '#server/db/schema'
+import { writeAudit } from '#server/utils/audit'
+import { getEarnedAccess } from '#server/utils/earned-access'
+import type { EarnedAccessProvider, EarnedGrantPlan } from '#server/utils/earned-access'
+import type { BillingAdjustmentResult } from '#server/utils/billing-outcome'
+import type { ExtensionDb } from '#server/utils/extensions'
+import { saltedHash } from '#server/utils/hash'
+import { getIdentitySalt } from '#server/utils/identity'
 import { generateReferralCode, findReferrerByCode, isReferralCodeCollision } from './referral-codes'
+import { getWelcomeLedger } from './referral-ledger'
 import { REFERRAL_REF_PREFIX, referralRewardRef, referralWelcomeRef } from './referral-refs'
-import { canonicalizeEmailForLimiting, findUserById, isSameMailbox } from './users'
+import { canonicalizeEmailForLimiting, findUserById, isSameMailbox } from '#server/utils/users'
 
 /** The sentinel actor on an audit row nobody clicked. See server/utils/audit.ts. */
 const SYSTEM_ACTOR = 'system'
@@ -293,7 +294,10 @@ export async function grantRefereeWelcome(
 
     // Before anything else that would be recorded: this mailbox may already
     // have spent its trial on an account that has since been deleted, and the
-    // audit row must not claim otherwise.
+    // audit row must not claim otherwise. An app that hard-deletes entitlements
+    // keeps the fact in a ledger of its own (referral-ledger.ts), asked first.
+    const ledger = getWelcomeLedger()
+    if (ledger && (await ledger.spent(db, ref))) return { outcome: 'already_granted' }
     if (await earned.exists(db, ref)) return { outcome: 'already_granted' }
 
     // …and it may have spent it under the OLD ref construction. Introducing the
@@ -335,11 +339,24 @@ export async function grantRefereeWelcome(
       now: options.now,
     })
 
-    return await payReferral(db, earned, plan, {
+    const result = await payReferral(db, earned, plan, {
       side: 'referee',
       refereeId: user.id,
       referrerId: referrer.id,
     })
+
+    // After the days, never before: this record is what makes the trial spent
+    // forever, so writing it in front of a grant that then failed would burn
+    // somebody's trial without giving them anything.
+    if (ledger && result.outcome === 'granted') {
+      try {
+        await ledger.markSpent(db, ref)
+      } catch (error) {
+        logReferral('referral_welcome_mark_failed', { error: String(error) })
+      }
+    }
+
+    return result
   } catch (error) {
     // A free trial is never worth failing an account creation over.
     logReferral('referral_welcome_failed', { userId: user.id, error: String(error) })
@@ -567,7 +584,7 @@ export async function countStandingReferralRewards(
  * reads back the winner's code. The retry loop around it handles the other
  * failure — a collision on the unique index — the same way provisioning does,
  * through the same predicate, because there is only one correct way to read
- * that error out of D1 (server/utils/referral-codes.ts › isReferralCodeCollision).
+ * that error out of D1 (layers/referral/server/utils/referral-codes.ts › isReferralCodeCollision).
  */
 export async function ensureReferralCode(
   db: ExtensionDb,

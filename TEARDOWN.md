@@ -56,8 +56,7 @@ the Paddle adapter (webhook, signature check, portal call), the entitlement mode
 tests, billing state and notifications, comp grants, the `/pricing` page with `plans.ts`,
 `usePaddle()`/`useEntitlement()`, the past-due banner and alert, the `subscription` route
 middleware, the replay fixtures, and the Nitro plugin inside it that registers billing
-with core. Also delete `server/plugins/referral.ts`, `server/utils/referral-billing.ts` and
-`server/utils/referral-view.ts` if referrals are still there (step 1 should have removed them).
+with core. Referrals are a separate layer (`layers/referral/`); step 1 removes them.
 
 Core imports none of it, so nothing else in core needs editing: account deletion is
 unguarded (and cancels nothing at Paddle), the data export drops `entitlements`, `/api/fleet` drops its `entitlements` group
@@ -183,23 +182,22 @@ and does not care who wrote it:
 
 ## Remove referrals
 
-Referrals grant entitlements, so remove them **before** billing.
+Referrals are `layers/referral/`, and they grant entitlements, so remove them **before**
+billing (billing itself never imports them, but the loop is what pays its rewards).
 
-1. Delete the loop's own files: [`server/utils/referral.ts`](server/utils/referral.ts) and its
-   siblings `referral-codes.ts`, `referral-refs.ts`, `referral-signup.ts`,
-   `referral-billing.ts`, `referral-view.ts`, [`server/plugins/referral.ts`](server/plugins/referral.ts),
-   [`server/api/referral/me.get.ts`](server/api/referral/me.get.ts),
-   [`shared/utils/referral.ts`](shared/utils/referral.ts),
-   [`app/components/Referral/ShareCard.vue`](app/components/Referral/ShareCard.vue),
-   and the tests `test/referral*.test.ts`. The plugin is the loop's only registration with
-   core: the signup contributor (a code per account, `referred_by`, the welcome days), the
-   first-paid reward and clawback paperwork on the billing webhook, and the referral fields
-   on the billing view. Core and billing import none of it, so the webhook, sign-in and the
-   entitlement view run without them.
+1. **Delete the layer**: don't vendor it, or `rm -rf layers/referral`. That one directory is
+   the loop: the policy and its tests, the code per account, the welcome days, the reward and
+   the clawback's paperwork, `referral`/`referralKind` on the billing view,
+   `GET /api/referral/me`, the share card, and the Nitro plugin that registers it all with
+   core. Core and billing import none of it, so sign-in, the webhook and the entitlement view
+   run without it: an account is created with no code and no referrer, nothing is paid on a
+   first purchase, and the billing view has no referral fields. In a fork that vendored it,
+   remove its entry from `layers.lock.json` too.
 2. Remove the `ShareCard` mount from [`app/pages/account.vue`](app/pages/account.vue), and
    the `referral` / `referralKind` branches of its billing card and history list (and of
-   [`app/pages/admin/users/[id].vue`](app/pages/admin/users/[id].vue)): those fields exist
-   only while the loop registers them.
+   [`app/pages/admin/users/[id].vue`](app/pages/admin/users/[id].vue)), and the
+   `REFERRAL_STACKING_NOTE` line: those fields and that constant exist only while the layer
+   provides them. `bun run typecheck` finds each.
 3. Optional: the first-touch cookie carries a `?ref=` claim
    ([`shared/utils/attribution.ts`](shared/utils/attribution.ts)) and a magic link carries it
    on its token row ([`server/utils/magic-link.ts`](server/utils/magic-link.ts)). With no
@@ -211,13 +209,12 @@ Referrals grant entitlements, so remove them **before** billing.
 4. Schema ([`server/db/schema.ts`](server/db/schema.ts)): drop `users.referral_code`,
    `users.referred_by` and its index, and the `referral_code` column on `magic_link_tokens`.
    `entitlements.earned_from_ref` belongs to billing (it keys the refund cascade) and stays.
-   Then `bun db:generate`.
+   Then `bun db:generate`. (The layer has no tables of its own.)
 5. Admin audit labels (`referral.rewarded`, `referral.revoked`, `referral.restored`) live in
    [`server/utils/audit.ts`](server/utils/audit.ts): keep them, history rows may name them.
 6. **Leave `instance_secrets` and `server/utils/identity.ts` alone.** The salted-hash
    helper is shared with the magic-link per-address rate limit, which is a security
    control. Deleting the table because "referrals used it" removes that too.
-7. Remove `REFERRAL_*` from `.env.example`, `wrangler.toml`, and `nuxt.config.ts`.
 
 ---
 
