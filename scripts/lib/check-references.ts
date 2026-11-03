@@ -590,13 +590,25 @@ function declaredByADependency(root: string, name: string): boolean {
 
   const installed = join(root, 'node_modules')
   if (!existsSync(installed)) return true
-  // grep -r does not follow a symlinked directory, so a checkout that links
-  // node_modules (scripts/check-forkless.ts does) would find nothing.
-  const modules = realpathSync(installed)
+  // Each entry resolved first: grep -r follows a symlink given on its command
+  // line but not one it meets while descending, and a checkout whose
+  // node_modules is a directory of links into another install
+  // (scripts/check-forkless.ts builds one per copy) has no real files otherwise.
+  const modules = [
+    ...new Set(
+      readdirSync(installed).flatMap((entry) => {
+        try {
+          return [realpathSync(join(installed, entry))]
+        } catch {
+          return [] // a dangling link names nothing to search
+        }
+      }),
+    ),
+  ]
 
   const result = spawnSync(
     'grep',
-    ['-rlq', '--include=*.d.ts', '--include=*.d.mts', '--', name, modules],
+    ['-rlq', '--include=*.d.ts', '--include=*.d.mts', '--', name, ...modules],
     { stdio: 'ignore', timeout: 30_000 },
   )
   // status 0 = found. Anything else (1 = absent, null = timeout) is treated as

@@ -21,6 +21,7 @@
 // `nuxt typecheck` on the copy. It is its own script rather than part of
 // `bun run ci` so the deploy gate stays fast.
 
+import { createHash } from 'node:crypto'
 import {
   cpSync,
   existsSync,
@@ -33,7 +34,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { hashLayer, TEMPLATE_LAYERS } from './lib/layers'
 
@@ -41,6 +42,9 @@ const ROOT = resolve(import.meta.dir, '..')
 const keep = process.argv.includes('--keep')
 const fast = process.argv.includes('--fast')
 const filters = process.argv.slice(2).filter((arg) => !arg.startsWith('--'))
+
+/** Tool caches inside node_modules that a copy must not share with the parent. */
+const CACHES = new Set(['.cache', '.vite', '.vite-temp'])
 
 /** Never copied: rebuilt, installed, or per-checkout. */
 const SKIP = new Set([
@@ -323,14 +327,36 @@ function becomeAFork(dir: string, vendored: string[]) {
 function copyRepo(into: string) {
   cpSync(ROOT, into, {
     recursive: true,
-    filter: (source) => !SKIP.has(source.slice(ROOT.length + 1).split('/')[0] ?? ''),
+    filter: (source) => {
+      const parts = source.slice(ROOT.length + 1).split('/')
+      return !SKIP.has(parts[0] ?? '') && !parts.includes('node_modules')
+    },
   })
-  // The copy resolves packages through the original install.
-  for (const modules of ['node_modules', 'mcp/node_modules']) {
-    if (existsSync(join(ROOT, modules))) {
-      mkdirSync(dirname(join(into, modules)), { recursive: true })
-      symlinkSync(join(ROOT, modules), join(into, modules))
-    }
+  linkModules(join(ROOT, 'node_modules'), join(into, 'node_modules'))
+  if (existsSync(join(ROOT, 'mcp/node_modules'))) {
+    mkdirSync(join(into, 'mcp'), { recursive: true })
+    symlinkSync(join(ROOT, 'mcp/node_modules'), join(into, 'mcp/node_modules'))
+  }
+}
+
+/**
+ * The copy resolves packages through the original install, EXCEPT what `nuxt
+ * prepare` generates there. NuxtHub writes `@nuxthub/db` (the merged schema
+ * module and its types), `kv` and `blob` into node_modules from the repo that ran
+ * prepare. A symlinked node_modules made every copy overwrite the parent's, and
+ * each other's: a copy that still has billing typechecked against the schema a
+ * billing-less sibling had just written ("DrizzleD1Database<…/node_modules/
+ * @nuxthub/db/schema> is not assignable to <…/server/db/schema>"), depending on
+ * which finished first. So `@nuxthub` is a real directory per copy (core included,
+ * so its own `@nuxthub/db` imports resolve to the copy's), the tool caches are
+ * left to be created fresh, and everything else is a symlink to the shared install.
+ */
+function linkModules(from: string, into: string) {
+  mkdirSync(into, { recursive: true })
+  for (const entry of readdirSync(from)) {
+    if (CACHES.has(entry)) continue
+    if (entry === '@nuxthub') cpSync(join(from, entry), join(into, entry), { recursive: true })
+    else symlinkSync(join(from, entry), join(into, entry))
   }
 }
 
@@ -368,6 +394,20 @@ const selected = scenarios.filter(
 )
 const base = mkdtempSync(join(tmpdir(), 'forkless-'))
 
+/**
+ * Typecheck, the unit tests and the browser listing each start their own worker
+ * pools (workerd, vue-tsc). Three scenarios doing that at once starved a loaded
+ * machine badly enough that vitest gave up starting its runner ("Timeout starting
+ * cloudflare-pool runner"), so the heavy checks queue behind one another while the
+ * cheap gates of every scenario still run alongside.
+ */
+let heavyQueue: Promise<unknown> = Promise.resolve()
+function oneHeavyAtATime<T>(task: () => Promise<T>): Promise<T> {
+  const result = heavyQueue.then(task)
+  heavyQueue = result.catch(() => {})
+  return result
+}
+
 // Scenarios are independent copies, so they run side by side: the wall time is
 // the slowest one, not the sum.
 async function runScenario(scenario: Scenario): Promise<string | null> {
@@ -385,7 +425,9 @@ async function runScenario(scenario: Scenario): Promise<string | null> {
   // Within a scenario the checks stay in order: they share one directory, and a
   // typecheck and a test run would both rewrite its .nuxt.
   for (const check of scenario.checks.filter((check) => !(fast && check.heavy))) {
-    const problem = await run(dir, check)
+    const problem = check.heavy
+      ? await oneHeavyAtATime(() => run(dir, check))
+      : await run(dir, check)
     if (problem) problems.push(problem)
   }
   const seconds = ((performance.now() - started) / 1000).toFixed(1)
@@ -395,9 +437,36 @@ async function runScenario(scenario: Scenario): Promise<string | null> {
   return problems.length ? `${scenario.name} (${scenario.about})\n${problems.join('\n')}` : null
 }
 
+/**
+ * A digest of what NuxtHub generates inside node_modules (the schema module and the
+ * db/kv/blob typings, derived from whichever repo ran `nuxt prepare`). The copies
+ * must never write there: see copyRepo().
+ */
+function generatedDigest(): string {
+  const hash = createHash('sha256')
+  const walk = (dir: string) => {
+    if (!existsSync(dir)) return
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+      a.name < b.name ? -1 : 1,
+    )) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else hash.update(path).update(readFileSync(path))
+    }
+  }
+  for (const name of ['db', 'kv', 'blob']) walk(join(ROOT, 'node_modules/@nuxthub', name))
+  return hash.digest('hex')
+}
+
+const generatedBefore = generatedDigest()
 let failures: string[] = []
 try {
   failures = (await Promise.all(selected.map(runScenario))).filter((f): f is string => !!f)
+  if (generatedDigest() !== generatedBefore)
+    failures.push(
+      'isolation: a scenario wrote to this repo’s node_modules/@nuxthub (the generated schema ' +
+        'module). Every copy must have its own, or one fork’s typecheck sees another’s schema.',
+    )
 } finally {
   if (keep) console.info(`kept ${base}`)
   else rmSync(base, { recursive: true, force: true })
