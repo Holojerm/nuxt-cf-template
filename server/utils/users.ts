@@ -19,15 +19,11 @@
 
 import { eq } from 'drizzle-orm'
 import type { Attribution } from '#shared/utils/attribution'
-import {
-  REFERRAL_CODE_ALPHABET,
-  REFERRAL_CODE_LENGTH,
-  REFERRAL_CODE_MINT_ATTEMPTS,
-  normalizeReferralCode,
-} from '#shared/utils/referral'
 import * as tables from '../db/schema'
-import type { User } from '../db/schema'
+import type { NewUser, User } from '../db/schema'
 import type { ExtensionDb as Db } from './extensions'
+import { getSignupContributors } from './signup-contributors'
+import type { SignupContributor } from './signup-contributors'
 
 /** The normalized profile an OAuth callback hands over. */
 export interface OAuthProfile {
@@ -173,118 +169,6 @@ function displayName(profile: OAuthProfile, email: string): string {
   return email.split('@')[0] ?? 'there'
 }
 
-// ── Referral codes ───────────────────────────────────────────────────────────
-// The alphabet, the length, and the retry budget live in #shared/utils/referral
-// rather than here, because shared/utils/attribution.ts validates an incoming
-// `?ref=` against the same shape before it reaches a database write. A
-// generator and a validator that disagree mint codes nobody can redeem, and the
-// symptom is a referral program that silently credits nobody.
-
-/**
- * A crypto-random referral code. 30^8 ≈ 6.6e11 possibilities, which is both
- * unguessable enough that codes can't be enumerated to farm rewards and sparse
- * enough that collisions stay theoretical.
- *
- * The rejection loop matters: 30 does not divide 256, so a bare `byte % 30`
- * would draw the first 16 symbols 12.5% more often than the last 14, and a
- * skewed code space is a smaller code space than its size suggests. The 6.25%
- * of bytes that would fold unevenly are discarded rather than folded.
- */
-export function generateReferralCode(length: number = REFERRAL_CODE_LENGTH): string {
-  const size = REFERRAL_CODE_ALPHABET.length
-  const ceiling = Math.floor(256 / size) * size
-  let code = ''
-  while (code.length < length) {
-    for (const byte of crypto.getRandomValues(new Uint8Array(length))) {
-      if (byte >= ceiling) continue
-      // charAt, not [], because it returns string rather than string|undefined.
-      code += REFERRAL_CODE_ALPHABET.charAt(byte % size)
-      if (code.length === length) break
-    }
-  }
-  return code
-}
-
-/**
- * True only for a collision on `users.referral_code`.
- *
- * Narrow on purpose: the same insert can violate the `email` unique index when
- * two sign-ins for one address race, and retrying that would burn attempts and
- * then surface the identical error five calls later. That one must propagate
- * immediately.
- *
- * Exported for the second minting path — server/utils/referral.ts lazily mints
- * a code for accounts that predate the column, hits the same unique index, and
- * must recover the same way. A second copy of this cause-chain walk would be a
- * second chance to get it subtly wrong, on a branch nothing ever executes.
- */
-export function isReferralCodeCollision(error: unknown): boolean {
-  // Walks the cause chain, and that is the whole point. Drizzle does not
-  // rethrow D1's error — it wraps it, so `error.message` is
-  // "Failed query: insert into \"users\" …" and the actual
-  // "D1_ERROR: UNIQUE constraint failed: users.referral_code" sits on
-  // `error.cause`. Matching only the top-level message therefore matched
-  // NOTHING: the retry below existed, looked correct, and had never once run.
-  // A real collision would have thrown straight out of sign-in.
-  //
-  // Caught by test/users.test.ts, which forces a genuine violation through the
-  // real driver rather than asserting against a hand-written error — the only
-  // way this class of bug is findable, since the string comes from D1.
-  for (let current: unknown = error, depth = 0; current && depth < 5; depth++) {
-    const message = current instanceof Error ? current.message : String(current)
-    if (message.includes('UNIQUE constraint failed: users.referral_code')) return true
-    current = current instanceof Error ? current.cause : undefined
-  }
-  return false
-}
-
-/**
- * The account behind a referral code, or null — the only way a `?ref=` value is
- * ever allowed to become a fact about somebody's account.
- *
- * Lives here rather than in server/utils/referral.ts on purpose: it is a read
- * of the `users` table using this file's own identity rules, and putting it
- * here keeps the import graph one-directional (referral.ts → users.ts). The
- * reverse would be a cycle, and this repo has already had to break one of those
- * once (see the header of layers/billing/server/utils/paddle-refs.ts).
- *
- * Three refusals, each of which is a way somebody gets paid for nothing:
- *
- *   * A code that doesn't parse, or matches no row. Codes are 30^8, so anything
- *     typed by hand is noise — but noise that would otherwise be written into
- *     `users.referred_by` and read back later as a dangling claim.
- *   * A tombstone. Deleting an account nulls its `referral_code`
- *     (server/utils/account.ts), so a deleted referrer usually stops resolving
- *     on its own; the address check is the backstop for the case where a later
- *     account happens to mint the freed code. A deleted account cannot earn.
- *   * The caller's own mailbox. Not merely the same address — the same INBOX,
- *     via isSameMailbox(). The row being created cannot own a code yet, so an
- *     exact-address check here would never fire and never has; what it missed
- *     is the one shape that matters, `me+1@gmail.com` signing up on
- *     `me@gmail.com`'s code. That is one person, two accounts, and a self-
- *     referral in every sense except string equality.
- */
-export async function findReferrerByCode(
-  db: Db,
-  rawCode: string | null | undefined,
-  selfEmail?: string | null,
-): Promise<User | null> {
-  const code = normalizeReferralCode(rawCode)
-  if (!code) return null
-
-  const referrer = await db.query.users.findFirst({
-    where: eq(tables.users.referralCode, code),
-  })
-  if (!referrer) return null
-  if (isUndeliverableAddress(referrer.email)) return null
-  // Mailbox, not exact address. `me+1@gmail.com` arriving on `me@gmail.com`'s
-  // own code is one person with one inbox and two accounts, and an exact
-  // comparison passes it — see isSameMailbox() for why the looser test is the
-  // correct one on a refusal.
-  if (isSameMailbox(referrer.email, selfEmail)) return null
-  return referrer
-}
-
 /**
  * Find-or-create the user behind an OAuth profile, and record the sign-in.
  *
@@ -299,17 +183,18 @@ export async function findReferrerByCode(
  */
 export interface UpsertOAuthUserOptions {
   /**
-   * Override for the code generator. Production never passes this.
+   * Replaces the registered signup contributors. Production never passes this.
    *
-   * It exists because the retry below is the kind of code that is written once,
-   * never executed, and quietly wrong — the collision it catches is a 1-in-10^11
-   * event, so nothing would ever have exercised the branch OR the error-string
-   * match inside isReferralCodeCollision(). That match is against a message D1
-   * produces, so it cannot be verified by reasoning; it has to be run against a
-   * real driver. This seam lets test/users.test.ts force a genuine unique-index
+   * It exists because the mint-and-retry below is the kind of code that is
+   * written once, never executed, and quietly wrong — a collision on a minted
+   * column is a 1-in-10^11 event, so nothing would ever have exercised the
+   * branch OR the error-string match a contributor's `isCollision` does. That
+   * match is against a message D1 produces, so it cannot be verified by
+   * reasoning; it has to be run against a real driver. This lets a test hand in
+   * a contributor whose generator it controls, force a genuine unique-index
    * violation and prove the retry recovers.
    */
-  mintCode?: () => string
+  contributors?: SignupContributor[]
 }
 
 export async function upsertOAuthUser(
@@ -318,7 +203,7 @@ export async function upsertOAuthUser(
   attribution?: Attribution | null,
   options: UpsertOAuthUserOptions = {},
 ): Promise<SignInResult> {
-  const mintCode = options.mintCode ?? generateReferralCode
+  const contributors = options.contributors ?? getSignupContributors()
   const email = normalizeEmail(profile.email)
   const now = new Date()
 
@@ -337,19 +222,18 @@ export async function upsertOAuthUser(
     return { user: updated ?? existing, created: false }
   }
 
-  // ── Referral credit, resolved exactly once ─────────────────────────────────
+  // ── What features resolve about a new account, exactly once ────────────────
   // On the INSERT branch only, for the same reason the four attribution columns
-  // are: `referred_by` answers "who introduced this customer", and that has one
-  // true answer forever. It is also the only place a *claim* from a cookie
-  // becomes a fact — the code has to name a real, live, other account or it is
-  // simply dropped (findReferrerByCode above).
-  //
-  // The COLUMN stores the referrer's code, not their id, which is what the
-  // schema comment specifies: it is deliberately not a foreign key, so that a
-  // referrer deleting their account cannot take somebody else's attribution
-  // down with it. Deletion nulls the code, so the claim stops resolving and no
-  // further reward is ever paid on it — which is the behaviour we want anyway.
-  const referrer = await findReferrerByCode(db, attribution?.referralCode, email)
+  // are: these answer "who introduced this customer" and similar, and each has
+  // one true answer forever. It is also the only place a *claim* from a cookie
+  // becomes a fact (the referral feature drops a code that does not name a
+  // real, live, other account). See server/utils/signup-contributors.ts.
+  let resolved: Partial<NewUser> = {}
+  for (const contributor of contributors) {
+    if (contributor.resolve) {
+      resolved = { ...resolved, ...(await contributor.resolve(db, { email, attribution })) }
+    }
+  }
 
   const values = {
     email,
@@ -361,24 +245,29 @@ export async function upsertOAuthUser(
     signupMedium: attribution?.medium ?? null,
     signupCampaign: attribution?.campaign ?? null,
     signupReferrer: attribution?.referrer ?? null,
-    referredBy: referrer?.referralCode ?? null,
+    ...resolved,
   }
 
-  // Every account is minted a referral code here, at creation, so no later code
-  // path has to handle "user without a code" — the column is nullable only for
-  // rows that predate it.
+  // Columns a feature mints for the new row (the referral code) are made here,
+  // at creation, so no later code path has to handle "user without one" — the
+  // column is nullable only for rows that predate it.
   //
   // The retry is the deliberate half. A pre-flight SELECT would be a race, and
   // the unique index is the real guarantee anyway, so the collision is handled
-  // where it actually surfaces: catch it, mint a different code, try again.
+  // where it actually surfaces: catch it, mint different values, try again.
   // Bounded, because an unbounded loop turns a genuine schema problem into a
   // hung sign-in. At 30^8 this should never fire once; if it fires five times
   // the randomness is broken and that deserves to be thrown, not papered over.
-  for (let attempt = 1; attempt <= REFERRAL_CODE_MINT_ATTEMPTS; attempt++) {
+  const attempts = Math.max(1, ...contributors.map((c) => c.mintAttempts ?? 1))
+  for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
+      const minted = contributors.reduce<Partial<NewUser>>(
+        (columns, contributor) => ({ ...columns, ...contributor.mint?.() }),
+        {},
+      )
       const [created] = await db
         .insert(tables.users)
-        .values({ ...values, referralCode: mintCode() })
+        .values({ ...values, ...minted })
         .returning()
 
       if (!created) {
@@ -389,12 +278,12 @@ export async function upsertOAuthUser(
 
       return { user: created, created: true }
     } catch (error) {
-      if (attempt === REFERRAL_CODE_MINT_ATTEMPTS || !isReferralCodeCollision(error)) throw error
+      if (attempt === attempts || !contributors.some((c) => c.isCollision?.(error))) throw error
     }
   }
 
   // Unreachable — the loop above either returns or rethrows on its last attempt.
-  throw new Error('User insert exhausted referral code attempts')
+  throw new Error('User insert exhausted its mint attempts')
 }
 
 /** Look up a user for a notification. Returns null rather than throwing — a

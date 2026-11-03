@@ -20,7 +20,7 @@
 
 import { z } from 'zod'
 
-import { REFERRAL_CODE_LENGTH, REFERRAL_CODE_PATTERN, normalizeReferralCode } from './referral'
+import { REFERRAL_CODE_LENGTH, REFERRAL_CODE_PATTERN, normalizeReferralCode } from './referral-code'
 
 /** Cookie name. Short — it rides on every request to this origin. */
 export const ATTRIBUTION_COOKIE = 'attr'
@@ -51,13 +51,13 @@ export const attributionSchema = z.object({
    * end up in marketing columns, while this one decides whether a stranger gets
    * credited with a customer and eventually paid in access days. So it is
    * pinned to the exact alphabet AND the exact length the generator produces
-   * (#shared/utils/referral) rather than merely capped — anything else is
+   * (#shared/utils/referral-code) rather than merely capped — anything else is
    * dropped, not truncated. Truncating would turn a mistyped 9-character code
    * into a valid 8-character one belonging to somebody else.
    *
    * It is still only a *claim*. Resolving it to a real, non-tombstoned account
    * that isn't the new user happens server-side at provisioning
-   * (server/utils/users.ts › findReferrerByCode), and nothing is ever paid out
+   * (server/utils/referral-codes.ts › findReferrerByCode), and nothing is ever paid out
    * on it until that account's referee completes a Paddle transaction.
    */
   referralCode: z

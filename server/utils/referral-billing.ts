@@ -1,13 +1,14 @@
 // The referral loop's side of the Paddle webhook: pay the referrer when the
 // referee first pays, and record the clawback's paperwork when a refund or
 // chargeback reverses a purchase. Registered as a billing outcome handler by
-// server/plugins/referral.ts, so the billing layer's webhook never imports
-// referral and an app without referral simply registers nothing.
+// server/plugins/referral.ts through core's seam (server/utils/billing-outcome.ts),
+// so the billing layer's webhook never imports referral, this file never
+// imports billing, and an app without either simply registers nothing.
 //
 // Moved verbatim from the webhook route; the reasoning below was written for
 // that call site and holds here unchanged.
 
-import type { BillingOutcomeContext } from '#layers/billing/server/utils/billing-outcome'
+import type { BillingOutcomeContext } from './billing-outcome'
 import { recordReferralCascade, rewardReferrerForFirstPurchase } from './referral'
 
 export interface ReferralOutcomeDeps {

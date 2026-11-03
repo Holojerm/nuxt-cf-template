@@ -107,6 +107,16 @@ from outside the building. Treat `server/utils/referral.ts` as billing code.
   never overwrite one.
 - Every grant writes a `referral.rewarded` audit row with `actorType: 'system'`.
   Ids and day counts only — never a code or an address.
+- **The loop meets billing only at core's seams.** It writes its days through
+  `getEarnedAccess()` (billing stacks, stores and counts them), is paid from
+  `registerBillingOutcomeHandler`, adds its fields through
+  `registerEntitlementViewFields`, and is part of account creation through
+  `registerSignupContributor` (`server/utils/signup-contributors.ts`: the code per
+  account, `referred_by`, the welcome days after sign-in). With billing absent it
+  still captures and attributes codes and grants nothing (outcome `unavailable`,
+  no error). With the loop absent the billing layer has no referral fields and runs
+  no reward. Billing keeps only the generic `earned_from_ref` cascade, which revokes
+  any row that exists because of a purchase.
 
 
 ## The billing layer
@@ -118,7 +128,9 @@ signature check, idempotent event handling, the `entitlements` and `paddle_event
 access queries, billing state and the entitlement view, notification decisions, comp grants, the
 `/pricing` scaffold, `usePaddle()`/`useEntitlement()`, the `subscription` route middleware, the
 past-due banner and alert, and its tests (`layers/billing/test/`, including the replay fixtures).
-Referral stays in core and registers itself with billing (below).
+The referral loop is a separate feature: it reaches billing only through core's seams
+(`server/utils/billing-outcome.ts`, `entitlement-view-fields.ts`, `earned-access.ts`; see
+[patterns.md](patterns.md)), and billing never imports it.
 
 **What the app provides**
 
@@ -129,7 +141,7 @@ Referral stays in core and registers itself with billing (below).
 | Pass length | `runtimeConfig.billing.passDays` (default 30). Plan copy that says "30 days" is the app's own file and has to move with it |
 | Plan copy and amounts | Shadow the layer's `layers/billing/app/utils/plans.ts`, or its `layers/billing/app/pages/pricing.vue` for a bespoke page, or its past-due alert component for wording, by putting a file at the same path under the app's `app/`. These are client files, so an app copy wins over the layer's |
 | CSP | The Paddle hosts stay in the app's `nuxt.config.ts` (the policy is one header string, not mergeable per layer) |
-| What follows money arriving | `registerBillingOutcomeHandler(key, async ({ db, event, outcome }) => …)` from a Nitro plugin. Awaited in registration order, after the email and before the log lines; a throwing handler is logged and skipped, never a 500. The referral reward is one |
+| What follows money arriving | `registerBillingOutcomeHandler(key, async ({ db, event, outcome }) => …)` from a Nitro plugin; it is **core's** (`server/utils/billing-outcome.ts`), typed against the contract `BillingOutcomeEvent` / `BillingOutcome`, so it needs no import of this layer. Awaited in registration order, after the email and before the log lines; a throwing handler is logged and skipped, never a 500. The referral reward is one |
 | Own account-deletion flow | `runtimeConfig.billing.guardDeletion: false` drops the `live_subscription` guard. For an app whose deletion cancels the subscription at Paddle itself and fails closed: the guard would refuse first, because a row only turns `canceled` when Paddle's webhook arrives |
 | Cancel the subscription when the account is deleted | `runtimeConfig.billing.cancelOnDeletion: true` (`NUXT_BILLING_CANCEL_ON_DELETION`). Default false: the guard above refuses until the person has cancelled in the portal. On, deletion first cancels every live `sub_` subscription at Paddle, **immediately** (`POST /subscriptions/{id}/cancel`, `effective_from: immediately`), through the layer's Paddle client and `NUXT_PADDLE_API_KEY`, and only then deletes. **The key needs Subscriptions: write** (Paddle → Developer tools → Authentication); without it every cancel is a 403 and every deletion of a subscriber is refused. It registers a `DeletionResolver` (core seam, `server/utils/extensions.ts`) *instead of* the guard, so `guardDeletion` is moot. "Live" is `isBillingLive` (a terminal status or a scheduled cancel is not). Paddle's already-cancelled answers count as success. **Fails closed:** any other failure (no key, network, 4xx, 5xx) refuses deletion with the guard's 409 and `data: { subscriptionId }`, so `/account` offers the portal as before, and records a `deletion_cancel_failed` ops event (the id and Paddle's status and error code only; never the key, address or body). The `account.subscription_cancel_requested` audit row (ids only) is written before each call. A deletion refused after some cancels succeeded leaves those cancelled; a retry continues. `/account` says, in the delete modal and only for a live subscriber, that it will be cancelled immediately and won't renew. The `subscription.canceled` that follows is a 200: applied to the retained entitlement in the template (its account row survives as a tombstone, and no "access ended" email goes to the `.invalid` address); for a fork whose deletion removes the user row, it is the `paddle_webhook_after_deletion` info log, not an alert (the layer registers the narrow `registerUnknownUserExpectation` check itself) |
 | The deletion refusal code | `runtimeConfig.billing.deletionRefusalCode` (default `live_subscription`). The 409 `data.code`, for the guard and a failed cancel alike. `/account` reads the default; an app whose own client reads another (woolholm: `billing_live`) sets it |
@@ -137,15 +149,18 @@ Referral stays in core and registers itself with billing (below).
 | No customer email | `runtimeConfig.billing.notify: false`. The webhook and the comp routes then send nothing and log nothing for email. The layer still imports core's email and lifecycle modules, so they must exist in the app; `pass_expiring` is sent only by core's lifecycle task |
 | No `paddle_*` PostHog events | `runtimeConfig.billing.analytics: false`. The webhook then sends none of the layer's own events (subscription lifecycle, transaction completed, access revoked); an app that records its own plan events does it from `registerBillingOutcomeHandler`, which still runs |
 | Keep the overlap of a late pass | `runtimeConfig.billing.stackAtBilledAt: true`. A pass stacks on the access that was running when it was **bought**, not when the webhook was processed. Only differs when delivery lagged past the old pass's end (Paddle retries for days); default is the wall clock, as before |
-| Extra fields on the billing view | `registerEntitlementViewFields({ key, view?, history? })` from a Nitro plugin (below). Typed by augmenting `EntitlementViewFields` / `EntitlementHistoryFields` |
+| Extra fields on the billing view | `registerEntitlementViewFields({ key, view?, history? })` from a Nitro plugin (below); core's, in `server/utils/entitlement-view-fields.ts`. Typed by augmenting `EntitlementViewFields` / `EntitlementHistoryFields`. The base view has no referral fields: the referral loop adds `referral` and `referralKind` this way |
+| Days a feature grants that nobody paid for | `getEarnedAccess()` (core, `server/utils/earned-access.ts`): `plan` (stacks on the access running), `write` (idempotent on the ref), `exists`, `countByPrefix`. Billing registers the provider (`layers/billing/server/utils/billing-earned-access.ts`); the referral loop is its only caller. No provider, no grant, no error |
 | Who may use the paid thing | `requireAccess(event)` (core), backed by billing's `requireSubscription`; `findActiveEntitlement(db, userId, productKey, now?)` for anything finer |
 
 **Extra view fields.** `buildEntitlementView` (the shape behind `GET /api/billing/entitlement`, the
 admin user view and "view as") is a layer util, so an app cannot shadow it. To add a field, register
-it in `layers/billing/server/utils/entitlement-view-fields.ts`:
+it in core's `server/utils/entitlement-view-fields.ts` (which knows an entitlement only by its ref;
+this layer widens the row type and the context with the whole row and the overview, so code in
+the layer is fully typed):
 
 ```typescript
-declare module '#layers/billing/server/utils/entitlement-view-fields' {
+declare module '#server/utils/entitlement-view-fields' {
   interface EntitlementHistoryFields { referralKind: 'welcome' | 'reward' | null }
 }
 registerEntitlementViewFields({
@@ -159,8 +174,9 @@ Nothing registered: the view is exactly what it was (same keys, same order, no e
 are appended after the base fields; a field the base view already has is never overwritten (logged
 as `billing_view_field_collision`), and a contributor that throws is logged
 (`billing_view_fields_failed`) and skipped. Re-registering a key replaces it; between contributors the
-later one wins a clash. Referral (core) registers `referralKind` on each history row this way
-(`server/plugins/referral.ts`, `server/utils/referral-view.ts`).
+later one wins a clash. The referral loop registers `referral` and `referralKind` on each history
+row and `referralKind` on the view this way (`server/plugins/referral.ts`,
+`server/utils/referral-view.ts`); without it the view has none of them.
 
 **Shared Paddle account.** Paddle sends every event to every notification destination, so two
 apps on one account each receive the other's. Set `NUXT_PADDLE_PRODUCT_ID` to the product this app

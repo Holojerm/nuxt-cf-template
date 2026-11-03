@@ -185,32 +185,39 @@ and does not care who wrote it:
 
 Referrals grant entitlements, so remove them **before** billing.
 
-1. Delete [`server/utils/referral.ts`](server/utils/referral.ts),
+1. Delete the loop's own files: [`server/utils/referral.ts`](server/utils/referral.ts) and its
+   siblings `referral-codes.ts`, `referral-refs.ts`, `referral-signup.ts`,
+   `referral-billing.ts`, `referral-view.ts`, [`server/plugins/referral.ts`](server/plugins/referral.ts),
    [`server/api/referral/me.get.ts`](server/api/referral/me.get.ts),
    [`shared/utils/referral.ts`](shared/utils/referral.ts),
    [`app/components/Referral/ShareCard.vue`](app/components/Referral/ShareCard.vue),
-   and `test/referral.test.ts` / `test/referral-billing.test.ts`.
-2. Remove the `ShareCard` mount from [`app/pages/account.vue`](app/pages/account.vue).
-3. Delete [`server/plugins/referral.ts`](server/plugins/referral.ts),
-   [`server/utils/referral-billing.ts`](server/utils/referral-billing.ts) and
-   [`server/utils/referral-view.ts`](server/utils/referral-view.ts) (with
-   `test/referral-view.test.ts`): they are the referral loop's registrations with billing
-   (the first-paid reward and the clawback paperwork on the webhook, and `referralKind` on
-   each billing-history row). The webhook and the entitlement view run without them.
-4. In [`server/utils/auth.ts`](server/utils/auth.ts), drop the `referred_by`
-   resolution from the INSERT branch of `upsertOAuthUser`, and in
-   [`server/utils/magic-link.ts`](server/utils/magic-link.ts) drop the
-   `referral_code` carried on the token row.
-5. In [`shared/utils/attribution.ts`](shared/utils/attribution.ts), remove the `?ref=`
-   handling. **Keep the rest of the file** — first-touch UTM attribution is
-   independent of referrals and is worth having.
-6. Schema ([`server/db/schema.ts`](server/db/schema.ts)): drop `users.referral_code`,
-   `users.referred_by` and its index, `entitlements.earned_from_ref`, and the
-   `referral_code` column on `magic_link_tokens`. Then `bun db:generate`.
-7. **Leave `instance_secrets` and `server/utils/identity.ts` alone.** The salted-hash
+   and the tests `test/referral*.test.ts`. The plugin is the loop's only registration with
+   core: the signup contributor (a code per account, `referred_by`, the welcome days), the
+   first-paid reward and clawback paperwork on the billing webhook, and the referral fields
+   on the billing view. Core and billing import none of it, so the webhook, sign-in and the
+   entitlement view run without them.
+2. Remove the `ShareCard` mount from [`app/pages/account.vue`](app/pages/account.vue), and
+   the `referral` / `referralKind` branches of its billing card and history list (and of
+   [`app/pages/admin/users/[id].vue`](app/pages/admin/users/[id].vue)): those fields exist
+   only while the loop registers them.
+3. Optional: the first-touch cookie carries a `?ref=` claim
+   ([`shared/utils/attribution.ts`](shared/utils/attribution.ts)) and a magic link carries it
+   on its token row ([`server/utils/magic-link.ts`](server/utils/magic-link.ts)). With no
+   signup contributor registered the claim is read and ignored, which is harmless. To remove
+   it, drop the `referralCode` field and its code-shape import (and
+   `shared/utils/referral-code.ts`), and the `referral_code` carried on the token row.
+   **Keep the rest of the attribution file** — first-touch UTM attribution is independent of
+   referrals and is worth having.
+4. Schema ([`server/db/schema.ts`](server/db/schema.ts)): drop `users.referral_code`,
+   `users.referred_by` and its index, and the `referral_code` column on `magic_link_tokens`.
+   `entitlements.earned_from_ref` belongs to billing (it keys the refund cascade) and stays.
+   Then `bun db:generate`.
+5. Admin audit labels (`referral.rewarded`, `referral.revoked`, `referral.restored`) live in
+   [`server/utils/audit.ts`](server/utils/audit.ts): keep them, history rows may name them.
+6. **Leave `instance_secrets` and `server/utils/identity.ts` alone.** The salted-hash
    helper is shared with the magic-link per-address rate limit, which is a security
    control. Deleting the table because "referrals used it" removes that too.
-8. Remove `REFERRAL_*` from `.env.example`, `wrangler.toml`, and `nuxt.config.ts`.
+7. Remove `REFERRAL_*` from `.env.example`, `wrangler.toml`, and `nuxt.config.ts`.
 
 ---
 

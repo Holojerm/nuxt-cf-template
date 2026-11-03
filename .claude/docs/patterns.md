@@ -126,9 +126,11 @@ Beyond the contributors above, `server/utils/extensions.ts` and `server/utils/ac
 hold the places a feature steps into a core flow. Each is a plain registry, behaves as
 documented with nothing registered, and is registered from a Nitro plugin (tests call the same
 function). Billing registers all of them (`layers/billing/server/utils/billing-extensions.ts`).
-A layer never imports another layer: it calls core's seam, and whoever provides the feature registers
-into it. (Referral, which stays in core, is the one thing that imports billing, via `#layers/billing/…`.
-It reaches the webhook through billing's own handler registry, `registerBillingOutcomeHandler`.)
+**No layer imports another layer, and core imports neither**: a feature calls core's seam, and
+whoever provides the other feature registers into it. `bun run layers:check` fails a layer that
+imports another, and core code that imports a layer (the app schema's re-export lines are the one
+composition root). Referral and billing are the worked pair: the loop pays from billing's webhook
+and writes its days into billing's table, and neither file imports the other.
 
 | Seam | Register with | Core does | With nothing registered |
 | --- | --- | --- | --- |
@@ -139,6 +141,10 @@ It reaches the webhook through billing's own handler registry, `registerBillingO
 | Funnel `paid` stage | `registerFunnelStageContributor({ key: 'paid', count })` | `collectFleetFunnel()` reports its count | `funnel.paid` is 0 |
 | View-as section | `registerAdminViewAsContributor({ key, load })` | The admin "view as" payload spreads each section and ANDs the gates each returns into `gates`/`dashboardReachable` | Only `gates.auth` |
 | Export section only | `registerAccountContributor({ key, exportSection })` | `countForDeletion` is optional: omit it and the audit row gains no count | n/a |
+| Billing outcome | `registerBillingOutcomeHandler(key, handler)` (`server/utils/billing-outcome.ts`) | The billing webhook runs every handler, in order, after the email and before the log lines; a throw is logged, never a 500 | Nothing follows the event |
+| Billing view fields | `registerEntitlementViewFields({ key, view?, history? })` (`server/utils/entitlement-view-fields.ts`) | `buildEntitlementView` appends each contributor's fields to the view and to every history row. Additive only | The view is exactly the base shape |
+| Earned access | `registerEarnedAccess(provider)` (`server/utils/earned-access.ts`) | Billing registers; a feature that grants days nobody paid for calls `getEarnedAccess()` to plan (stack), write (idempotent on the ref), check and count them | `getEarnedAccess()` is null: the feature grants nothing and does not error |
+| Signup contributor | `registerSignupContributor({ key, resolve?, mint?, isCollision?, mintAttempts?, afterSignUp? })` (`server/utils/signup-contributors.ts`) | `upsertOAuthUser` merges each `resolve`d column set and each `mint`ed one (retrying a collision a contributor claims); `establishSession` runs each `afterSignUp` after the cookie is sealed, inside `afterSignIn` | A new account has only the columns the template sets |
 
 Entitlement-shaped data reaches the rest of core through the same contributors:
 `AdminUserContributor` (key `billing`), `OnboardingSignalContributor` (`entitlementActive`),

@@ -1,4 +1,4 @@
-// The referral loop's shape and its prices, in the one place both halves read.
+// The referral loop's prices, in the one place both halves read.
 //
 // In `shared/` for the same reason MAX_COMP_PASSES is: the numbers below are
 // simultaneously a marketing promise rendered on /account and a spending limit
@@ -6,51 +6,21 @@
 // direction they drift in is "the page promises 30 days and the grant writes
 // 7" — which is a support ticket that reads as fraud to the person filing it.
 //
-// The code SHAPE lives here for a second reason: shared/utils/attribution.ts
-// validates `?ref=` against it before the value reaches a database write, and
-// server/utils/users.ts generates codes from the same alphabet. A validator and
-// a generator that disagree produce codes nobody can redeem.
+// The code SHAPE (alphabet, length, pattern) is core's, in
+// shared/utils/referral-code.ts, because the attribution cookie validates a
+// `?ref=` against it.
 
-/**
- * A referral code ends up in a URL, in a group chat, and read aloud over a
- * phone, so the alphabet drops every character people confuse when
- * transcribing: 0/O, 1/I/L, and U (which is heard as "you"). What's left is 30
- * symbols, all URL-safe without escaping.
- */
-export const REFERRAL_CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTVWXYZ'
-
-/** 30^8 ≈ 6.6e11 — unguessable enough that codes can't be enumerated to farm rewards. */
-export const REFERRAL_CODE_LENGTH = 8
+import { normalizeReferralCode } from './referral-code'
 
 /**
  * Bounded retries when a freshly minted code hits the unique index.
  *
- * Shared by the two places that mint: provisioning (server/utils/users.ts) and
+ * Shared by the two places that mint: provisioning (server/utils/referral-signup.ts) and
  * the lazy mint for accounts that predate the column (server/utils/referral.ts).
  * An unbounded loop turns a broken generator into a hung request; at 30^8 five
  * collisions means the randomness is broken and deserves to be thrown.
  */
 export const REFERRAL_CODE_MINT_ATTEMPTS = 5
-
-/** Exactly the shape the generator produces — anchored, so nothing longer passes. */
-export const REFERRAL_CODE_PATTERN = new RegExp(
-  `^[${REFERRAL_CODE_ALPHABET}]{${REFERRAL_CODE_LENGTH}}$`,
-)
-
-/**
- * The one accepted spelling of a code, or `undefined`.
- *
- * Uppercases first, because the code travels through mail clients that
- * lowercase URLs and through people retyping it, and the alphabet is uppercase.
- * Everything else is rejected outright rather than repaired: this value is
- * about to decide whether somebody is credited with a customer, and a guess at
- * what a malformed code "probably meant" is a guess about money.
- */
-export function normalizeReferralCode(raw: string | null | undefined): string | undefined {
-  const candidate = raw?.trim().toUpperCase()
-  if (!candidate || !REFERRAL_CODE_PATTERN.test(candidate)) return undefined
-  return candidate
-}
 
 // ── What the loop pays, and to whom ─────────────────────────────────────────
 // Stated as three numbers rather than one, because the two sides are paid for
@@ -72,7 +42,7 @@ export function normalizeReferralCode(raw: string | null | undefined): string | 
  * price was not "a fresh mailbox" but "two mailboxes, forever", and the
  * paragraph above was simply false. The ref is now a salted hash of the
  * canonical mailbox and the unique index refuses the second grant permanently
- * (layers/billing/server/utils/paddle-refs.ts › referralWelcomeRef).
+ * (server/utils/referral-refs.ts › referralWelcomeRef).
  *
  * It is denominated in DAYS rather than passes for a separate reason: a pass is
  * "the thing the customer would have bought" (see layers/billing/server/utils/admin-grants.ts

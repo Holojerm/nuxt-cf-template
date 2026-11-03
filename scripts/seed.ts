@@ -59,7 +59,7 @@ import { resolve } from 'node:path'
 import { existsSync } from 'node:fs'
 
 import * as schema from '../server/db/schema'
-import { generateReferralCode } from '../server/utils/users'
+import { generateReferralCode } from '../server/utils/referral-codes'
 import { upsertSubscription } from '../layers/billing/server/utils/entitlements'
 import type { EntitlementDb } from '../layers/billing/server/utils/entitlements'
 

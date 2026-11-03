@@ -13,7 +13,7 @@ import {
   registerBillingOutcomeHandler,
   runBillingOutcomeHandlers,
   type BillingOutcomeContext,
-} from '../server/utils/billing-outcome'
+} from '~~/server/utils/billing-outcome'
 import {
   PASS_DAYS,
   adjustmentMatchedNothing,

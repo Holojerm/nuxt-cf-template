@@ -1,17 +1,26 @@
-// The referral loop labels its own rows in the billing history: `referralKind`
-// per row, from the ref's prefix, registered by server/plugins/referral.ts.
+// The referral loop labels its own rows on the billing view: `referral` and
+// `referralKind` per history row and `referralKind` for the row that describes
+// the plan, all from the ref's prefix, registered by server/plugins/referral.ts.
+// The billing view itself carries none of them.
 
 import { env } from 'cloudflare:test'
 import { drizzle } from 'drizzle-orm/d1'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { buildEntitlementView } from '#layers/billing/server/utils/entitlement-view'
+import * as schema from '../server/db/schema'
 import {
   clearEntitlementViewFieldsForTest,
   registerEntitlementViewFields,
-} from '#layers/billing/server/utils/entitlement-view-fields'
-import * as schema from '../server/db/schema'
-import { referralHistoryFields } from '../server/utils/referral-view'
+} from '../server/utils/entitlement-view-fields'
+import { referralHistoryFields, referralViewFields } from '../server/utils/referral-view'
+
+const registerReferral = () =>
+  registerEntitlementViewFields({
+    key: 'referral',
+    view: referralViewFields,
+    history: referralHistoryFields,
+  })
 
 const db = drizzle(env.DB, { schema })
 const USER = 'user-referral-view'
@@ -36,19 +45,37 @@ beforeEach(async () => {
 
 afterEach(() => clearEntitlementViewFieldsForTest())
 
-describe('referralKind on history rows', () => {
-  it('names the side of the loop for referral rows and null for a purchase', async () => {
-    registerEntitlementViewFields({ key: 'referral', history: referralHistoryFields })
+describe('the referral fields on history rows', () => {
+  it('name the side of the loop for referral rows and null for a purchase', async () => {
+    registerReferral()
 
     const view = await buildEntitlementView(db, USER)
 
     const kinds = Object.fromEntries(view.history.map((row) => [row.ref, row.referralKind]))
     expect(kinds).toEqual({ welcome_a: 'welcome', referral_b: 'reward', txn_c: null })
+    const flags = Object.fromEntries(view.history.map((row) => [row.ref, row.referral]))
+    expect(flags).toEqual({ welcome_a: true, referral_b: true, txn_c: false })
+  })
+
+  it('are absent until the plugin registers them', async () => {
+    const view = await buildEntitlementView(db, USER)
+
+    expect(view.history.every((row) => !('referralKind' in row) && !('referral' in row))).toBe(true)
+  })
+})
+
+describe('referralKind on the row that describes the plan', () => {
+  it('is the kind of the describing row, and null when nothing describes', async () => {
+    registerReferral()
+    // Only the welcome grant is granting access: it is the row that describes.
+    await env.DB.exec("DELETE FROM entitlements WHERE paddle_subscription_id <> 'welcome_a'")
+    expect((await buildEntitlementView(db, USER)).referralKind).toBe('welcome')
+
+    await env.DB.exec('DELETE FROM entitlements')
+    expect((await buildEntitlementView(db, USER)).referralKind).toBeNull()
   })
 
   it('is absent until the plugin registers it', async () => {
-    const view = await buildEntitlementView(db, USER)
-
-    expect(view.history.every((row) => !('referralKind' in row))).toBe(true)
+    expect('referralKind' in (await buildEntitlementView(db, USER))).toBe(false)
   })
 })

@@ -29,9 +29,9 @@ import {
   REFERRAL_MAX_REWARDS,
   REFERRAL_REWARD_DAYS,
   REFERRAL_WELCOME_DAYS,
-  normalizeReferralCode,
   referralShareUrl,
 } from '../shared/utils/referral'
+import { normalizeReferralCode } from '../shared/utils/referral-code'
 import {
   countReferralRewards,
   countStandingReferralRewards,
@@ -53,17 +53,31 @@ import {
   upsertSubscription,
 } from '#layers/billing/server/utils/entitlements'
 import { buildEntitlementView } from '#layers/billing/server/utils/entitlement-view'
-import {
-  isReferralRef,
-  referralRewardRef,
-  referralWelcomeRef,
-} from '#layers/billing/server/utils/paddle-refs'
-import { generateReferralCode, upsertOAuthUser } from '../server/utils/users'
+import { billingEarnedAccess } from '#layers/billing/server/utils/billing-earned-access'
+import { registerEarnedAccess } from '../server/utils/earned-access'
+import { registerEntitlementViewFields } from '../server/utils/entitlement-view-fields'
+import { referralHistoryFields, referralViewFields } from '../server/utils/referral-view'
+import { isReferralRef, referralRewardRef, referralWelcomeRef } from '../server/utils/referral-refs'
+import { generateReferralCode } from '../server/utils/referral-codes'
+import { createReferralSignup } from '../server/utils/referral-signup'
+import { registerSignupContributor } from '../server/utils/signup-contributors'
+import { upsertOAuthUser } from '../server/utils/users'
 import { getIdentitySalt } from '../server/utils/identity'
 import { saltedHash } from '../server/utils/hash'
 import { legacyWelcomeRefForEmail } from '../server/utils/referral'
 
 const db = drizzle(env.DB, { schema })
+
+// Both halves present, as in the template: billing holds the days, the loop
+// decides who gets them. Nitro plugins do not run under vitest, so the same
+// registrations the plugins make are made here.
+registerEarnedAccess(billingEarnedAccess)
+registerSignupContributor(createReferralSignup())
+registerEntitlementViewFields({
+  key: 'referral',
+  view: referralViewFields,
+  history: referralHistoryFields,
+})
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const REFERRER_CODE = 'AB2CD3EF'

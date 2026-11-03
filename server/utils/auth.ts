@@ -14,6 +14,7 @@ import type { H3Event } from 'h3'
 import type { UserSession } from '#auth-utils'
 import type { Attribution } from '#shared/utils/attribution'
 import { ATTRIBUTION_COOKIE, readAttributionCookie } from '#shared/utils/attribution'
+import { getSignupContributors } from './signup-contributors'
 import type { OAuthProfile } from './users'
 
 /** Cookie the login page sets before bouncing to a provider. */
@@ -276,28 +277,21 @@ export async function establishSession(
     })
   }
 
-  // ── The referee's half of the referral loop ────────────────────────────────
-  // Only on a brand-new account that resolved a referral code moments ago
-  // (upsertOAuthUser writes `referred_by` on the INSERT branch, and only when
-  // the code named a real, live, other account).
-  //
-  // Inside afterSignIn for the reason that helper exists: the session cookie is
-  // already sealed, so a throw here would tell someone sign-in failed while
-  // they are, in fact, signed in — and on the magic-link path their token is
-  // already spent. grantRefereeWelcome() never throws either; both guards are
-  // deliberate, because free trial days are never worth an account creation.
-  if (created && user.referredBy) {
-    await afterSignIn('referral_welcome', async () => {
-      // The welcome ref is a salted hash of the MAILBOX — that is what makes
-      // the trial once-per-inbox instead of once-per-account, and therefore not
-      // renewable by deleting and re-registering. Its salt is provisioned in D1
-      // rather than configured (server/utils/identity.ts); `sessionPassword` is
-      // passed for one job only, recognising refs minted under the previous
-      // construction, and can be deleted with that check.
-      await grantRefereeWelcome(db, user, {
-        sessionPassword: useRuntimeConfig(event).sessionPassword,
-      })
-    })
+  // ── What features add to a brand-new account ───────────────────────────────
+  // Registered through core's signup seam (server/utils/signup-contributors.ts);
+  // the referral loop's welcome days are the shipped one. Each runs inside
+  // afterSignIn for the reason that helper exists: the session cookie is
+  // already sealed, so a throw here would tell someone sign-in failed while they
+  // are, in fact, signed in — and on the magic-link path their token is already
+  // spent.
+  if (created) {
+    for (const contributor of getSignupContributors()) {
+      const afterSignUp = contributor.afterSignUp
+      if (!afterSignUp) continue
+      await afterSignIn(contributor.afterSignUpLabel ?? contributor.key, () =>
+        afterSignUp({ db, event, user }),
+      )
+    }
   }
 
   return { user, created }

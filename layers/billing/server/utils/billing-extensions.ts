@@ -1,7 +1,8 @@
 // What the billing feature contributes to core: the deletion guard, the data
 // export's entitlements, the admin one-customer and "view as" payloads, fleet
 // counters and the paid funnel stage, the onboarding signal, the paddle-event
-// purge, the `pass_expiring` lifecycle step and the paywall gate itself.
+// purge, the `pass_expiring` lifecycle step, the paywall gate itself and the
+// earned-access provider other features grant days through.
 // Registered once per isolate by this layer's layers/billing/server/plugins/billing.ts; tests call
 // registerBillingExtensions() directly. See server/utils/extensions.ts.
 //
@@ -20,8 +21,8 @@ import {
   paddleCancelFromConfig,
 } from './billing-deletion'
 import type { CancelSubscription } from './billing-deletion'
-import { registerUnknownUserExpectation } from './billing-outcome'
-import { registerEntitlementViewFields } from './entitlement-view-fields'
+import { registerUnknownUserExpectation } from './billing-expectations'
+import { billingEarnedAccess } from './billing-earned-access'
 import { setBillingNotify, setSkipUndeliverableRecipients } from './billing-notifications'
 import { passExpiringStep } from './billing-lifecycle'
 import { buildEntitlementView } from './entitlement-view'
@@ -41,6 +42,8 @@ import {
 } from '#server/utils/extensions'
 import type { ExtensionDb } from '#server/utils/extensions'
 import { registerAccessGate } from '#server/utils/access-gate'
+import { registerEarnedAccess } from '#server/utils/earned-access'
+import { registerEntitlementViewFields } from '#server/utils/entitlement-view-fields'
 import { PURGE_BATCH_LIMIT } from '#server/utils/purge'
 
 /** One entitlement as the data export shows it. */
@@ -68,7 +71,7 @@ declare module '#server/utils/extensions' {
   }
 }
 
-declare module '#layers/billing/server/utils/entitlement-view-fields' {
+declare module '#server/utils/entitlement-view-fields' {
   interface EntitlementViewFields {
     /**
      * Present (true) only with `billing.cancelOnDeletion` on: deleting the
@@ -306,4 +309,7 @@ export function registerBillingExtensions(
 
   registerLifecycleStep(passExpiringStep)
   registerAccessGate(requireSubscription)
+  // Where a feature that hands out access nobody paid for (the referral loop)
+  // writes its days: stacked on what the person holds, counted, clawed back.
+  registerEarnedAccess(billingEarnedAccess)
 }
