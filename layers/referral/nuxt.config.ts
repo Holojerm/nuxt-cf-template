@@ -27,6 +27,11 @@
 // names (`referral.rewarded` …) and the `referral` notification class are core's
 // vocabulary too.
 //
+// ── What an app can add ─────────────────────────────────────────────────────
+// registerWelcomeLedger() (server/utils/referral-ledger.ts): a durable record that a
+// mailbox spent its welcome trial, for an app whose account deletion removes
+// entitlements (the template keeps them, so it needs none).
+//
 // ── The prices ──────────────────────────────────────────────────────────────
 // Welcome days, reward days and the cap are constants in shared/utils/referral.ts,
 // not options: the share card promises them and the grant enforces them, and a

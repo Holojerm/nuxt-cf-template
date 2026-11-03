@@ -20,6 +20,7 @@ that reward if the payment reverses.
 | Account creation: a code per account, `referred_by`, the welcome days | `layers/referral/server/utils/referral-signup.ts` |
 | Reactions to a Paddle event: reward, clawback paperwork | `layers/referral/server/utils/referral-billing.ts` |
 | `referral` / `referralKind` on the billing view | `layers/referral/server/utils/referral-view.ts` |
+| Optional durable "trial spent" record, for an app that hard-deletes entitlements | `layers/referral/server/utils/referral-ledger.ts` (`registerWelcomeLedger`) |
 | Registration with core | `layers/referral/server/plugins/referral.ts` |
 | `GET /api/referral/me`, the share card | `layers/referral/server/api/referral/me.get.ts`, `layers/referral/app/components/Referral/ShareCard.vue` |
 | Prices and the stacking sentence | `layers/referral/shared/utils/referral.ts` |
@@ -149,8 +150,13 @@ from outside the building. Treat `layers/referral/server/utils/referral.ts` as b
    `shared/utils/{referral-code,attribution}.ts`. The fork's own `users.ts` / `auth.ts` lose their referral
    code; the signup seam replaces it.
 3. **Schema**: the layer ships no table, so nothing is re-exported and `bunx drizzle-kit generate` must say
-   "No schema changes". A fork's own referral-adjacent table (a durable record that a welcome trial was
-   spent, say) stays app-owned.
+   "No schema changes". A fork's own referral-adjacent table stays app-owned. The case that needs one: an app
+   whose account deletion **removes** entitlement rows loses the `welcome_` row with the account, which re-arms
+   the trial for the same address. It keeps a durable record of its own (never touched by the deletion
+   batch, never pruned) and registers it with `registerWelcomeLedger({ spent, markSpent })` from a Nitro plugin.
+   The layer asks `spent` first and calls `markSpent` only after the days are written; see the header of
+   `layers/referral/server/utils/referral-ledger.ts`. The template retains entitlements on deletion, so it
+   needs none.
 4. **Customised UI** is shadowed, not edited: an app component of the same name (`Referral/ShareCard`, under the
    app's `app/components/`) wins over the layer's. The numbers on it come from the layer's shared referral
    constants (`REFERRAL_WELCOME_DAYS`, `REFERRAL_REWARD_DAYS`, `REFERRAL_STACKING_NOTE`).

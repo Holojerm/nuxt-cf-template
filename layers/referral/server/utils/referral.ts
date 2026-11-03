@@ -80,6 +80,7 @@ import type { ExtensionDb } from '#server/utils/extensions'
 import { saltedHash } from '#server/utils/hash'
 import { getIdentitySalt } from '#server/utils/identity'
 import { generateReferralCode, findReferrerByCode, isReferralCodeCollision } from './referral-codes'
+import { getWelcomeLedger } from './referral-ledger'
 import { REFERRAL_REF_PREFIX, referralRewardRef, referralWelcomeRef } from './referral-refs'
 import { canonicalizeEmailForLimiting, findUserById, isSameMailbox } from '#server/utils/users'
 
@@ -293,7 +294,10 @@ export async function grantRefereeWelcome(
 
     // Before anything else that would be recorded: this mailbox may already
     // have spent its trial on an account that has since been deleted, and the
-    // audit row must not claim otherwise.
+    // audit row must not claim otherwise. An app that hard-deletes entitlements
+    // keeps the fact in a ledger of its own (referral-ledger.ts), asked first.
+    const ledger = getWelcomeLedger()
+    if (ledger && (await ledger.spent(db, ref))) return { outcome: 'already_granted' }
     if (await earned.exists(db, ref)) return { outcome: 'already_granted' }
 
     // …and it may have spent it under the OLD ref construction. Introducing the
@@ -335,11 +339,24 @@ export async function grantRefereeWelcome(
       now: options.now,
     })
 
-    return await payReferral(db, earned, plan, {
+    const result = await payReferral(db, earned, plan, {
       side: 'referee',
       refereeId: user.id,
       referrerId: referrer.id,
     })
+
+    // After the days, never before: this record is what makes the trial spent
+    // forever, so writing it in front of a grant that then failed would burn
+    // somebody's trial without giving them anything.
+    if (ledger && result.outcome === 'granted') {
+      try {
+        await ledger.markSpent(db, ref)
+      } catch (error) {
+        logReferral('referral_welcome_mark_failed', { error: String(error) })
+      }
+    }
+
+    return result
   } catch (error) {
     // A free trial is never worth failing an account creation over.
     logReferral('referral_welcome_failed', { userId: user.id, error: String(error) })
