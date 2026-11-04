@@ -222,9 +222,9 @@ Three rules follow, and each one exists because something broke it:
 
 1. **A gate takes its scan root from the checkout** — not a walk upward, not a bare `**/*` glob.
 2. **A gate that binds a port derives it** via `scripts/worktree-port.ts`. Never hardcode one.
-3. **A gate never writes to a tracked file.** `nuxt-mcp` rewrites `.mcp.json` with the live dev
-   server URL on every boot, and `test:a11y` boots one — so a green run used to end with a dirty
-   tree, and `git add -A` would commit a throwaway port. It's now disabled whenever
+3. **A gate never writes to a tracked file.** `nuxt-mcp` rewrites the local MCP config with the
+   live dev server URL on every boot, and `test:a11y` boots one. That file is now untracked (the
+   committed copy is `.mcp.json.example`), and `nuxt-mcp` is also disabled whenever
    `NUXT_DEVTOOLS=false` (`nuxt.config.ts` › `modules`), which is exactly the automated case.
 
 ## `bun dev` gets a per-worktree hostname

@@ -39,7 +39,7 @@ bun run rename acme-widgets --display "Acme Widgets"
 ```
 
 That rewrites every occurrence of `my-app` across `wrangler.toml`, `package.json`
-(scripts + `portless.name`), `.mcp.json`, `fleet.json`, and `mcp/`, sets both `[[ratelimits]]`
+(scripts + `portless.name`), `.mcp.json.example`, `fleet.json`, and `mcp/`, sets both `[[ratelimits]]`
 `namespace_id`s to a pair derived from the new name (the namespace is scoped to your Cloudflare
 account, so every app on it needs its own — `scripts/ratelimit-namespace.ts`), and prints what's
 left for you to do by hand. Missing one of these is not obvious later: Workers Builds refuses every build when
@@ -67,7 +67,7 @@ NUXT_PUBLIC_APP_NAME = "My App"  # Display name shown in the UI
 "portless": { "name": "my-app", "script": "dev:app" }
 ```
 
-**[`.mcp.json`](./.mcp.json) — the Nuxt MCP server URL:**
+**[`.mcp.json.example`](./.mcp.json.example) — the Nuxt MCP server URL** (`bun dev` copies it to the gitignored local MCP config):
 
 ```json
 "nuxt": { "type": "sse", "url": "https://my-app.localhost/__mcp/sse" }
@@ -1377,11 +1377,11 @@ Local dev caveat: `wrangler dev` uses its own local D1 sandbox (`.wrangler/`), n
 
 This template ships with Claude Code configuration out of the box:
 
-- **MCP servers** (`.mcp.json`): Cloudflare docs, NuxtUI docs, Drizzle schema introspection, Nuxt live introspection, GitHub
+- **MCP servers** (`.mcp.json.example`, copied to a local gitignored config by `bun dev`): Cloudflare docs, NuxtUI docs, Drizzle schema introspection, Nuxt live introspection, GitHub
 - **Slash commands** (`.claude/commands/`): `/new-feature`, `/scaffold-component`, `/scaffold-api`, `/db-migrate`
 - **Skills** (`.claude/skills/`): NuxtUI, frontend design, theming, and more
 - **AI guide** (`AGENTS.md`): stack conventions, styling rules, commands, and an index into `.claude/docs/` — kept small on purpose, since it loads into every agent session
 - **Subsystem docs** (`.claude/docs/`): auth, billing, email, SEO, patterns, brand, agent tooling, and the gotchas list — read on demand, not all at once
 - **Teardown guide** (`TEARDOWN.md`): ordered removal steps for billing, referrals, and the MCP worker
 
-The Nuxt MCP server requires `bun dev` to be running — its URL in `.mcp.json` is `https://<your-portless-name>.localhost/__mcp/sse` (defaults to `my-app`; rename when you fork). Everything else works without any extra setup.
+The Nuxt MCP server requires `bun dev` to be running — its URL in the MCP config is `https://<your-portless-name>.localhost/__mcp/sse` (defaults to `my-app`; rename when you fork). Everything else works without any extra setup.

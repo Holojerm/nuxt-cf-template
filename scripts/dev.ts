@@ -11,6 +11,7 @@
 // and runs `dev:app`. Run `bun dev:app` to bypass the proxy entirely.
 
 import { execFileSync, spawn } from 'node:child_process'
+import { copyFileSync, existsSync } from 'node:fs'
 import { basename } from 'node:path'
 
 import pkg from '../package.json' with { type: 'json' }
@@ -37,6 +38,13 @@ function worktreeDir(): string | null {
     // the worst case is the name portless would have picked anyway.
     return null
   }
+}
+
+// `.mcp.json` is untracked (nuxt-mcp rewrites it on boot), so a fresh clone gets
+// the committed example on its first `bun dev`.
+if (!existsSync('.mcp.json') && existsSync('.mcp.json.example')) {
+  copyFileSync('.mcp.json.example', '.mcp.json')
+  console.info('created .mcp.json from .mcp.json.example')
 }
 
 const base = pkg.portless?.name ?? pkg.name
