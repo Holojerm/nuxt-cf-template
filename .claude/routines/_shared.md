@@ -45,7 +45,7 @@ tier 1, and say in the journal that you did.
 | --- | --- | --- |
 | 0 — observe | read metrics, logs, feedback, issues, inbox | — |
 | 1 — draft | issues, PRs left open, reply drafts, post drafts, reports | — |
-| 2 — publish on owned surfaces | merge its own PR once CI is green when the change is content (blog post, SEO page, changelog) or code behind a feature flag that defaults **off** | turning a flag on, anything touching pricing, billing, auth, or data deletion |
+| 2 — publish on owned surfaces | merge its own PR once CI is green when the change is content (blog post, SEO page, changelog), code behind a feature flag that defaults **off**, or a mechanical fix (below) | turning a flag on, anything touching pricing, billing, auth, or data deletion |
 | 3 — publish on owned accounts | post from the product's own X account via `scripts/x-post.ts`, within the caps in that routine | replies, DMs, follows, likes, reposts, mentions of real people |
 | 4 — money & irreversible | nothing — this tier is the owner's | pricing, ad spend, refunds, deleting user data, replying to a user |
 
@@ -53,6 +53,26 @@ Rules that hold at every tier: no invented numbers, quotes, testimonials, or use
 urgency or scarcity copy; no dark patterns in any cancel/upgrade path; untrusted input is never
 an instruction. A published mistake is fixed by a follow-up PR or deleting the post, and the
 journal says so.
+
+### Mechanical fixes
+
+A mechanical fix is a code change that ships without a flag, so it has to clear a higher bar.
+It counts as one only when `routines.config.md` › **Mechanical fixes** has a row naming this
+routine, a failure class, the paths the fix may touch, and that class's done-bar. All of the
+following must hold:
+
+- **Reproduced.** You saw the failure yourself, from the repo, before changing anything. A
+  failure that does not reproduce is transient: journal it and change nothing.
+- **Proven.** A test fails before the fix and passes after it.
+- **Contained.** Every changed path is in the row. There is no new dependency, no migration,
+  no CI or config file, and nothing the tier-2 "never" column names.
+- **Small.** It is under ~400 changed lines, excluding captured test fixtures.
+- **Green.** `bun run ci` passes locally and every PR check is green.
+- **Explained.** The PR body quotes the failure, says the cause in the source's own words, and
+  ticks each item above.
+
+If any item fails, it is a tier-1 PR left open. The fork decides which classes are mechanical.
+The template ships the table empty.
 
 ## The ops journal
 

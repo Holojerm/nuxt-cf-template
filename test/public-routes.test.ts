@@ -20,6 +20,7 @@ describe('core public routes (nothing registered)', () => {
       ['/api/health', 'GET'],
       ['/api/status', 'GET'],
       ['/api/fleet', 'GET'],
+      ['/api/ops/events', 'GET'],
       ['/api/auth/providers', 'GET'],
       ['/api/auth/magic-link', 'POST'],
       ['/api/_auth/session', 'GET'],

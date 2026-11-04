@@ -14,7 +14,7 @@
 // Like server/utils/purge.ts, every function takes the Drizzle client
 // explicitly so the workerd suite can drive it against a real D1 binding.
 
-import { and, asc, inArray, isNull, lt } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNull, lt } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
 
 import * as tables from '../db/schema'
@@ -175,4 +175,48 @@ export async function pruneOpsEvents(db: OpsDb, now: Date = new Date()): Promise
     .where(lt(tables.opsEvents.createdAt, cutoff))
     .returning({ id: tables.opsEvents.id })
   return pruned.length
+}
+
+/** Most rows one read of the spool returns; retention caps the window at a week. */
+export const OPS_EVENTS_READ_LIMIT = 500
+
+export interface RecentOpsEvent {
+  id: string
+  kind: string
+  detail: string | null
+  path: string | null
+  created_at: string
+  notified_at: string | null
+}
+
+/**
+ * The spool as the digest saw it, newest first, for the ops-triage routine
+ * (GET /api/ops/events). Notified rows are included: the digest marks rows
+ * when it mails them, and the routine reads after that.
+ */
+export async function recentOpsEvents(
+  db: OpsDb,
+  options: { hours: number; kind?: string; now?: Date },
+): Promise<RecentOpsEvent[]> {
+  const now = options.now ?? new Date()
+  const since = new Date(now.getTime() - options.hours * 60 * 60 * 1000)
+  const rows = await db
+    .select()
+    .from(tables.opsEvents)
+    .where(
+      and(
+        gte(tables.opsEvents.createdAt, since),
+        options.kind ? eq(tables.opsEvents.kind, options.kind) : undefined,
+      ),
+    )
+    .orderBy(desc(tables.opsEvents.createdAt))
+    .limit(OPS_EVENTS_READ_LIMIT)
+  return rows.map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    detail: r.detail,
+    path: r.path,
+    created_at: r.createdAt.toISOString(),
+    notified_at: r.notifiedAt?.toISOString() ?? null,
+  }))
 }

@@ -132,6 +132,8 @@ except the allowlist in `server/utils/public-routes.ts`. Core ships:
   `requireFleetToken()`: **404** when `NUXT_FLEET_TOKEN` is unset, **401** on a
   bad bearer. `/api/status` carries the build sha, migration tags and cron
   schedules — a deployment fingerprint, hence the token.
+- `GET /api/ops/events` — the ops spool for the `ops-triage` routine, behind its own bearer
+  (`NUXT_OPS_TOKEN`) through the same `requireFleetToken()`: 404 unset, 401 wrong.
 - `/api/_nuxt_icon/*` — `@nuxt/icon`'s endpoint, called by the browser for any
   icon the client bundle missed; static icon JSON.
 - `GET /api/blog`, `GET /api/blog/*` — the blog is public content.
