@@ -11,8 +11,21 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as schema from '../server/db/schema'
 import { requireAdmin } from '../server/utils/admin'
 import { SESSION_ROLE_CONTEXT_KEY } from '../server/utils/session-guard'
-import { FEEDBACK_STATUSES } from '../layers/feedback/server/utils/feedback'
-import { MAX_COMP_PASSES } from '../layers/billing/shared/utils/comps'
+
+// Layer modules come through eager globs, not imports, so a fork that removed a
+// layer (TEARDOWN.md, `bun run ci:forkless`) still loads this file: the glob is
+// simply empty and that layer's handlers are neither expected nor stubbed.
+const billingComps = Object.values(
+  import.meta.glob<{ MAX_COMP_PASSES: number }>('../layers/billing/shared/utils/comps.ts', {
+    eager: true,
+  }),
+)[0]
+const feedbackUtils = Object.values(
+  import.meta.glob<{ FEEDBACK_STATUSES: readonly string[] }>(
+    '../layers/feedback/server/utils/feedback.ts',
+    { eager: true },
+  ),
+)[0]
 
 type Handler = (event: unknown) => Promise<unknown>
 
@@ -36,8 +49,8 @@ beforeAll(() => {
   vi.stubGlobal('schema', schema)
   vi.stubGlobal('SESSION_ROLE_CONTEXT_KEY', SESSION_ROLE_CONTEXT_KEY)
   // Referenced at module scope by handlers' zod schemas.
-  vi.stubGlobal('FEEDBACK_STATUSES', FEEDBACK_STATUSES)
-  vi.stubGlobal('MAX_COMP_PASSES', MAX_COMP_PASSES)
+  if (feedbackUtils) vi.stubGlobal('FEEDBACK_STATUSES', feedbackUtils.FEEDBACK_STATUSES)
+  if (billingComps) vi.stubGlobal('MAX_COMP_PASSES', billingComps.MAX_COMP_PASSES)
   vi.stubGlobal('requireAdmin', requireAdmin)
 })
 
@@ -60,11 +73,12 @@ describe('admin route authorization', () => {
     for (const expected of [
       'admin/users.get.ts',
       'admin/audit.get.ts',
-      'admin/users/[id]/grant.post.ts',
-      'admin/users/[id]/revoke.post.ts',
-      'api/feedback.get.ts',
-      'feedback/[id].patch.ts',
-      'feedback/[id]/reply.post.ts',
+      ...(billingComps
+        ? ['admin/users/[id]/grant.post.ts', 'admin/users/[id]/revoke.post.ts']
+        : []),
+      ...(feedbackUtils
+        ? ['api/feedback.get.ts', 'feedback/[id].patch.ts', 'feedback/[id]/reply.post.ts']
+        : []),
     ]) {
       expect(
         paths.some((p) => p.endsWith(expected)),
