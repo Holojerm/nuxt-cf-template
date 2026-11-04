@@ -34,6 +34,21 @@ describe('core public routes (nothing registered)', () => {
     }
   })
 
+  it('matches health, status and fleet exactly, so a look-alike route is not public', () => {
+    for (const path of [
+      '/api/healthz',
+      '/api/health/deep',
+      '/api/status-page',
+      '/api/status/internal',
+      '/api/fleets',
+      '/api/fleet/export',
+    ]) {
+      expect(isPublicApiRequest(path, 'GET'), path).toBe(false)
+    }
+    expect(isPublicApiRequest('/api/status', 'POST')).toBe(false)
+    expect(isPublicApiRequest('/api/fleet', 'DELETE')).toBe(false)
+  })
+
   it('keeps everything else behind the session', () => {
     for (const [path, method] of [
       ['/api/account', 'GET'],

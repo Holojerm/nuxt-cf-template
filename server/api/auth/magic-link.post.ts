@@ -34,7 +34,8 @@ import { z } from 'zod'
 // at runtime (.claude/docs/gotchas.md), and on this route a symbol resolving to
 // `undefined` would be a sign-in that silently stops working.
 import { ATTRIBUTION_COOKIE, readAttributionCookie } from '#shared/utils/attribution'
-import { REDIRECT_COOKIE, safeRedirectPath } from '../../utils/auth'
+import { safeRedirectPath } from '#shared/utils/redirect'
+import { REDIRECT_COOKIE } from '../../utils/auth'
 import { magicLinkEmail } from '../../utils/auth-email-templates'
 import { sendEmail } from '../../utils/email'
 import { emailBranding } from '../../utils/email-templates'

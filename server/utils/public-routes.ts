@@ -32,11 +32,12 @@ export interface PublicApiRoute {
  * against. Features register their own (feedback: `POST /api/feedback`).
  */
 export const CORE_PUBLIC_API_ROUTES: readonly PublicApiRoute[] = [
-  // liveness
-  { path: '/api/health', match: 'prefix' },
+  // Exact, not prefix: a bare `/api/status` prefix would make a later
+  // `/api/status-page` or `/api/fleets` public without anyone deciding it.
+  { path: '/api/health', methods: ['GET', 'HEAD'] },
   // portfolio dashboard — each does its own bearer check (requireFleetToken)
-  { path: '/api/status', match: 'prefix' },
-  { path: '/api/fleet', match: 'prefix' },
+  { path: '/api/status', methods: ['GET'] },
+  { path: '/api/fleet', methods: ['GET'] },
   // ops-triage routine: bearer NUXT_OPS_TOKEN, checked by the route
   { path: '/api/ops/events', match: 'exact', methods: ['GET'] },
   // sign-in start, OAuth callbacks, and the session endpoint useUserSession() reads
