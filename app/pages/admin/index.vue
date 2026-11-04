@@ -173,7 +173,8 @@ useSeo({
           <UButton color="neutral" variant="outline" @click="clearSearch">Search again</UButton>
         </div>
 
-        <div v-else class="overflow-x-auto">
+        <!-- relative: keeps the sr-only caption inside this box (DESIGN.md › Viewport and touch › Width). -->
+        <div v-else class="relative overflow-x-auto">
           <table class="w-full text-sm">
             <caption class="sr-only">
               Customer accounts matching the search, one per row

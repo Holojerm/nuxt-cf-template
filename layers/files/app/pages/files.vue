@@ -182,7 +182,9 @@ useSeo({
       <p v-else-if="files.length === 0" class="text-muted">You haven't uploaded anything yet.</p>
 
       <template v-else>
-        <div class="overflow-x-auto rounded-lg border border-default">
+        <!-- relative: DESIGN.md › Viewport and touch › Width. Without it the
+             sr-only "Actions" header escapes this box and widens the page. -->
+        <div class="relative overflow-x-auto rounded-lg border border-default">
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b border-default text-left text-muted">

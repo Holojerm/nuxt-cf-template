@@ -129,6 +129,28 @@ for (const route of ROUTES) {
   }
 }
 
+// DESIGN.md › Viewport and touch › Width: a page never scrolls sideways. Wide
+// tables scroll in their own box, so the page itself must be exactly the
+// viewport's width. The usual way this breaks is invisible: an absolutely
+// positioned sr-only element inside a table's scroll box, with no positioned
+// ancestor inside the box, escapes the box's clipping and stretches the page.
+test.describe('phone width', () => {
+  test.use({ viewport: { width: 375, height: 812 } })
+  for (const route of ROUTES) {
+    test(`${route} does not scroll sideways at 375px`, async ({ page }) => {
+      await page.goto(route)
+      await page.waitForLoadState('networkidle')
+      const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+      }))
+      expect(scrollWidth, `${route} is ${scrollWidth}px wide on a ${clientWidth}px screen`).toBe(
+        clientWidth,
+      )
+    })
+  }
+})
+
 // The keyboard path can only be checked in a real browser — `:focus` needs a
 // focused document, which jsdom and a background tab both lack. These two are
 // the guarantees DESIGN.md makes that nothing else verifies.
