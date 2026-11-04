@@ -4,6 +4,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { registerBlogPublicRoutes } from '../server/utils/blog-routes'
 import {
   clearPublicRoutesForTest,
   isPublicApiRequest,
@@ -24,14 +25,21 @@ describe('core public routes (nothing registered)', () => {
       ['/api/auth/providers', 'GET'],
       ['/api/auth/magic-link', 'POST'],
       ['/api/_auth/session', 'GET'],
-      ['/api/blog', 'GET'],
-      ['/api/blog/hello', 'GET'],
       ['/api/email/unsubscribe', 'GET'],
       ['/api/email/unsubscribe', 'POST'],
       ['/api/_nuxt_icon/lucide.json', 'GET'],
     ] as const) {
       expect(isPublicApiRequest(path, method), `${method} ${path}`).toBe(true)
     }
+  })
+
+  it('leaves the blog to its own registration', () => {
+    expect(isPublicApiRequest('/api/blog', 'GET')).toBe(false)
+    registerBlogPublicRoutes()
+    expect(isPublicApiRequest('/api/blog', 'GET')).toBe(true)
+    expect(isPublicApiRequest('/api/blog/hello', 'GET')).toBe(true)
+    expect(isPublicApiRequest('/api/blog/hello', 'POST')).toBe(false)
+    expect(isPublicApiRequest('/api/blogger', 'GET')).toBe(false)
   })
 
   it('matches health, status and fleet exactly, so a look-alike route is not public', () => {

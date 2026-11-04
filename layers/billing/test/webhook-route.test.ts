@@ -17,7 +17,11 @@ import * as schema from '~~/server/db/schema'
 import { deleteAccount } from '~~/server/utils/account'
 import { clearExtensionsForTest } from '~~/server/utils/extensions'
 import { pathForLog } from '~~/server/utils/log'
-import { recordOpsEvent } from '~~/server/utils/ops'
+import {
+  recordOpsEvent,
+  recordUnauthenticatedOpsEvent,
+  resetUnauthenticatedOpsThrottleForTest,
+} from '~~/server/utils/ops'
 import { paddleSubscriptionEvent } from '#shared/utils/analytics-events'
 import { registerBillingExtensions } from '../server/utils/billing-extensions'
 import {
@@ -83,6 +87,7 @@ beforeEach(async () => {
   vi.stubGlobal('readRawBody', async () => raw)
   vi.stubGlobal('getRequestHeader', () => header)
   vi.stubGlobal('recordOpsEvent', recordOpsEvent)
+  vi.stubGlobal('recordUnauthenticatedOpsEvent', recordUnauthenticatedOpsEvent)
   vi.stubGlobal('pathForLog', pathForLog)
   vi.stubGlobal('verifyPaddleSignature', verifyPaddleSignature)
   vi.stubGlobal('paddleEventSchema', paddleEventSchema)
@@ -106,6 +111,7 @@ beforeEach(async () => {
 })
 
 afterEach(() => {
+  resetUnauthenticatedOpsThrottleForTest()
   clearBillingOutcomeHandlersForTest()
   clearUnknownUserExpectationsForTest()
   clearExtensionsForTest()
@@ -179,6 +185,13 @@ describe('what the route refuses', () => {
     expect((await deliver(purchase(PRICE_PASS, null), { secret: 'nope' })).status).toBe(401)
     expect((await deliver(purchase(PRICE_PASS, null), { age: 60 })).status).toBe(401)
     expect(await opsKinds()).toEqual(['paddle_webhook_rejected', 'paddle_webhook_rejected'])
+  })
+
+  it('records a flood of bad signatures as one alert, still 401ing every request', async () => {
+    for (let i = 0; i < 20; i++) {
+      expect((await deliver(purchase(PRICE_PASS, null), { secret: 'nope' })).status).toBe(401)
+    }
+    expect(await opsKinds()).toEqual(['paddle_webhook_rejected'])
   })
 
   it('400s a signed body that is not JSON (not a 500) and one that is not a Paddle event', async () => {

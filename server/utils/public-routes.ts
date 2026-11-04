@@ -29,7 +29,8 @@ export interface PublicApiRoute {
 /**
  * What core ships. Frozen here rather than in the middleware so the list in
  * `.claude/docs/auth.md › Public API surface` has one place to be checked
- * against. Features register their own (feedback: `POST /api/feedback`).
+ * against. Features register their own (feedback: `POST /api/feedback`; the
+ * blog: server/plugins/blog-routes.ts), so removing one removes its routes.
  */
 export const CORE_PUBLIC_API_ROUTES: readonly PublicApiRoute[] = [
   // Exact, not prefix: a bare `/api/status` prefix would make a later
@@ -46,9 +47,6 @@ export const CORE_PUBLIC_API_ROUTES: readonly PublicApiRoute[] = [
   // @nuxt/icon's endpoint, which the browser calls for any icon the client
   // bundle missed; it serves static icon JSON and a signed-out visitor needs it.
   { path: '/api/_nuxt_icon/', match: 'prefix' },
-  // the blog is public content; crawlers cannot sign in
-  { path: '/api/blog', methods: ['GET'] },
-  { path: '/api/blog/', match: 'prefix', methods: ['GET'] },
   // one-click unsubscribe: mail providers POST with no session (RFC 8058)
   { path: '/api/email/unsubscribe', methods: ['GET', 'POST'] },
 ]
