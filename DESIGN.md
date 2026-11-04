@@ -324,6 +324,11 @@ nav items, footer rows, buttons — don't need it.
 
 - **Height:** `min-h-dvh`, never `min-h-screen`. Mobile browser chrome makes `100vh` taller
   than the visible viewport, which hides the bottom of the page under the URL bar.
+- **Overscroll:** the page doesn't bounce. `main.css` sets `overscroll-behavior-y: none` on
+  `html` and `body`, so scrolling past the top or bottom stops dead on iOS and on Mac
+  trackpads instead of rubber-banding the sticky header and page background. It is
+  vertical only: the horizontal swipe-back gesture still navigates. The cost is the
+  browser's pull-to-refresh on mobile, which these apps don't need.
 - **Safe areas:** anything pinned to a viewport edge uses the safe-area utilities
   (`bottom-safe`, `right-safe`) so it clears the iOS home bar and the notch in landscape.
   The `viewport-fit=cover` meta in `nuxt.config.ts` is what makes those insets non-zero.
