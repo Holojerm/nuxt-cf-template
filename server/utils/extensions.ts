@@ -28,6 +28,7 @@ import { clearEntitlementViewFieldsForTest } from './entitlement-view-fields'
 import { clearSignupContributorsForTest } from './signup-contributors'
 import type { LifecycleStep } from '../types/extension-types'
 import type { PurgeOptions } from './purge'
+import { createRegistry } from './registry'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type ExtensionDb = ReturnType<typeof drizzle<typeof tables>>
@@ -201,20 +202,20 @@ export interface OnboardingSignalContributor {
   read: (db: ExtensionDb, userId: string) => Promise<Partial<OnboardingInputs>>
 }
 
-// Keyed by contributor key, so registering twice (plugin + test, or a dev
-// reload) replaces rather than duplicates.
-const accountContributors = new Map<string, AccountContributor>()
-const adminUserContributors = new Map<string, AdminUserContributor>()
-const fleetCounterContributors = new Map<string, FleetCounterContributor>()
-const fleetExtraContributors = new Map<string, FleetExtraContributor>()
-const onboardingSignalContributors = new Map<string, OnboardingSignalContributor>()
-const purgeContributors = new Map<string, PurgeContributor>()
-const deletionGuards = new Map<string, DeletionGuard>()
-const deletionResolvers = new Map<string, DeletionResolver>()
-const adminViewAsContributors = new Map<string, AdminViewAsContributor>()
-const funnelStageContributors = new Map<string, FunnelStageContributor>()
-const lifecycleSteps = new Map<string, LifecycleStep>()
+const accountContributors = createRegistry<AccountContributor>()
+const adminUserContributors = createRegistry<AdminUserContributor>()
+const fleetCounterContributors = createRegistry<FleetCounterContributor>()
+const fleetExtraContributors = createRegistry<FleetExtraContributor>()
+const onboardingSignalContributors = createRegistry<OnboardingSignalContributor>()
+const purgeContributors = createRegistry<PurgeContributor>()
+const deletionGuards = createRegistry<DeletionGuard>()
+const deletionResolvers = createRegistry<DeletionResolver>()
+const adminViewAsContributors = createRegistry<AdminViewAsContributor>()
+const funnelStageContributors = createRegistry<FunnelStageContributor>()
+const lifecycleSteps = createRegistry<LifecycleStep>()
 
+// The generic parameter on the keyed registrations ties a contributor's output
+// to its `declare module` section; the registry stores the erased shape.
 export function registerAccountContributor<K extends string>(
   contributor: AccountContributor<K>,
 ): void {
@@ -233,90 +234,48 @@ export function registerFleetCounterContributor<K extends keyof FleetCounterSect
   fleetCounterContributors.set(contributor.key, contributor as unknown as FleetCounterContributor)
 }
 
-export function registerFleetExtraContributor(contributor: FleetExtraContributor): void {
-  fleetExtraContributors.set(contributor.key, contributor)
-}
-
-export function registerOnboardingSignalContributor(
-  contributor: OnboardingSignalContributor,
-): void {
-  onboardingSignalContributors.set(contributor.key, contributor)
-}
-
-export function registerPurgeContributor(contributor: PurgeContributor): void {
-  purgeContributors.set(contributor.key, contributor)
-}
-
-export function registerDeletionGuard(guard: DeletionGuard): void {
-  deletionGuards.set(guard.key, guard)
-}
-
-export function registerDeletionResolver(resolver: DeletionResolver): void {
-  deletionResolvers.set(resolver.key, resolver)
-}
-
 export function registerAdminViewAsContributor<K extends keyof AdminViewAsSections>(
   contributor: AdminViewAsContributor<K>,
 ): void {
   adminViewAsContributors.set(contributor.key, contributor as unknown as AdminViewAsContributor)
 }
 
-export function registerFunnelStageContributor(contributor: FunnelStageContributor): void {
-  funnelStageContributors.set(contributor.key, contributor)
-}
+export const registerFleetExtraContributor = (c: FleetExtraContributor): void =>
+  fleetExtraContributors.set(c.key, c)
+export const registerOnboardingSignalContributor = (c: OnboardingSignalContributor): void =>
+  onboardingSignalContributors.set(c.key, c)
+export const registerPurgeContributor = (c: PurgeContributor): void =>
+  purgeContributors.set(c.key, c)
+export const registerDeletionGuard = (g: DeletionGuard): void => deletionGuards.set(g.key, g)
+export const registerDeletionResolver = (r: DeletionResolver): void =>
+  deletionResolvers.set(r.key, r)
+export const registerFunnelStageContributor = (c: FunnelStageContributor): void =>
+  funnelStageContributors.set(c.key, c)
 
 /**
  * Add a step to the lifecycle email run, after the template's own and before
  * the app's (lifecycle-app-steps.ts). Keyed by step id, so registering twice
  * replaces. Never rename an id: a renamed step re-sends to everyone.
  */
-export function registerLifecycleStep(step: LifecycleStep): void {
+export const registerLifecycleStep = (step: LifecycleStep): void =>
   lifecycleSteps.set(step.id, step)
-}
 
-export function getDeletionGuards(): DeletionGuard[] {
-  return [...deletionGuards.values()]
-}
-
-export function getDeletionResolvers(): DeletionResolver[] {
-  return [...deletionResolvers.values()]
-}
-
-export function getAdminViewAsContributors(): AdminViewAsContributor[] {
-  return [...adminViewAsContributors.values()]
-}
-
-export function getFunnelStageContributor(key: FunnelStageContributor['key']) {
-  return funnelStageContributors.get(key)
-}
-
-export function getRegisteredLifecycleSteps(): LifecycleStep[] {
-  return [...lifecycleSteps.values()]
-}
-
-export function getPurgeContributors(): PurgeContributor[] {
-  return [...purgeContributors.values()]
-}
-
-export function getAccountContributors(): AccountContributor[] {
-  return [...accountContributors.values()]
-}
-
-export function getAdminUserContributors(): AdminUserContributor[] {
-  return [...adminUserContributors.values()]
-}
-
-export function getFleetCounterContributors(): FleetCounterContributor[] {
-  return [...fleetCounterContributors.values()]
-}
-
-export function getFleetExtraContributors(): FleetExtraContributor[] {
-  return [...fleetExtraContributors.values()]
-}
-
-export function getOnboardingSignalContributors(): OnboardingSignalContributor[] {
-  return [...onboardingSignalContributors.values()]
-}
+export const getDeletionGuards = (): DeletionGuard[] => deletionGuards.values()
+export const getDeletionResolvers = (): DeletionResolver[] => deletionResolvers.values()
+export const getAdminViewAsContributors = (): AdminViewAsContributor[] =>
+  adminViewAsContributors.values()
+export const getFunnelStageContributor = (key: FunnelStageContributor['key']) =>
+  funnelStageContributors.get(key)
+export const getRegisteredLifecycleSteps = (): LifecycleStep[] => lifecycleSteps.values()
+export const getPurgeContributors = (): PurgeContributor[] => purgeContributors.values()
+export const getAccountContributors = (): AccountContributor[] => accountContributors.values()
+export const getAdminUserContributors = (): AdminUserContributor[] => adminUserContributors.values()
+export const getFleetCounterContributors = (): FleetCounterContributor[] =>
+  fleetCounterContributors.values()
+export const getFleetExtraContributors = (): FleetExtraContributor[] =>
+  fleetExtraContributors.values()
+export const getOnboardingSignalContributors = (): OnboardingSignalContributor[] =>
+  onboardingSignalContributors.values()
 
 /** Run each contributor's loader in parallel and key the results. */
 export async function collectSections<C extends { key: string }, S>(
@@ -329,17 +288,21 @@ export async function collectSections<C extends { key: string }, S>(
 
 /** Test-only: forget every registration, to exercise core with no features. */
 export function clearExtensionsForTest(): void {
-  accountContributors.clear()
-  adminUserContributors.clear()
-  fleetCounterContributors.clear()
-  fleetExtraContributors.clear()
-  onboardingSignalContributors.clear()
-  purgeContributors.clear()
-  deletionGuards.clear()
-  deletionResolvers.clear()
-  adminViewAsContributors.clear()
-  funnelStageContributors.clear()
-  lifecycleSteps.clear()
+  for (const registry of [
+    accountContributors,
+    adminUserContributors,
+    fleetCounterContributors,
+    fleetExtraContributors,
+    onboardingSignalContributors,
+    purgeContributors,
+    deletionGuards,
+    deletionResolvers,
+    adminViewAsContributors,
+    funnelStageContributors,
+    lifecycleSteps,
+  ]) {
+    registry.clear()
+  }
   clearAccessGateForTest()
   clearBillingOutcomeHandlersForTest()
   clearEarnedAccessForTest()

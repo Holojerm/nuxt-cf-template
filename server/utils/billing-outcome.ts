@@ -27,6 +27,7 @@
 // twice.
 
 import type { ExtensionDb } from './extensions'
+import { createRegistry } from './registry'
 
 /** The verified event, as far as a handler may depend on it. */
 export interface BillingOutcomeEvent {
@@ -74,16 +75,13 @@ export interface BillingOutcomeContext {
 
 export type BillingOutcomeHandler = (context: BillingOutcomeContext) => Promise<void>
 
-// Keyed, so a Nitro plugin and a test (or a dev reload) registering the same
-// handler replace rather than duplicate it.
-const handlers = new Map<string, BillingOutcomeHandler>()
+const handlers = createRegistry<BillingOutcomeHandler>()
 
-export function registerBillingOutcomeHandler(key: string, handler: BillingOutcomeHandler): void {
+export const registerBillingOutcomeHandler = (key: string, handler: BillingOutcomeHandler): void =>
   handlers.set(key, handler)
-}
 
 export async function runBillingOutcomeHandlers(context: BillingOutcomeContext): Promise<void> {
-  for (const [key, handler] of handlers) {
+  for (const [key, handler] of handlers.entries()) {
     try {
       await handler(context)
     } catch (error) {
@@ -99,6 +97,4 @@ export async function runBillingOutcomeHandlers(context: BillingOutcomeContext):
 }
 
 /** Test-only: forget every handler. */
-export function clearBillingOutcomeHandlersForTest(): void {
-  handlers.clear()
-}
+export const clearBillingOutcomeHandlersForTest = (): void => handlers.clear()

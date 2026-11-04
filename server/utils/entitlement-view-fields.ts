@@ -38,6 +38,7 @@
 // - `history` is a pure function of the row. `view` may read, never write.
 
 import type { ExtensionDb } from './extensions'
+import { createRegistry } from './registry'
 
 /** Fields added to the top level of the view. Augment with `declare module`. */
 export interface EntitlementViewFields {}
@@ -71,18 +72,13 @@ export interface EntitlementViewFieldsContributor {
   history?: (entitlement: EntitlementViewRow) => Partial<EntitlementHistoryFields>
 }
 
-// Keyed, so a plugin and a test (or a dev reload) registering the same
-// contributor replace rather than duplicate it.
-const contributors = new Map<string, EntitlementViewFieldsContributor>()
+const contributors = createRegistry<EntitlementViewFieldsContributor>()
 
-export function registerEntitlementViewFields(contributor: EntitlementViewFieldsContributor): void {
-  contributors.set(contributor.key, contributor)
-}
+export const registerEntitlementViewFields = (c: EntitlementViewFieldsContributor): void =>
+  contributors.set(c.key, c)
 
 /** Test-only: forget every contributor. */
-export function clearEntitlementViewFieldsForTest(): void {
-  contributors.clear()
-}
+export const clearEntitlementViewFieldsForTest = (): void => contributors.clear()
 
 function logFailure(kind: string, key: string, detail: Record<string, unknown>): void {
   console.error(JSON.stringify({ kind, contributor: key, ...detail }))
@@ -113,9 +109,9 @@ export async function applyEntitlementViewFields<T extends object>(
   view: T,
   context: EntitlementViewFieldsContext,
 ): Promise<T & EntitlementViewFields> {
-  if (contributors.size === 0) return view as T & EntitlementViewFields
+  if (contributors.values().length === 0) return view as T & EntitlementViewFields
   const base = new Set(Object.keys(view))
-  for (const [key, contributor] of contributors) {
+  for (const [key, contributor] of contributors.entries()) {
     if (!contributor.view) continue
     try {
       mergeAdditive(view as Record<string, unknown>, await contributor.view(context), key, base)
@@ -131,9 +127,9 @@ export function applyEntitlementHistoryFields<T extends object>(
   row: T,
   entitlement: EntitlementViewRow,
 ): T & EntitlementHistoryFields {
-  if (contributors.size === 0) return row as T & EntitlementHistoryFields
+  if (contributors.values().length === 0) return row as T & EntitlementHistoryFields
   const base = new Set(Object.keys(row))
-  for (const [key, contributor] of contributors) {
+  for (const [key, contributor] of contributors.entries()) {
     if (!contributor.history) continue
     try {
       mergeAdditive(row as Record<string, unknown>, contributor.history(entitlement), key, base)
