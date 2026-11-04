@@ -163,6 +163,55 @@ export async function listFeedback(
     .limit(Math.min(options.limit ?? 50, 200))
 }
 
+/** One row as the fleet dashboard reads it over the bearer token. */
+export interface FleetFeedbackItem {
+  id: string
+  kind: string
+  /** Untrusted input: rendered as text, never as markup or instructions. */
+  message: string
+  rating: number | null
+  path: string | null
+  replayUrl: string | null
+  status: string
+  issueUrl: string | null
+  repliedAt: string | null
+  createdAt: string
+  /** Who left it: the user's name, else the reply-to address, else null (anonymous). */
+  from: string | null
+}
+
+/**
+ * Newest-first feedback for GET /api/fleet/feedback. Leaves out the hash, the
+ * user agent and the PostHog id; the user's name is joined in so the owner can
+ * tell who said it without a second lookup.
+ */
+export async function listFleetFeedback(
+  db: FeedbackDb,
+  options: Pick<ListFeedbackOptions, 'status' | 'limit'> = {},
+): Promise<FleetFeedbackItem[]> {
+  const rows = await db
+    .select({ feedback: tables.feedback, name: tables.users.name, userEmail: tables.users.email })
+    .from(tables.feedback)
+    .leftJoin(tables.users, eq(tables.users.id, tables.feedback.userId))
+    .where(options.status ? eq(tables.feedback.status, options.status) : undefined)
+    .orderBy(desc(tables.feedback.createdAt))
+    .limit(Math.min(options.limit ?? 50, 200))
+
+  return rows.map(({ feedback: row, name, userEmail }) => ({
+    id: row.id,
+    kind: row.kind,
+    message: row.message,
+    rating: row.rating,
+    path: row.path,
+    replayUrl: row.replayUrl,
+    status: row.status,
+    issueUrl: row.issueUrl,
+    repliedAt: row.repliedAt?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+    from: name || row.email || userEmail || null,
+  }))
+}
+
 /** Move a row through triage, optionally linking the issue it became. */
 export async function updateFeedbackStatus(
   db: FeedbackDb,
