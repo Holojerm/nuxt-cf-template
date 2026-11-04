@@ -323,7 +323,7 @@ import * as schema from '~/server/db/schema'
 const db = drizzle(env.DB, { schema })
 ```
 
-See [`test/example.test.ts`](./test/example.test.ts) for the starter pattern. Co-located tests under `server/**/*.test.ts` are also picked up by the default config.
+See [`test/identity.test.ts`](./test/identity.test.ts) for the starter pattern. Co-located tests under `server/**/*.test.ts` are also picked up by the default config.
 
 ### End-to-end (Playwright)
 
