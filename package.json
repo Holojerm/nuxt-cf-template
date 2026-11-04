@@ -50,6 +50,7 @@
     "ci:browser": "bun run playwright:install && bun run test:a11y",
     "ci": "bun run lint && bun run format:check && bun run design:check && bun run brand:check && bun run email:check && bun run mirror:check && bun run seo:check && bun run fleet:check && bun run crons:check && bun run methods:check && bun run layers:check && bun run forkless:check && bun run typecheck && bun run test && bun run build",
     "deploy": "nuxt build && wrangler --cwd .output deploy",
+    "deploy:ci": "bun run db:migrate:remote && wrangler --cwd .output deploy",
     "build:preview": "CLOUDFLARE_ENV=preview nuxt build",
     "deploy:preview": "CLOUDFLARE_ENV=preview nuxt build && wrangler --cwd .output deploy",
     "mcp:dev": "bun run --cwd mcp dev",

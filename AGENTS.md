@@ -29,8 +29,9 @@ Read the row that matches what you are about to touch. Do not load them all.
 
 **Three gotchas are load-bearing enough to state here**, because each one fails with
 no error at all: local D1 lives in two places and only `.data/db/sqlite.db` is real;
-**nothing applies migrations to production D1 — you run `bun run db:migrate:remote`
-yourself**; and `bun dev` caches its DB connection, so an external write needs a
+**production D1 is migrated only by the Workers Builds deploy command `bun run deploy:ci`**
+(migrate, then deploy; a manual `bun run deploy` still skips it, so run
+`bun run db:migrate:remote` after one); and `bun dev` caches its DB connection, so an external write needs a
 restart. The rest are in [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).
 
 ---

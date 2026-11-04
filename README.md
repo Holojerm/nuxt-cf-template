@@ -159,7 +159,12 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
    - **Build command**: `bun run ci` (lint → design:check → brand:check → seo:check → typecheck → test → build)
      The browser suites are deliberately absent — Workers Builds cannot launch Chromium, so
      `.github/workflows/browser-suites.yml` runs them instead. See AGENTS.md › Gotchas.
-   - **Deploy command**: `bunx wrangler --cwd .output deploy`
+   - **Deploy command**: `bun run deploy:ci`. This applies pending D1 migrations to
+     production, then deploys. If a migration fails, the deploy doesn't run and production
+     stays on the previous build.
+   - **API token**: the token Workers Builds generates has no D1 permission. Under **My
+     Profile → API Tokens**, edit that token and add **Account → D1 → Edit**. Without it,
+     every production deploy fails at the migrate step.
    - **Preview deploy command**: `bunx wrangler --cwd .output versions upload`
 4. Under **Build Variables and Secrets**, add `NUXT_SESSION_PASSWORD` (mark it secret).
 5. Enable **non-production branch builds** (Settings → Build → Branch control) to get build checks and preview URLs on every PR.
@@ -200,10 +205,11 @@ Push to `main` to trigger a production deploy via Workers Builds, or deploy manu
 bun run deploy     # Note: NOT `bun deploy` — that's reserved by Bun
 ```
 
-> **Migrations do not run on deploy.** Neither `wrangler deploy` nor Workers Builds applies
-> them to your remote D1, and NuxtHub's build-time migration step writes to a local file on
-> the build machine. After the first deploy — and after every schema change — run this once
-> against production, or the Worker will query tables that don't exist:
+> **A manual deploy does not run migrations.** `wrangler deploy` doesn't apply them to your
+> remote D1, and NuxtHub's build-time migration step writes to a local file on the build
+> machine. Workers Builds does apply them, through its deploy command `bun run deploy:ci`
+> (step 4 above). After a manual deploy, run this against production, or the Worker will
+> query tables that don't exist:
 >
 > ```bash
 > bun run db:migrate:remote

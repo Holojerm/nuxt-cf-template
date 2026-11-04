@@ -45,7 +45,7 @@ tier 1, and say in the journal that you did.
 | --- | --- | --- |
 | 0 — observe | read metrics, logs, feedback, issues, inbox | — |
 | 1 — draft | issues, PRs left open, reply drafts, post drafts, reports | — |
-| 2 — publish on owned surfaces | merge its own PR once CI is green when the change is content (blog post, SEO page, changelog), code behind a feature flag that defaults **off**, or a mechanical fix (below) | turning a flag on, anything touching pricing, billing, auth, or data deletion |
+| 2 — publish on owned surfaces | merge its own PR once CI is green when the change is content (blog post, SEO page, changelog), code behind a feature flag that defaults **off**, a mechanical fix (below), or a Dependabot minor/patch PR with every check green (`dependency-merge.md`) | turning a flag on, anything touching pricing, billing, auth, or data deletion |
 | 3 — publish on owned accounts | post from the product's own X account via `scripts/x-post.ts`, within the caps in that routine | replies, DMs, follows, likes, reposts, mentions of real people |
 | 4 — money & irreversible | nothing — this tier is the owner's | pricing, ad spend, refunds, deleting user data, replying to a user |
 
