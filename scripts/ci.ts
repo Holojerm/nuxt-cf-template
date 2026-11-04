@@ -4,6 +4,11 @@
 // one fails: an agent that sees all failures at once fixes them in one pass instead of one
 // rerun per failure. Only a failing gate's output is printed.
 //
+// Formatting is written, not checked: the format-on-edit hook only sees Edit and Write, so files
+// changed through Bash (sed, python3) reach the gate unformatted, and a formatter failure there
+// only costs a rerun. It runs alone, before anything reads the files it rewrites. GitHub Actions
+// still runs `format:check` before this script, so an unformatted commit still fails the PR.
+//
 // The phases run in order because `nuxt typecheck` and `nuxt build` both regenerate `.nuxt/`
 // and `node_modules/@nuxthub`. They must not overlap each other, and they must not overlap
 // `forkless:check`, whose isolation guard fails when that module changes under it. Vitest
@@ -24,7 +29,6 @@ const run = (script: string, ...args: string[]): Gate => ({
 
 const cheap = [
   'lint',
-  'format:check',
   'design:check',
   'brand:check',
   'email:check',
@@ -67,6 +71,7 @@ async function runPhase(gates: Gate[]): Promise<Result[]> {
 const TAIL = 80
 const started = performance.now()
 const results: Result[] = []
+results.push(await exec(run('format')))
 const tests = serial ? null : exec(background)
 for (const phase of phases) results.push(...(await runPhase(phase)))
 results.push(await (tests ?? exec(background)))
