@@ -115,20 +115,15 @@ async function sendMagicLink(resend = false) {
 // ── Dev sign-in ─────────────────────────────────────────────────────────────
 const devSchema = z.object({ email: z.string().email('Enter a valid email address') })
 const devState = reactive({ email: 'demo@example.com' })
-const devPending = ref(false)
 
-async function signInAsDev() {
-  devPending.value = true
-  try {
+const { pending: devPending, run: signInAsDev } = useAsyncAction(
+  async () => {
     await $fetch('/api/auth/dev', { method: 'POST', body: { email: devState.email } })
     await refreshSession()
     await navigateTo(redirectTarget.value)
-  } catch {
-    toast.add({ title: 'Could not sign in', color: 'error' })
-  } finally {
-    devPending.value = false
-  }
-}
+  },
+  { errorTitle: 'Could not sign in' },
+)
 
 useSeo({
   title: 'Sign in',
@@ -292,7 +287,7 @@ useSeo({
         :schema="devSchema"
         :state="devState"
         class="flex flex-col gap-4"
-        @submit="signInAsDev"
+        @submit="signInAsDev()"
       >
         <p class="text-sm text-muted">
           Any email signs you in — no password, no provider. This route returns 404 in production.

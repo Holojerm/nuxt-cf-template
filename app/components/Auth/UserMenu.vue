@@ -3,19 +3,11 @@
 // dropdown. Kept out of the layout so the layout stays readable and this can be
 // dropped into any other shell you build.
 
-const { loggedIn, user, clear: clearSession } = useUserSession()
+const { loggedIn, user } = useUserSession()
+const { signOut } = useSignOut()
 const { data: entitlement } = useEntitlement()
 const route = useRoute()
 const isLoginPage = computed(() => route.path === '/login')
-
-async function signOut() {
-  await $fetch('/api/auth/logout', { method: 'POST' })
-  await clearSession()
-  // Reload rather than navigate when we're already on a page the `auth`
-  // middleware guards — otherwise the guard fires mid-navigation and the user
-  // watches themselves get redirected to /login, which reads as an error.
-  await navigateTo('/')
-}
 
 const items = computed(() => [
   [

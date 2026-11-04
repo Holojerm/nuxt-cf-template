@@ -15,6 +15,7 @@
 definePageMeta({ middleware: 'auth' })
 
 const { user, clear: clearSession } = useUserSession()
+const { signOut, pending: signOutPending } = useSignOut()
 const toast = useToast()
 const config = useRuntimeConfig()
 
@@ -119,43 +120,28 @@ async function openBillingPortal(): Promise<void> {
 // Single-use, 10-minute code that bridges this session to the MCP worker's
 // OAuth flow. Shown once — only its hash is stored (server/api/mcp/connect-code).
 const connectCode = ref<string | null>(null)
-const connectPending = ref(false)
-
-async function mintConnectCode() {
-  connectPending.value = true
-  try {
+const { pending: connectPending, run: mintConnectCode } = useAsyncAction(
+  async () => {
     const result = await $fetch('/api/mcp/connect-code', { method: 'POST' })
     connectCode.value = result.code
-  } catch {
-    toast.add({ title: 'Could not create a connect code', color: 'error' })
-  } finally {
-    connectPending.value = false
-  }
-}
-
-async function signOut() {
-  await $fetch('/api/auth/logout', { method: 'POST' })
-  await clearSession()
-  await navigateTo('/')
-}
+  },
+  { errorTitle: 'Could not create a connect code' },
+)
 
 // Every other device's cookie dies on its next request; this one is re-issued
 // by the route, so nothing here has to change client state.
-const revokePending = ref(false)
+const { pending: revokePending, run: revokeOtherSessions } = useAsyncAction(
+  () => $fetch('/api/account/sessions/revoke', { method: 'POST' }),
+  { errorTitle: 'Could not sign out other devices' },
+)
+
 async function signOutEverywhere(): Promise<void> {
-  revokePending.value = true
-  try {
-    await $fetch('/api/account/sessions/revoke', { method: 'POST' })
-    toast.add({
-      title: 'Signed out everywhere else',
-      description: 'Every other device will need to sign in again. This one stays signed in.',
-      color: 'success',
-    })
-  } catch {
-    toast.add({ title: 'Could not sign out other devices', color: 'error' })
-  } finally {
-    revokePending.value = false
-  }
+  if (!(await revokeOtherSessions())) return
+  toast.add({
+    title: 'Signed out everywhere else',
+    description: 'Every other device will need to sign in again. This one stays signed in.',
+    color: 'success',
+  })
 }
 
 // ── Your data ────────────────────────────────────────────────────────────────
@@ -163,8 +149,6 @@ async function signOutEverywhere(): Promise<void> {
 // rights", moved off the support inbox. Routing account deletion through email
 // is the same friction layers/billing/app/utils/churn.ts refuses to add at the cancellation
 // flow, at the same exit door: the whole point is that leaving isn't hard.
-const exportPending = ref(false)
-
 /**
  * `Content-Disposition` on the response doesn't make a `fetch()` download
  * anything — that header only does its job on a real navigation. Building the
@@ -180,9 +164,8 @@ const exportPending = ref(false)
  * produce no error and no file, so nobody reports them as bugs; they report
  * "the export button doesn't work".
  */
-async function downloadData(): Promise<void> {
-  exportPending.value = true
-  try {
+const { pending: exportPending, run: downloadData } = useAsyncAction(
+  async () => {
     const data = await $fetch('/api/account/export')
     const file = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(file)
@@ -194,12 +177,9 @@ async function downloadData(): Promise<void> {
     link.click()
     link.remove()
     setTimeout(() => URL.revokeObjectURL(url), 0)
-  } catch {
-    toast.add({ title: 'Could not download your data', color: 'error' })
-  } finally {
-    exportPending.value = false
-  }
-}
+  },
+  { errorTitle: 'Could not download your data' },
+)
 
 const deleteOpen = ref(false)
 const deletePending = ref(false)
@@ -279,7 +259,13 @@ useSeo({
           <p class="truncate font-medium text-highlighted">{{ user?.name }}</p>
           <p class="truncate text-sm text-muted">{{ user?.email }}</p>
         </div>
-        <UButton class="ml-auto" color="neutral" variant="outline" @click="signOut">
+        <UButton
+          class="ml-auto"
+          color="neutral"
+          variant="outline"
+          :loading="signOutPending"
+          @click="signOut()"
+        >
           Sign out
         </UButton>
       </div>
@@ -539,7 +525,7 @@ useSeo({
           color="neutral"
           variant="outline"
           :loading="connectPending"
-          @click="mintConnectCode"
+          @click="mintConnectCode()"
         >
           {{ connectCode ? 'Generate another' : 'Generate code' }}
         </UButton>
@@ -594,7 +580,7 @@ useSeo({
             variant="outline"
             icon="i-lucide-download"
             :loading="exportPending"
-            @click="downloadData"
+            @click="downloadData()"
           >
             Download
           </UButton>
