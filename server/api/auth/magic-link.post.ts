@@ -46,6 +46,7 @@ import {
 } from '../../utils/magic-link'
 import { requireTurnstile, turnstileTokenSchema } from '../../utils/turnstile'
 import { isUndeliverableAddress, normalizeEmail } from '../../utils/users'
+import { logEvent } from '../../utils/log'
 
 const bodySchema = z.object({
   // 254 is the RFC 5321 ceiling for a whole address. Capped before the address
@@ -99,7 +100,7 @@ export default defineEventHandler(async (event) => {
   //    tombstone a deleted account's row is rewritten to. Minting for one is an
   //    account-resurrection primitive; see isUndeliverableAddress().
   if (isUndeliverableAddress(email)) {
-    console.warn(JSON.stringify({ kind: 'magic_link_reserved_address_refused' }))
+    logEvent('warn', 'magic_link_reserved_address_refused')
     return { ok: true }
   }
 
@@ -118,7 +119,7 @@ export default defineEventHandler(async (event) => {
   // 2. This mailbox has had its five links for the quarter hour. The row above
   //    is the charge; nobody holds its token, and it expires on its own.
   if (!withinBudget) {
-    console.warn(JSON.stringify({ kind: 'magic_link_address_budget_exhausted' }))
+    logEvent('warn', 'magic_link_address_budget_exhausted')
     return { ok: true }
   }
 
@@ -160,13 +161,13 @@ export default defineEventHandler(async (event) => {
       // The whole point of the template running without a Resend account:
       // `git clone && bun dev` can still exercise this flow end to end by
       // clicking the URL out of the dev server's log.
-      console.info(JSON.stringify({ kind: 'magic_link_dev', reason: result.reason, url }))
+      logEvent('info', 'magic_link_dev', { reason: result.reason, url })
       return { ok: true }
     }
 
     // Nobody will ever hold this token, so the row is a lie about a live link.
     await discardMagicLinkToken(db, record.id)
-    console.error(JSON.stringify({ kind: 'magic_link_undeliverable', reason: result.reason }))
+    logEvent('error', 'magic_link_undeliverable', { reason: result.reason })
 
     // `rejected` means Resend accepted the request and refused THIS address —
     // a suppression-list entry, a hard bounce, a domain that doesn't exist. It

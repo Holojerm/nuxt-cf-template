@@ -30,7 +30,7 @@ export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig(event)
   const secret = config.paddle.webhookSecret
   if (!secret) {
-    console.error(JSON.stringify({ kind: 'paddle_webhook_unconfigured' }))
+    logEvent('error', 'paddle_webhook_unconfigured')
     await recordOpsEvent(db, {
       kind: 'paddle_webhook_unconfigured',
       detail: 'NUXT_PADDLE_WEBHOOK_SECRET is unset — every billing event is being dropped',
@@ -44,7 +44,7 @@ export default defineEventHandler(async (event) => {
   const signature = getRequestHeader(event, 'paddle-signature')
   const check = await verifyPaddleSignature(rawBody ?? '', signature, secret)
   if (!check.valid) {
-    console.warn(JSON.stringify({ kind: 'paddle_webhook_rejected', reason: check.reason }))
+    logEvent('warn', 'paddle_webhook_rejected', { reason: check.reason })
     // Worth an alert even though most of these will be internet noise: if the
     // endpoint secret ever drifts from Paddle's, this is the only symptom, and
     // the failure mode is silent.
@@ -69,7 +69,7 @@ export default defineEventHandler(async (event) => {
   }
   const parsed = readable ? paddleEventSchema.safeParse(json) : null
   if (!parsed?.success) {
-    console.warn(JSON.stringify({ kind: 'paddle_webhook_unparseable' }))
+    logEvent('warn', 'paddle_webhook_unparseable')
     await recordOpsEvent(db, {
       kind: 'paddle_webhook_unparseable',
       detail: readable
@@ -130,22 +130,17 @@ export default defineEventHandler(async (event) => {
     // Money going back out is worth a log line even when nothing matched —
     // "refund arrived for an entitlement we don't have" is exactly the kind of
     // silent drift that turns into a support email.
-    console.warn(
-      JSON.stringify({
-        kind: 'paddle_adjustment',
-        eventType,
-        action: outcome.action,
-        adjustmentType: paddleEvent.data.type,
-        status: paddleEvent.data.status,
-        transactionId: paddleEvent.data.transaction_id,
-        outcome: outcome.result.outcome,
-        // How many derived rows (referral rewards) moved with it. Zero is the
-        // ordinary case — most purchases were nobody's referral — but without
-        // it a clawback that found nothing is indistinguishable from one that
-        // was never attempted.
-        derived: outcome.result.derived?.length ?? 0,
-      }),
-    )
+    logEvent('warn', 'paddle_adjustment', {
+      eventType,
+      action: outcome.action,
+      adjustmentType: paddleEvent.data.type,
+      status: paddleEvent.data.status,
+      transactionId: paddleEvent.data.transaction_id,
+      outcome: outcome.result.outcome,
+      // Zero is ordinary (most purchases were nobody's referral); without it a
+      // clawback that found nothing looks like one never attempted.
+      derived: outcome.result.derived?.length ?? 0,
+    })
     // The outcome, not the absence of a userId: a reversal legitimately carries
     // no userId, so keying on that filed a false "we have no such entitlement"
     // for every dispute the merchant WON. Off for an app that shares its Paddle
@@ -172,25 +167,19 @@ export default defineEventHandler(async (event) => {
   } else if (outcome.reason === 'unknown_user' && isUnknownUserExpected(paddleEvent)) {
     // The app said this is expected (registerUnknownUserExpectation: e.g. the
     // echo of its own cancel-then-delete). Acknowledged, logged, not alerted.
-    console.info(
-      JSON.stringify({ kind: 'paddle_webhook_after_deletion', eventType, id: paddleEvent.data.id }),
-    )
+    logEvent('info', 'paddle_webhook_after_deletion', { eventType, id: paddleEvent.data.id })
   } else if (outcome.reason === 'unknown_user') {
     // custom_data.userId names no account. Acknowledged (a 500 on the foreign
     // key would have Paddle retry forever), but alerted: money arriving for an
     // account that does not exist is what a hard-deleted customer looks like.
-    console.warn(
-      JSON.stringify({ kind: 'paddle_webhook_unknown_user', eventType, id: paddleEvent.data.id }),
-    )
+    logEvent('warn', 'paddle_webhook_unknown_user', { eventType, id: paddleEvent.data.id })
     await recordOpsEvent(db, {
       kind: 'paddle_webhook_unknown_user',
       detail: `${eventType} for ${paddleEvent.data.id} names an account that does not exist — nothing granted`,
       path: pathForLog(event.path),
     })
   } else if (outcome.reason === 'no_user') {
-    console.warn(
-      JSON.stringify({ kind: 'paddle_webhook_no_user', eventType, id: paddleEvent.data.id }),
-    )
+    logEvent('warn', 'paddle_webhook_no_user', { eventType, id: paddleEvent.data.id })
     await recordOpsEvent(db, {
       kind: 'paddle_webhook_no_user',
       detail: `${eventType} for ${paddleEvent.data.id} carried no userId — purchase not granted`,
@@ -201,15 +190,12 @@ export default defineEventHandler(async (event) => {
     outcome.reason === 'stale_event' ||
     outcome.reason === 'terminal_status'
   ) {
-    console.warn(
-      JSON.stringify({
-        kind: 'paddle_webhook_not_applied',
-        reason: outcome.reason,
-        eventType,
-        eventId: paddleEvent.event_id,
-        id: paddleEvent.data.id,
-      }),
-    )
+    logEvent('warn', 'paddle_webhook_not_applied', {
+      reason: outcome.reason,
+      eventType,
+      eventId: paddleEvent.event_id,
+      id: paddleEvent.data.id,
+    })
   } else if (
     outcome.reason === 'unrecognised_price' &&
     outcome.detail === 'unknown_price' &&
@@ -217,27 +203,21 @@ export default defineEventHandler(async (event) => {
   ) {
     // Another app's sale on a shared Paddle account (NUXT_PADDLE_PRODUCT_ID
     // names ours): nothing to fix here, and it granted nothing.
-    console.info(
-      JSON.stringify({
-        kind: 'paddle_webhook_foreign_product',
-        eventType,
-        id: paddleEvent.data.id,
-        priceIds: outcome.priceIds,
-      }),
-    )
+    logEvent('info', 'paddle_webhook_foreign_product', {
+      eventType,
+      id: paddleEvent.data.id,
+      priceIds: outcome.priceIds,
+    })
   } else if (outcome.reason === 'unrecognised_price') {
     // Acknowledged (200) so Paddle stops retrying, but loud: either a price
     // was added in the dashboard without a NUXT_PUBLIC_PADDLE_PRICE_* entry, or
     // someone opened a checkout for something the app does not sell.
-    console.warn(
-      JSON.stringify({
-        kind: 'paddle_webhook_unrecognised_price',
-        eventType,
-        id: paddleEvent.data.id,
-        detail: outcome.detail,
-        priceIds: outcome.priceIds,
-      }),
-    )
+    logEvent('warn', 'paddle_webhook_unrecognised_price', {
+      eventType,
+      id: paddleEvent.data.id,
+      detail: outcome.detail,
+      priceIds: outcome.priceIds,
+    })
     await recordOpsEvent(db, {
       kind: 'paddle_webhook_unrecognised_price',
       detail: `${eventType} for ${paddleEvent.data.id} (${outcome.detail}: ${outcome.priceIds.join(', ') || 'no items'}) — nothing granted`,

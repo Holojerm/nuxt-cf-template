@@ -28,7 +28,7 @@ import { defineCachedFunction } from 'nitropack/runtime'
 
 import type { BlogPostSummary, BlogQueryResult } from '#shared/utils/blog'
 import { loadBlogPosts } from '#shared/utils/blog'
-import { pathForLog } from './log'
+import { pathForLog, logEvent } from './log'
 
 // Not re-exported: `shared/` is auto-imported Nitro-wide, so a second export of
 // the same name gives Nuxt two sources for one identifier and it warns about
@@ -108,9 +108,6 @@ const cachedBlogPosts = defineCachedFunction(listBlogPosts, {
 export function tryListBlogPosts(event: H3Event): Promise<BlogQueryResult> {
   return loadBlogPosts(
     () => cachedBlogPosts(event),
-    (message) =>
-      console.warn(
-        JSON.stringify({ kind: 'blog_query_failed', path: pathForLog(event.path), message }),
-      ),
+    (message) => logEvent('warn', 'blog_query_failed', { path: pathForLog(event.path), message }),
   )
 }

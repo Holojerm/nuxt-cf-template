@@ -12,6 +12,7 @@ import { recordOpsEvent } from '#server/utils/ops'
 
 import { createBufferPublisher } from '../../utils/buffer'
 import { drainSocialPosts, readSocialConfig } from '../../utils/social'
+import { logEvent } from '#server/utils/log'
 
 export default defineTask({
   meta: {
@@ -34,7 +35,7 @@ export default defineTask({
       })
     }
     if (outcome.sent || outcome.dryRun || outcome.problems.length) {
-      console.warn(JSON.stringify({ kind: 'social_post_run', ...outcome }))
+      logEvent('warn', 'social_post_run', { ...outcome })
     }
     return { result: outcome }
   },

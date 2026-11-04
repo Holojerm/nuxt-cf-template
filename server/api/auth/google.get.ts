@@ -35,9 +35,7 @@ export default defineOAuthGoogleEventHandler({
   },
 
   onError(event, error) {
-    console.error(
-      JSON.stringify({ kind: 'oauth_failed', provider: 'google', message: error.message }),
-    )
+    logEvent('error', 'oauth_failed', { provider: 'google', message: error.message })
     return redirectToLoginError(event, 'provider_error')
   },
 })

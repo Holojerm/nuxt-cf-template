@@ -21,6 +21,7 @@ import * as tables from '../db/schema'
 import type { OpsEvent } from '../db/schema'
 
 import { groupOpsRows, opsDigestSubject, renderOpsDigest } from './ops-digest'
+import { logEvent } from './log'
 
 export type OpsDb = ReturnType<typeof drizzle<typeof tables>>
 
@@ -60,7 +61,7 @@ export async function recordOpsEvent(db: OpsDb, input: OpsEventInput): Promise<v
       path: input.path ?? null,
     })
   } catch (err) {
-    console.error(JSON.stringify({ kind: 'ops_event_write_failed', error: String(err) }))
+    logEvent('error', 'ops_event_write_failed', { error: String(err) })
   }
 }
 
@@ -181,7 +182,7 @@ export async function drainOpsEvents(
       }
     } catch (err) {
       error = String(err)
-      console.error(JSON.stringify({ kind: 'ops_alert_send_failed', error }))
+      logEvent('error', 'ops_alert_send_failed', { error })
     }
   }
 

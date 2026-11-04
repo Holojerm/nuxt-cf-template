@@ -9,6 +9,7 @@ import * as tables from '../db/schema'
 import { registerAccountContributor, registerPurgeContributor } from '#server/utils/extensions'
 import type { PurgeBlobStore } from './files-purge'
 import { purgePendingUploads } from './files-purge'
+import { logEvent } from '#server/utils/log'
 
 /**
  * `store` is injectable for tests; the running app uses NuxtHub's `blob`,
@@ -41,9 +42,7 @@ export function registerFilesExtensions(store: PurgeBlobStore = blob): void {
       try {
         await store.del(rows.map((row) => row.r2Key))
       } catch (error) {
-        console.error(
-          JSON.stringify({ kind: 'account_delete_blob_failed', userId, error: String(error) }),
-        )
+        logEvent('error', 'account_delete_blob_failed', { userId, error: String(error) })
       }
     },
   })

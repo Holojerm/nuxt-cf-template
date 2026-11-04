@@ -17,6 +17,7 @@ import { ATTRIBUTION_COOKIE, readAttributionCookie } from '#shared/utils/attribu
 import { safeRedirectPath } from '#shared/utils/redirect'
 import { getSignupContributors } from './signup-contributors'
 import type { OAuthProfile } from './users'
+import { logEvent } from './log'
 
 /** Cookie the login page sets before bouncing to a provider. */
 export const REDIRECT_COOKIE = 'auth-redirect'
@@ -95,7 +96,7 @@ export async function afterSignIn(label: string, work: () => Promise<void>): Pro
   try {
     await work()
   } catch (error) {
-    console.warn(JSON.stringify({ kind: 'after_sign_in_failed', label, error: String(error) }))
+    logEvent('warn', 'after_sign_in_failed', { label, error: String(error) })
   }
 }
 
@@ -141,12 +142,12 @@ export async function establishSession(
   { profile, emailVerified, attribution: providedAttribution }: EstablishSessionOptions,
 ) {
   if (!profile.email) {
-    console.warn(JSON.stringify({ kind: 'auth_no_email', provider: profile.provider }))
+    logEvent('warn', 'auth_no_email', { provider: profile.provider })
     throw createError({ statusCode: 401, message: 'No email address', data: { code: 'no_email' } })
   }
 
   if (!emailVerified) {
-    console.warn(JSON.stringify({ kind: 'auth_unverified_email', provider: profile.provider }))
+    logEvent('warn', 'auth_unverified_email', { provider: profile.provider })
     throw createError({
       statusCode: 401,
       message: 'Email not verified',

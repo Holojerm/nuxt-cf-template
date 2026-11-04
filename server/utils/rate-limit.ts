@@ -50,7 +50,7 @@
 // failing open is the whole design. An explicit import can't do that quietly.
 import { kv } from '@nuxthub/kv'
 import type { H3Event } from 'h3'
-import { pathForLog } from './log'
+import { pathForLog, logEvent } from './log'
 
 /** The slice of unstorage's Storage we use — lets tests pass a Map-backed fake. */
 export interface RateLimitStore {
@@ -430,14 +430,11 @@ const reportedBackends = new Set<string>()
 function reportBackend(name: string, verdict: RateLimitVerdict): void {
   if (verdict.backend === 'unavailable' || reportedBackends.has(name)) return
   reportedBackends.add(name)
-  console.info(
-    JSON.stringify({
-      kind: 'rate_limit_backend',
-      name,
-      backend: verdict.backend,
-      ...(verdict.reason ? { reason: verdict.reason } : {}),
-    }),
-  )
+  logEvent('info', 'rate_limit_backend', {
+    name,
+    backend: verdict.backend,
+    ...(verdict.reason ? { reason: verdict.reason } : {}),
+  })
 }
 
 /**
@@ -475,9 +472,7 @@ export async function rateLimit(
   reportBackend(opts.name, verdict)
 
   if (verdict.backend === 'unavailable') {
-    console.warn(
-      JSON.stringify({ kind: 'rate_limit_unavailable', name: opts.name, error: verdict.error }),
-    )
+    logEvent('warn', 'rate_limit_unavailable', { name: opts.name, error: verdict.error })
     return
   }
 
@@ -489,18 +484,14 @@ export async function rateLimit(
   if (!verdict.allowed) {
     // h3 types Retry-After as a number (it's delta-seconds, per RFC 9110).
     setResponseHeader(event, 'Retry-After', verdict.resetSeconds)
-    console.warn(
-      JSON.stringify({
-        kind: 'rate_limited',
-        name: opts.name,
-        // pathForLog, not event.path: this fires on /api/auth/**, which includes
-        // the routes that carry a live sign-in token. A 429 there is precisely
-        // the moment the credential is both logged and still unspent — see
-        // server/utils/log.ts.
-        path: pathForLog(event.path),
-        backend: verdict.backend,
-      }),
-    )
+    logEvent('warn', 'rate_limited', {
+      name: opts.name, // pathForLog, not event.path: this fires on /api/auth/**, which includes
+      // the routes that carry a live sign-in token. A 429 there is precisely
+      // the moment the credential is both logged and still unspent — see
+      // server/utils/log.ts.
+      path: pathForLog(event.path),
+      backend: verdict.backend,
+    })
     throw createError({
       statusCode: 429,
       message: 'Too many requests',

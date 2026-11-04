@@ -30,3 +30,16 @@ export function pathForLog(path: string | undefined): string | undefined {
   const cut = path.search(/[?#]/)
   return cut === -1 ? path : path.slice(0, cut)
 }
+
+/**
+ * One structured log line: `{ kind, ...fields }` as JSON, so Cloudflare Logs
+ * can filter on `kind`. Never put a credential, token or full request path in
+ * `fields` (use `pathForLog`).
+ */
+export function logEvent(
+  level: 'info' | 'warn' | 'error',
+  kind: string,
+  fields?: Record<string, unknown>,
+): void {
+  console[level](JSON.stringify({ kind, ...fields }))
+}

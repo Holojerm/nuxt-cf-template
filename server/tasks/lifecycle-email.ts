@@ -16,6 +16,7 @@ import { runLifecycle } from '../utils/lifecycle'
 import { APP_LIFECYCLE_STEPS } from '../utils/lifecycle-app-steps'
 import { TEMPLATE_LIFECYCLE_STEPS } from '../utils/lifecycle-steps'
 import { buildUnsubscribeUrl } from '../utils/unsubscribe'
+import { logEvent } from '../utils/log'
 
 export default defineTask({
   meta: {
@@ -27,7 +28,7 @@ export default defineTask({
     // Unconfigured, every send would claim, fail, and give the claim back —
     // correct, but a nightly D1 churn that looks like activity. Say so instead.
     if (!config.resend.apiKey || !config.resend.from) {
-      console.info(JSON.stringify({ kind: 'lifecycle_skipped', reason: 'email_unconfigured' }))
+      logEvent('info', 'lifecycle_skipped', { reason: 'email_unconfigured' })
       return { result: 'skipped' }
     }
 
@@ -51,9 +52,7 @@ export default defineTask({
         }),
     })
 
-    console.info(
-      JSON.stringify({ kind: 'lifecycle_email', reports, durationMs: Date.now() - started }),
-    )
+    logEvent('info', 'lifecycle_email', { reports, durationMs: Date.now() - started })
     return { result: reports }
   },
 })

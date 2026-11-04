@@ -33,7 +33,7 @@
 
 import { z } from 'zod'
 import type { H3Event } from 'h3'
-import { pathForLog } from './log'
+import { pathForLog, logEvent } from './log'
 
 /**
  * A solved-challenge token, as it arrives in a request body.
@@ -94,14 +94,11 @@ export interface TurnstileInput {
 export async function decideTurnstile(input: TurnstileInput): Promise<TurnstileDecision> {
   if (!input.secretKey) {
     if (input.siteKey) {
-      console.warn(
-        JSON.stringify({
-          kind: 'turnstile_half_configured',
-          message:
-            'NUXT_PUBLIC_TURNSTILE_SITE_KEY is set but NUXT_TURNSTILE_SECRET_KEY is not — ' +
-            'the widget renders and nothing verifies the answer.',
-        }),
-      )
+      logEvent('warn', 'turnstile_half_configured', {
+        message:
+          'NUXT_PUBLIC_TURNSTILE_SITE_KEY is set but NUXT_TURNSTILE_SECRET_KEY is not — ' +
+          'the widget renders and nothing verifies the answer.',
+      })
     }
     return { ok: true, checked: false }
   }
@@ -140,14 +137,11 @@ export async function resolveTurnstile(input: TurnstileInput): Promise<Turnstile
   try {
     return await decideTurnstile(input)
   } catch (error) {
-    console.error(
-      JSON.stringify({
-        kind: 'turnstile_unavailable',
-        // Same rule as everywhere else that logs a path — see server/utils/log.ts.
-        path: input.event ? pathForLog(input.event.path) : undefined,
-        error: String(error),
-      }),
-    )
+    logEvent('error', 'turnstile_unavailable', {
+      // Same rule as everywhere else that logs a path — see server/utils/log.ts.
+      path: input.event ? pathForLog(input.event.path) : undefined,
+      error: String(error),
+    })
     return { ok: false, code: 'turnstile_unavailable', errorCodes: ['verifier-threw'] }
   }
 }
@@ -200,17 +194,14 @@ export async function requireTurnstile(event: H3Event, token: unknown): Promise<
 
   if (decision.ok) return
 
-  console.warn(
-    JSON.stringify({
-      kind: 'turnstile_rejected',
-      // Same rule as everywhere else that logs a path — see server/utils/log.ts.
-      // This one now guards /api/auth/magic-link, and a route next to it carries
-      // a live token; the habit is cheaper to keep than to remember.
-      path: pathForLog(event.path),
-      code: decision.code,
-      errorCodes: decision.errorCodes,
-    }),
-  )
+  logEvent('warn', 'turnstile_rejected', {
+    // Same rule as everywhere else that logs a path — see server/utils/log.ts.
+    // This one now guards /api/auth/magic-link, and a route next to it carries
+    // a live token; the habit is cheaper to keep than to remember.
+    path: pathForLog(event.path),
+    code: decision.code,
+    errorCodes: decision.errorCodes,
+  })
 
   throw createError({
     statusCode: 400,

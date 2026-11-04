@@ -28,6 +28,7 @@
 
 import type { ExtensionDb } from './extensions'
 import { createRegistry } from './registry'
+import { logEvent } from './log'
 
 /** The verified event, as far as a handler may depend on it. */
 export interface BillingOutcomeEvent {
@@ -85,13 +86,7 @@ export async function runBillingOutcomeHandlers(context: BillingOutcomeContext):
     try {
       await handler(context)
     } catch (error) {
-      console.error(
-        JSON.stringify({
-          kind: 'billing_outcome_handler_failed',
-          handler: key,
-          error: String(error),
-        }),
-      )
+      logEvent('error', 'billing_outcome_handler_failed', { handler: key, error: String(error) })
     }
   }
 }

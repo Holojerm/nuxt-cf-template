@@ -7,6 +7,7 @@
 // Worker, not in a browser.
 
 import type { AnalyticsEvent } from '#shared/utils/analytics-events'
+import { logEvent } from './log'
 
 interface CaptureOpts {
   distinctId: string
@@ -34,21 +35,9 @@ export async function captureServerEvent(opts: CaptureOpts): Promise<void> {
       }),
     })
     if (!res.ok) {
-      console.warn(
-        JSON.stringify({
-          kind: 'posthog_capture_failed',
-          status: res.status,
-          event: opts.event,
-        }),
-      )
+      logEvent('warn', 'posthog_capture_failed', { status: res.status, event: opts.event })
     }
   } catch (err) {
-    console.warn(
-      JSON.stringify({
-        kind: 'posthog_capture_error',
-        event: opts.event,
-        error: String(err),
-      }),
-    )
+    logEvent('warn', 'posthog_capture_error', { event: opts.event, error: String(err) })
   }
 }

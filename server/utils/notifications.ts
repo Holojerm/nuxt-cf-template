@@ -18,6 +18,7 @@ import {
   isMandatoryNotification,
   type OptionalNotificationEventType,
 } from '#shared/utils/notifications'
+import { logEvent } from './log'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type NotificationDb = ReturnType<typeof drizzle<typeof tables>>
@@ -83,13 +84,7 @@ export async function setNotificationPreference(
   enabled: boolean,
 ): Promise<void> {
   if (isMandatoryNotification(eventType)) {
-    console.warn(
-      JSON.stringify({
-        kind: 'notification_preference_mandatory_write_blocked',
-        userId,
-        eventType,
-      }),
-    )
+    logEvent('warn', 'notification_preference_mandatory_write_blocked', { userId, eventType })
     return
   }
 

@@ -23,6 +23,7 @@ import type { EntitlementDb as Db } from './entitlements'
 import type { PaddleEventOutcome } from './entitlements'
 import type { EmailContent } from '#server/utils/email-templates'
 import { isUndeliverableAddress } from '#server/utils/users'
+import { logEvent } from '#server/utils/log'
 
 // ── The off switch ──────────────────────────────────────────────────────────
 // `runtimeConfig.billing.notify` (applied at startup by registerBillingExtensions).
@@ -120,14 +121,12 @@ async function sendToUser(
   try {
     const user = await findUserById(db, userId)
     if (!user) {
-      console.warn(JSON.stringify({ kind: 'billing_email_no_user', userId, email: kind }))
+      logEvent('warn', 'billing_email_no_user', { userId, email: kind })
       return
     }
     await sendEmail({ to: user.email, ...build(user) })
   } catch (error) {
-    console.error(
-      JSON.stringify({ kind: 'billing_email_failed', userId, email: kind, error: String(error) }),
-    )
+    logEvent('error', 'billing_email_failed', { userId, email: kind, error: String(error) })
   }
 }
 
@@ -175,7 +174,7 @@ export async function notifyBillingOutcome(
   try {
     const user = await findUserById(db, userId)
     if (!user) {
-      console.warn(JSON.stringify({ kind: 'billing_email_no_user', userId }))
+      logEvent('warn', 'billing_email_no_user', { userId })
       return
     }
     if (skipUndeliverable && isUndeliverableAddress(user.email)) return
@@ -192,6 +191,6 @@ export async function notifyBillingOutcome(
   } catch (error) {
     // A broken email path must not turn into a 500 that makes Paddle replay a
     // money event. Log loudly, return quietly.
-    console.error(JSON.stringify({ kind: 'billing_email_failed', userId, error: String(error) }))
+    logEvent('error', 'billing_email_failed', { userId, error: String(error) })
   }
 }

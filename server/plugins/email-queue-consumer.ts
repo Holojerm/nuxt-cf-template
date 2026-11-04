@@ -56,6 +56,8 @@ import {
   shouldHandleQueue,
 } from '../utils/email-queue'
 import type { EmailQueueMessage } from '../utils/email-queue'
+import { postToResend } from '../utils/email'
+import { logEvent } from '../utils/log'
 
 /** The slice of Cloudflare's `Message` we use. */
 interface QueueMessageLike {
@@ -92,24 +94,13 @@ async function deliver(
   messageId: string,
 ): Promise<number | null> {
   try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Idempotency-Key': messageId,
-      },
-      body: JSON.stringify(message.request),
-    })
+    const res = await postToResend(message.request, apiKey, messageId)
     return res.status
   } catch (error) {
-    console.warn(
-      JSON.stringify({
-        kind: 'email_queue_fetch_failed',
-        subject: message.request.subject,
-        error: String(error),
-      }),
-    )
+    logEvent('warn', 'email_queue_fetch_failed', {
+      subject: message.request.subject,
+      error: String(error),
+    })
     // null is "fetch threw", which classifyResendResponse treats as transient.
     return null
   }
@@ -130,14 +121,11 @@ export default defineNitroPlugin((nitro) => {
       // Logged rather than returned silently. Returning here acks the batch by
       // omission, so a name mismatch used to destroy mail without a trace —
       // which is precisely how the preview environment lost every email.
-      console.warn(
-        JSON.stringify({
-          kind: 'email_queue_unexpected_queue',
-          queue: typed.queue,
-          expected: config.emailQueueName,
-          messages: typed.messages.length,
-        }),
-      )
+      logEvent('warn', 'email_queue_unexpected_queue', {
+        queue: typed.queue,
+        expected: config.emailQueueName,
+        messages: typed.messages.length,
+      })
       return
     }
 
@@ -149,13 +137,7 @@ export default defineNitroPlugin((nitro) => {
         // Retrying re-runs the same parse, so ack and record it. `v` exists to
         // keep this branch empty across a rollout; if it ever fires, the last
         // deploy changed the schema without bumping it.
-        console.error(
-          JSON.stringify({
-            kind: 'email_queue_unparseable',
-            id: message.id,
-            attempts: message.attempts,
-          }),
-        )
+        logEvent('error', 'email_queue_unparseable', { id: message.id, attempts: message.attempts })
         message.ack()
         continue
       }
@@ -164,7 +146,7 @@ export default defineNitroPlugin((nitro) => {
         // Configured when enqueued, unset now — a secret was rotated out mid
         // flight. Retry: this is transient in the only sense that matters, and
         // the DLQ is the right destination if it stays broken.
-        console.error(JSON.stringify({ kind: 'email_queue_unconfigured', id: message.id }))
+        logEvent('error', 'email_queue_unconfigured', { id: message.id })
         message.retry()
         continue
       }
@@ -177,22 +159,17 @@ export default defineNitroPlugin((nitro) => {
       )
 
       if (decision.outcome !== 'sent') {
-        console.error(
-          JSON.stringify({
-            // Same two kinds the inline path uses for the same statuses.
-            kind: EMAIL_FAILURE_KIND[decision.outcome],
-            path: 'queue',
-            // Subject and status only. Never `to`, never the body.
-            subject: parsed.data.request.subject,
-            status,
-            attempts: message.attempts,
-            // `dropped` says this message is gone for good and did NOT reach
-            // the dead-letter queue — acking is what keeps it out. The old
-            // `email_queue_dead_letter` kind claimed the opposite and sent
-            // people looking in a DLQ that never had it.
-            ...(decision.outcome === 'permanent' ? { dropped: true } : { final: decision.final }),
-          }),
-        )
+        // Same two kinds the inline path uses for the same statuses.
+        logEvent('error', EMAIL_FAILURE_KIND[decision.outcome], {
+          path: 'queue',
+          // Subject and status only. Never `to`, never the body.
+          subject: parsed.data.request.subject,
+          status,
+          attempts: message.attempts,
+          // `dropped`: gone for good and NOT in the dead-letter queue (acking
+          // keeps it out).
+          ...(decision.outcome === 'permanent' ? { dropped: true } : { final: decision.final }),
+        })
       }
 
       if (decision.action === 'ack') message.ack()

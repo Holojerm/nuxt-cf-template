@@ -38,6 +38,7 @@
 // - `history` is a pure function of the row. `view` may read, never write.
 
 import type { ExtensionDb } from './extensions'
+import { logEvent } from './log'
 import { createRegistry } from './registry'
 
 /** Fields added to the top level of the view. Augment with `declare module`. */
@@ -81,7 +82,7 @@ export const registerEntitlementViewFields = (c: EntitlementViewFieldsContributo
 export const clearEntitlementViewFieldsForTest = (): void => contributors.clear()
 
 function logFailure(kind: string, key: string, detail: Record<string, unknown>): void {
-  console.error(JSON.stringify({ kind, contributor: key, ...detail }))
+  logEvent('error', kind, { contributor: key, ...detail })
 }
 
 /** Copies `extra` onto `target`, skipping (and logging) any key `target` already has. */

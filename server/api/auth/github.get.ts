@@ -47,9 +47,7 @@ export default defineOAuthGitHubEventHandler({
   },
 
   onError(event, error) {
-    console.error(
-      JSON.stringify({ kind: 'oauth_failed', provider: 'github', message: error.message }),
-    )
+    logEvent('error', 'oauth_failed', { provider: 'github', message: error.message })
     return redirectToLoginError(event, 'provider_error')
   },
 })

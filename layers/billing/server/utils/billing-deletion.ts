@@ -32,6 +32,7 @@ import { isBillingLive } from './entitlements'
 import { PaddleApiError, cancelSubscription } from './paddle-api'
 import { isSubscriptionRef } from './paddle-refs'
 import type { PaddleEvent } from './entitlements'
+import { logEvent } from '#server/utils/log'
 
 /** The 409 `data.code` the account page reads. `billing.deletionRefusalCode` overrides it. */
 export const DEFAULT_DELETION_REFUSAL_CODE = 'live_subscription'
@@ -104,13 +105,7 @@ export function createCancelOnDeletionResolver(opts: {
           )
         } catch (error) {
           const reason = failureReason(error)
-          console.error(
-            JSON.stringify({
-              kind: 'deletion_cancel_failed',
-              subscriptionId,
-              reason,
-            }),
-          )
+          logEvent('error', 'deletion_cancel_failed', { subscriptionId, reason })
           await recordOpsEvent(db, {
             kind: 'deletion_cancel_failed',
             detail: `${subscriptionId}: ${reason} — account deletion refused, nothing deleted`,

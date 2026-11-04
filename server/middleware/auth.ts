@@ -49,7 +49,7 @@ export default defineEventHandler(async (event) => {
       issuedAt: session.issuedAt,
     })
     if (!verdict.valid) {
-      console.warn(JSON.stringify({ kind: 'session_revoked', reason: verdict.reason }))
+      logEvent('warn', 'session_revoked', { reason: verdict.reason })
       // Clear it so the browser stops presenting a dead credential on every
       // subsequent request instead of only on the ones that happen to 401.
       //
