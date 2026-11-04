@@ -36,9 +36,8 @@ import { z } from 'zod'
 import { ATTRIBUTION_COOKIE, readAttributionCookie } from '#shared/utils/attribution'
 import { safeRedirectPath } from '#shared/utils/redirect'
 import { REDIRECT_COOKIE } from '../../utils/auth'
-import { magicLinkEmail } from '../../utils/auth-email-templates'
 import { sendEmail } from '../../utils/email'
-import { emailBranding } from '../../utils/email-templates'
+import { emailBranding, magicLinkEmail } from '../../utils/email-templates'
 import {
   createMagicLinkToken,
   discardMagicLinkToken,
