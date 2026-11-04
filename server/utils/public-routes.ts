@@ -29,14 +29,16 @@ export interface PublicApiRoute {
 /**
  * What core ships. Frozen here rather than in the middleware so the list in
  * `.claude/docs/auth.md › Public API surface` has one place to be checked
- * against. Features register their own (feedback: `POST /api/feedback`).
+ * against. Features register their own (feedback: `POST /api/feedback`; the
+ * blog: server/plugins/blog-routes.ts), so removing one removes its routes.
  */
 export const CORE_PUBLIC_API_ROUTES: readonly PublicApiRoute[] = [
-  // liveness
-  { path: '/api/health', match: 'prefix' },
+  // Exact, not prefix: a bare `/api/status` prefix would make a later
+  // `/api/status-page` or `/api/fleets` public without anyone deciding it.
+  { path: '/api/health', methods: ['GET', 'HEAD'] },
   // portfolio dashboard — each does its own bearer check (requireFleetToken)
-  { path: '/api/status', match: 'prefix' },
-  { path: '/api/fleet', match: 'prefix' },
+  { path: '/api/status', methods: ['GET'] },
+  { path: '/api/fleet', methods: ['GET'] },
   // ops-triage routine: bearer NUXT_OPS_TOKEN, checked by the route
   { path: '/api/ops/events', match: 'exact', methods: ['GET'] },
   // sign-in start, OAuth callbacks, and the session endpoint useUserSession() reads
@@ -45,9 +47,6 @@ export const CORE_PUBLIC_API_ROUTES: readonly PublicApiRoute[] = [
   // @nuxt/icon's endpoint, which the browser calls for any icon the client
   // bundle missed; it serves static icon JSON and a signed-out visitor needs it.
   { path: '/api/_nuxt_icon/', match: 'prefix' },
-  // the blog is public content; crawlers cannot sign in
-  { path: '/api/blog', methods: ['GET'] },
-  { path: '/api/blog/', match: 'prefix', methods: ['GET'] },
   // one-click unsubscribe: mail providers POST with no session (RFC 8058)
   { path: '/api/email/unsubscribe', methods: ['GET', 'POST'] },
 ]

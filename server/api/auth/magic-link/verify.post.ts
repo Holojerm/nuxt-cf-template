@@ -14,7 +14,8 @@
 
 import { z } from 'zod'
 
-import { establishSession, popRedirectTarget, safeRedirectPath } from '../../../utils/auth'
+import { safeRedirectPath } from '#shared/utils/redirect'
+import { establishSession, popRedirectTarget } from '../../../utils/auth'
 import {
   attributionFromRecord,
   consumeMagicLinkToken,

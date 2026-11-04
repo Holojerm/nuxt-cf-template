@@ -17,6 +17,9 @@ import {
   pruneOpsEvents,
   recentOpsEvents,
   recordOpsEvent,
+  recordUnauthenticatedOpsEvent,
+  resetUnauthenticatedOpsThrottleForTest,
+  UNAUTHENTICATED_OPS_INTERVAL_MS,
   type OpsDigest,
 } from '../server/utils/ops'
 
@@ -253,6 +256,30 @@ describe('recordOpsEvent', () => {
       },
     } as never
     await expect(recordOpsEvent(broken, { kind: 'server_error' })).resolves.toBeUndefined()
+  })
+})
+
+describe('recordUnauthenticatedOpsEvent', () => {
+  beforeEach(() => resetUnauthenticatedOpsThrottleForTest())
+
+  it('writes one row per kind and detail per interval, however many requests arrive', async () => {
+    const event = {
+      kind: 'paddle_webhook_rejected',
+      detail: 'signature rejected: signature_mismatch',
+    }
+    const t0 = 1_000_000
+    for (let i = 0; i < 50; i++) await recordUnauthenticatedOpsEvent(db, event, t0 + i)
+    expect(await db.select().from(schema.opsEvents)).toHaveLength(1)
+
+    await recordUnauthenticatedOpsEvent(db, event, t0 + UNAUTHENTICATED_OPS_INTERVAL_MS)
+    expect(await db.select().from(schema.opsEvents)).toHaveLength(2)
+  })
+
+  it('throttles each detail separately, so a new failure reason still lands', async () => {
+    const t0 = 2_000_000
+    await recordUnauthenticatedOpsEvent(db, { kind: 'k', detail: 'a' }, t0)
+    await recordUnauthenticatedOpsEvent(db, { kind: 'k', detail: 'b' }, t0)
+    expect(await db.select().from(schema.opsEvents)).toHaveLength(2)
   })
 })
 

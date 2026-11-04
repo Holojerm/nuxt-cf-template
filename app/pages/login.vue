@@ -39,7 +39,7 @@ const redirectCookie = useCookie('auth-redirect', {
 
 const redirectTarget = computed(() => {
   const value = route.query.redirect
-  return typeof value === 'string' && value.startsWith('/') ? value : '/dashboard'
+  return safeRedirectPath(typeof value === 'string' ? value : undefined, '/dashboard')
 })
 
 // Already signed in? Nothing here to do.

@@ -8,7 +8,7 @@
 // Everything below is a real bypass that has worked on real login pages.
 
 import { describe, expect, it } from 'vitest'
-import { safeRedirectPath } from '../server/utils/auth'
+import { safeRedirectPath } from '../shared/utils/redirect'
 
 describe('safeRedirectPath', () => {
   it('allows an ordinary in-app path', () => {
@@ -52,5 +52,31 @@ describe('safeRedirectPath', () => {
 
   it('rejects a scheme-relative path that does not start with a slash', () => {
     expect(safeRedirectPath('evil.example/login')).toBe('/')
+  })
+
+  it('rejects percent-encoded and mixed-slash variants once decoded', () => {
+    // vue-router and getCookie() both hand us the decoded value, so these are
+    // what an encoded `?redirect=%2F%2Fevil.example` actually arrives as.
+    expect(safeRedirectPath(decodeURIComponent('%2F%2Fevil.example'))).toBe('/')
+    expect(safeRedirectPath(decodeURIComponent('%2F%5Cevil.example'))).toBe('/')
+    expect(safeRedirectPath('/\\evil.example')).toBe('/')
+    expect(safeRedirectPath('JavaScript:alert(1)')).toBe('/')
+  })
+
+  it('never yields a target that resolves off-origin', () => {
+    const origin = 'https://app.example'
+    for (const raw of [
+      '/dashboard',
+      '//evil.example',
+      '/\\evil.example',
+      '/%2F%2Fevil.example',
+      '/%5Cevil.example',
+      '/\tjavascript:alert(1)',
+      '/.//evil.example',
+      'https:evil.example',
+      'javascript:alert(1)',
+    ]) {
+      expect(new URL(safeRedirectPath(raw), origin).origin, raw).toBe(origin)
+    }
   })
 })

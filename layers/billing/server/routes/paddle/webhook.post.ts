@@ -48,7 +48,7 @@ export default defineEventHandler(async (event) => {
     // Worth an alert even though most of these will be internet noise: if the
     // endpoint secret ever drifts from Paddle's, this is the only symptom, and
     // the failure mode is silent.
-    await recordOpsEvent(db, {
+    await recordUnauthenticatedOpsEvent(db, {
       kind: 'paddle_webhook_rejected',
       detail: `signature rejected: ${check.reason}`,
       path: pathForLog(event.path),

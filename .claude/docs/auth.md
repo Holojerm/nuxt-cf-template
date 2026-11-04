@@ -136,7 +136,8 @@ except the allowlist in `server/utils/public-routes.ts`. Core ships:
   (`NUXT_OPS_TOKEN`) through the same `requireFleetToken()`: 404 unset, 401 wrong.
 - `/api/_nuxt_icon/*` — `@nuxt/icon`'s endpoint, called by the browser for any
   icon the client bundle missed; static icon JSON.
-- `GET /api/blog`, `GET /api/blog/*` — the blog is public content.
+- `GET /api/blog`, `GET /api/blog/*` — the blog is public content; registered by
+  `server/plugins/blog-routes.ts`, not core, so deleting the blog removes them.
 - `GET|POST /api/email/unsubscribe` — reached from a mail footer on a device
   that may not be signed in.
 
