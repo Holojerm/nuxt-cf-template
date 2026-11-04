@@ -628,6 +628,10 @@ export default defineNuxtConfig({
     // server/utils/fleet-auth.ts for the three-step.
     fleetToken: '',
     fleetTokenPrevious: '',
+    // Bearer the ops-triage routine presents to GET /api/ops/events. Unset = that
+    // route 404s. Its own secret, not the fleet token: different consumer, rotated
+    // separately. `wrangler secret put NUXT_OPS_TOKEN`; 32+ characters.
+    opsToken: '',
     // Ops alerting — where the cron digest goes (server/tasks/ops/alert.ts).
     // `from` must be on a domain in the Cloudflare account with Email Routing
     // enabled; `to` must be a verified destination address. That combination

@@ -25,6 +25,16 @@ after reading a routine's drafts for a few weeks; delete it to take the grant ba
 | --- | --- | --- |
 | _(none yet)_ | | |
 
+## Mechanical fixes
+
+The failure classes a tier-2 routine may fix and merge itself (`_shared.md` › Mechanical
+fixes). One row per class. The paths are globs, and the fix may touch nothing else. Leave the
+table empty until a class has been fixed by hand the same way a few times.
+
+| Routine | Failure class (ops `kind` + cause) | Paths the fix may touch | Done-bar beyond `_shared.md` |
+| --- | --- | --- | --- |
+| _(none yet)_ | | | |
+
 ## Product context
 
 Replace this section with 2–3 paragraphs about what the product does, who uses it, current

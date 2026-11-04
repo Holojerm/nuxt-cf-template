@@ -15,6 +15,7 @@ import {
   drainOpsEvents,
   OPS_EVENT_RETENTION_DAYS,
   pruneOpsEvents,
+  recentOpsEvents,
   recordOpsEvent,
   type OpsDigest,
 } from '../server/utils/ops'
@@ -252,5 +253,25 @@ describe('recordOpsEvent', () => {
       },
     } as never
     await expect(recordOpsEvent(broken, { kind: 'server_error' })).resolves.toBeUndefined()
+  })
+})
+
+describe('recentOpsEvents', () => {
+  it('returns the window newest first, notified rows included', async () => {
+    await spool('server_error', 1, new Date(NOW.getTime() - 2 * DAY_MS))
+    await spool('source_failed', 1, new Date(NOW.getTime() - 60 * 60 * 1000))
+    await spool('server_error', 1, NOW)
+    await db.update(schema.opsEvents).set({ notifiedAt: NOW })
+
+    const rows = await recentOpsEvents(db, { hours: 24, now: NOW })
+    expect(rows.map((r) => r.kind)).toEqual(['server_error', 'source_failed'])
+    expect(rows[0]).toMatchObject({ created_at: NOW.toISOString(), notified_at: NOW.toISOString() })
+  })
+
+  it('filters by kind', async () => {
+    await spool('server_error', 2)
+    await spool('source_failed', 1)
+    const rows = await recentOpsEvents(db, { hours: 1, kind: 'source_failed', now: NOW })
+    expect(rows).toHaveLength(1)
   })
 })

@@ -53,3 +53,6 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   cannot grow without bound. Rows are marked notified only after the send resolves, so a mail
   hiccup retries instead of losing the alert. Always `await` the record call:
   a 5xx is exactly the path that ends the request before a floated promise runs.
+  The `ops-triage` routine reads the same spool through `GET /api/ops/events`
+  (bearer `NUXT_OPS_TOKEN`, 404 when unset). That route also reports the build sha
+  and pending migrations, so the routine can tell when a merge never deployed.

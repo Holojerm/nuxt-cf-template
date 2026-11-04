@@ -37,6 +37,8 @@ export const CORE_PUBLIC_API_ROUTES: readonly PublicApiRoute[] = [
   // portfolio dashboard — each does its own bearer check (requireFleetToken)
   { path: '/api/status', match: 'prefix' },
   { path: '/api/fleet', match: 'prefix' },
+  // ops-triage routine: bearer NUXT_OPS_TOKEN, checked by the route
+  { path: '/api/ops/events', match: 'exact', methods: ['GET'] },
   // sign-in start, OAuth callbacks, and the session endpoint useUserSession() reads
   { path: '/api/auth/', match: 'prefix' },
   { path: '/api/_auth/', match: 'prefix' },
