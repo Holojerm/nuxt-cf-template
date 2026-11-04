@@ -18,6 +18,7 @@ import {
   hashIp,
   isRateLimited,
   listFeedback,
+  listFleetFeedback,
   markFeedbackReplied,
   recordFeedback,
   updateFeedbackStatus,
@@ -35,6 +36,7 @@ async function backdate(id: string, createdAt: Date) {
 
 beforeEach(async () => {
   await db.delete(schema.feedback)
+  await db.delete(schema.users)
 })
 
 describe('feedbackSubmissionSchema', () => {
@@ -267,5 +269,32 @@ describe('churn feedback', () => {
       message: "It's too expensive — I only needed it for one project",
     })
     expect(parsed.success).toBe(true)
+  })
+})
+
+describe('listFleetFeedback', () => {
+  it('names the sender, newest first, without the hash or user agent', async () => {
+    await db.insert(schema.users).values({ id: 'u-ada', email: 'ada@example.com', name: 'Ada' })
+    await db.insert(schema.feedback).values([
+      { id: 'signed-in', userId: 'u-ada', message: 'Love it', ipHash: 'h', userAgent: 'ua' },
+      { id: 'anon-email', email: 'bob@example.com', message: 'Bug' },
+      { id: 'anon', message: 'Meh', status: 'closed' },
+    ])
+    await backdate('signed-in', new Date('2026-03-01'))
+    await backdate('anon-email', new Date('2026-02-01'))
+    await backdate('anon', new Date('2026-01-01'))
+
+    const all = await listFleetFeedback(db)
+    expect(all.map((item) => [item.id, item.from])).toEqual([
+      ['signed-in', 'Ada'],
+      ['anon-email', 'bob@example.com'],
+      ['anon', null],
+    ])
+    expect(all[0]).not.toHaveProperty('ipHash')
+    expect(all[0]).not.toHaveProperty('userAgent')
+    expect(all[0]?.createdAt).toBe('2026-03-01T00:00:00.000Z')
+
+    const open = await listFleetFeedback(db, { status: 'new' })
+    expect(open.map((item) => item.id)).toEqual(['signed-in', 'anon-email'])
   })
 })

@@ -19,7 +19,12 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   feedback queue, and a 28-day signup → activated → paid funnel with top
   signup sources, from `server/utils/fleet-funnel.ts`): `Authorization: Bearer …`, 404 when the token is unset, 401
   on a bad one (`requireFleetToken()`). `/api/health` stays public for dumb
-  uptime checks. Both are allowlisted in `server/middleware/auth.ts` because
+  uptime checks. The feedback layer adds **`GET /api/fleet/feedback`** behind
+  the same bearer: the one fleet route that returns rows (message, kind, page,
+  replay link, sender name or address; never the IP hash or user agent), so the
+  owner reads feedback in fleet without signing in to the app. Read-only;
+  triage and replies stay in the app. Holding the fleet token therefore reads
+  feedback text, so rotate it like a credential. All three are allowlisted in `server/middleware/auth.ts` because
   the session guard must not 401 them first. Never edit `collectFleetCounters()` to add a fork-specific counter, and don't add a second endpoint:
   register a contributor from a Nitro plugin (the app's, or a fork-owned layer's) in
   `server/utils/extensions.ts`. `registerFleetExtraContributor({ key, collect })` returns plain

@@ -153,4 +153,9 @@ describe('public routes', () => {
     expect(isPublicApiRequest('/api/feedback/fb-1', 'PATCH')).toBe(false)
     expect(isPublicApiRequest('/api/feedback/fb-1/reply', 'POST')).toBe(false)
   })
+
+  it('lets fleet GET the queue without a session (the route checks the bearer)', () => {
+    expect(isPublicApiRequest('/api/fleet/feedback', 'GET')).toBe(true)
+    expect(isPublicApiRequest('/api/fleet/feedback', 'POST')).toBe(false)
+  })
 })

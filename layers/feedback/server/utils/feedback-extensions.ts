@@ -1,6 +1,6 @@
 // What the feedback feature contributes to core: account deletion and export,
-// the admin one-customer view, fleet counters, the onboarding checklist and the
-// public POST /api/feedback route.
+// the admin one-customer view, fleet counters, the onboarding checklist, the
+// public POST /api/feedback route and the token-gated GET /api/fleet/feedback.
 // Registered once per isolate by layers/feedback/server/plugins/feedback.ts; tests call
 // registerFeedbackExtensions() directly. See server/utils/extensions.ts.
 //
@@ -167,5 +167,9 @@ export function registerFeedbackExtensions(options: FeedbackExtensionOptions = {
   // by ip_hash in D1 (5/hour), which is exact rather than eventually consistent
   // and reuses a write it was making anyway. A second KV window on top would
   // just be two different limits to reason about.
-  registerPublicApiRoutes([{ path: '/api/feedback', methods: ['POST'] }])
+  registerPublicApiRoutes([
+    { path: '/api/feedback', methods: ['POST'] },
+    // The fleet dashboard's read of the queue: no session, its own bearer check.
+    { path: '/api/fleet/feedback', methods: ['GET'] },
+  ])
 }
