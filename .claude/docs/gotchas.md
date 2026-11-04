@@ -319,3 +319,17 @@ which is why the fix is a workflow file, something a fork inherits automatically
 
 If you ever pull in `@nuxtjs/mcp-toolkit` (not currently installed), its `ModuleOptions` augmentation doesn't surface as a top-level `mcp:` key in `defineNuxtConfig` — TypeScript will reject it. Configure via `defineMcpHandler` in `server/mcp/index.ts` instead. <!-- refs-check-ignore: hypothetical, the module is not installed -->
 
+
+## `nuxt dev` type-check: "Excessive stack depth comparing types" on a `$fetch` in a callback
+
+With `typescript.typeCheck` on, `nuxt dev` runs vue-tsc in-process over app and server code as
+one program, and the error overlay blocks the page. `bun run typecheck` checks them separately
+and passes, so CI never sees this. It shows up once a fork has enough Nitro routes: an untyped
+`$fetch(...)` returned from an arrow that is passed into a generic parameter, e.g.
+`useAsyncAction(() => $fetch('/api/…', { method: 'POST' }), …)`, makes TS compare the whole
+route-union response type against the callback's type parameter and it gives up with
+`Excessive stack depth comparing types 'Exclude<R extends "/api/…" …'`.
+
+Fix: give that `$fetch` an explicit type argument so TS skips route-union inference —
+`$fetch<unknown>(…)` when the caller ignores the result, or the real response type when it
+reads it. A plain `await $fetch(...)` statement is fine as-is.
