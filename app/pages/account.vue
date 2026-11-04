@@ -131,7 +131,7 @@ const { pending: connectPending, run: mintConnectCode } = useAsyncAction(
 // Every other device's cookie dies on its next request; this one is re-issued
 // by the route, so nothing here has to change client state.
 const { pending: revokePending, run: revokeOtherSessions } = useAsyncAction(
-  () => $fetch('/api/account/sessions/revoke', { method: 'POST' }),
+  () => $fetch<unknown>('/api/account/sessions/revoke', { method: 'POST' }),
   { errorTitle: 'Could not sign out other devices' },
 )
 
