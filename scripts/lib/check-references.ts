@@ -69,6 +69,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'n
 import { dirname, join, relative, resolve } from 'node:path'
 
 import { TEMPLATE_LAYERS } from './layers'
+import { walk as walkFiles } from './walk'
 
 export interface Reference {
   file: string
@@ -140,21 +141,12 @@ function vendoredLayerDirs(root: string): string[] {
   }
 }
 
-function walk(dir: string, exts: string[]): string[] {
-  let out: string[] = []
-  let entries: string[]
-  try {
-    entries = readdirSync(dir)
-  } catch {
-    return out
-  }
-  for (const entry of entries) {
-    if (entry === 'node_modules' || entry === 'worktrees' || entry.startsWith('.git')) continue
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) out = out.concat(walk(full, exts))
-    else if (exts.some((ext) => entry.endsWith(ext))) out.push(full)
-  }
-  return out
+function walk(dir: string, extensions: string[]): string[] {
+  return walkFiles(dir, {
+    extensions,
+    missingOk: true,
+    skip: (name) => name === 'node_modules' || name === 'worktrees' || name.startsWith('.git'),
+  })
 }
 
 /**

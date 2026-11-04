@@ -14,6 +14,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
+import { walk } from './walk'
 
 export const ROOT = resolve(import.meta.dir, '../..')
 export const LAYERS_DIR = join(ROOT, 'layers')
@@ -117,14 +118,7 @@ function templateRepo(): string {
 }
 
 function listFiles(dir: string): string[] {
-  const files: string[] = []
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (IGNORED.has(entry.name)) continue
-    const path = join(dir, entry.name)
-    if (entry.isDirectory()) files.push(...listFiles(path))
-    else if (entry.isFile()) files.push(path)
-  }
-  return files
+  return walk(dir, { skip: (name) => IGNORED.has(name) })
 }
 
 /**
