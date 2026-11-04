@@ -23,9 +23,12 @@
 # warns about: a broken CSP fails silently, in exactly the way that gate exists
 # to catch. If you ever delete this workflow, you are deleting the CSP gate.
 #
-# Everything else still runs in Workers Builds via `bun run ci` — lint, the
-# design/brand/mirror/seo gates, typecheck, the unit tests and the build. Those
-# are the gates that block a deploy; these three block a merge.
+# Three jobs run side by side, and each is a required check in the
+# "main: merge when green" ruleset, which is what lets `gh pr merge --auto`
+# merge a PR unattended: `ci` (the same `bun run ci` Workers Builds runs as its
+# deploy gate), `forkless` (the slow full `ci:forkless`) and `browser-suites`.
+# Renaming a job means renaming its required check in the ruleset too, or every
+# PR stays BLOCKED.
 
 name: Browser suites
 
@@ -46,6 +49,69 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # @nuxt/content parses content/ with node:sqlite, which is only
+      # unflagged from 22.13 — see AGENTS.md › Gotchas. `.node-version` is the
+      # single source of truth so this cannot drift from Workers Builds.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      # Includes email:check, which matters here: the committed emails are
+      # compiled on whatever machine ran email:build, and this is where a PR
+      # proves Linux agrees before a fork's deploy finds out.
+      - run: bun run ci
+
+  forkless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # @nuxt/content parses content/ with node:sqlite, which is only
+      # unflagged from 22.13 — see AGENTS.md › Gotchas. `.node-version` is the
+      # single source of truth so this cannot drift from Workers Builds.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      # The full version of the forkless gate `bun run ci` runs scripts-only:
+      # forks without billing, referral and lifecycle email, built in temp
+      # copies, with typecheck, the unit tests and the Playwright listing run on
+      # each. Its own job because it is the slowest gate.
+      - run: bun run ci:forkless
+
   browser-suites:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -64,18 +130,20 @@ jobs:
         with:
           node-version-file: .node-version
 
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
       - run: bun install --frozen-lockfile
 
-      # Workers Builds runs `bun run ci` — email:check included — on Linux, and
-      # the committed emails are compiled on whatever machine ran email:build.
-      # This is where a PR proves the two agree before a fork's deploy finds out.
-      - run: bun run email:check
-
-      # The full version of the forkless gate `bun run ci` runs scripts-only:
-      # forks without billing, referral and lifecycle email, built in temp
-      # copies, with typecheck, the unit tests and the Playwright listing run on
-      # each. Here rather than in `ci` because it is the slow half.
-      - run: bun run ci:forkless
+      # The browser binary is the slow, cacheable half; `--with-deps` still
+      # installs the system libraries on every run.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
 
       # Succeeds here because the runner is root-capable. This is the exact
       # command that fails on Workers Builds.
