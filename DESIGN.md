@@ -329,6 +329,10 @@ nav items, footer rows, buttons — don't need it.
   trackpads instead of rubber-banding the sticky header and page background. It is
   vertical only: the horizontal swipe-back gesture still navigates. The cost is the
   browser's pull-to-refresh on mobile, which these apps don't need.
+- **Width:** a page never scrolls sideways at 375px. Wide tables scroll in their own
+  `overflow-x-auto` box, and that box is `relative`: an absolutely positioned child (an
+  `sr-only` caption or "Actions" header) with no positioned ancestor inside the box escapes
+  its clipping and stretches the page. `test/a11y/accessibility.spec.ts` checks every route.
 - **Safe areas:** anything pinned to a viewport edge uses the safe-area utilities
   (`bottom-safe`, `right-safe`) so it clears the iOS home bar and the notch in landscape.
   The `viewport-fit=cover` meta in `nuxt.config.ts` is what makes those insets non-zero.

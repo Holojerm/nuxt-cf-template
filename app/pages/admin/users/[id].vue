@@ -517,7 +517,9 @@ useSeo({
             <h2 class="text-xl text-highlighted">Billing history</h2>
           </template>
 
-          <div class="overflow-x-auto">
+          <!-- relative: DESIGN.md › Viewport and touch › Width. Without it the
+               sr-only "Actions" header escapes this box and widens the page. -->
+          <div class="relative overflow-x-auto">
             <table class="w-full text-sm">
               <caption class="sr-only">
                 Every entitlement ever written for this customer, newest first
