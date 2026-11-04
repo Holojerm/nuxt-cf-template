@@ -15,7 +15,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { isMandatoryNotification } from '#shared/utils/notifications'
 import * as schema from '../server/db/schema'
 import { safeRedirectPath } from '../shared/utils/redirect'
-import { MAGIC_LINK_EVENT_TYPE, magicLinkEmail } from '../server/utils/auth-email-templates'
+import { MAGIC_LINK_EVENT_TYPE, magicLinkEmail } from '../server/utils/email-templates'
 import { buildResendEmailRequest } from '../server/utils/email'
 import {
   attributionFromRecord,

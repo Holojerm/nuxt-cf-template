@@ -45,9 +45,7 @@ export default defineEventHandler(async (event) => {
   try {
     await blob.del(file.r2Key)
   } catch (error) {
-    console.error(
-      JSON.stringify({ kind: 'file_delete_blob_failed', fileId: file.id, error: String(error) }),
-    )
+    logEvent('error', 'file_delete_blob_failed', { fileId: file.id, error: String(error) })
     throw createError({ statusCode: 502, message: 'Could not delete the file — please try again.' })
   }
 

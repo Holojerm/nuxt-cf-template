@@ -22,6 +22,7 @@ import type { H3Event } from 'h3'
 import type { Attribution } from '#shared/utils/attribution'
 import type { NewUser, User } from '../db/schema'
 import type { ExtensionDb } from './extensions'
+import { createRegistry } from './registry'
 
 export interface SignupContributor {
   key: string
@@ -47,18 +48,11 @@ export interface SignupContributor {
   afterSignUpLabel?: string
 }
 
-// Keyed, so a plugin and a test (or a dev reload) registering twice replace.
-const contributors = new Map<string, SignupContributor>()
+const contributors = createRegistry<SignupContributor>()
 
-export function registerSignupContributor(contributor: SignupContributor): void {
-  contributors.set(contributor.key, contributor)
-}
+export const registerSignupContributor = (c: SignupContributor): void => contributors.set(c.key, c)
 
-export function getSignupContributors(): SignupContributor[] {
-  return [...contributors.values()]
-}
+export const getSignupContributors = (): SignupContributor[] => contributors.values()
 
 /** Test-only: forget every contributor, to exercise core with no features. */
-export function clearSignupContributorsForTest(): void {
-  contributors.clear()
-}
+export const clearSignupContributorsForTest = (): void => contributors.clear()

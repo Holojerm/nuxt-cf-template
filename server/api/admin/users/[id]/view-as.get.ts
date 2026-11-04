@@ -71,7 +71,7 @@ export default defineEventHandler(async (event) => {
       targetType: 'user',
       targetId: user.id,
       // No email in metadata — see server/utils/audit.ts.
-      ipHash: await auditIpHash(event),
+      ipHash: await clientIpHash(event),
     },
     async () => {
       // What each feature resolves for this customer, by the same functions

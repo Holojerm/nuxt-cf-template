@@ -27,6 +27,7 @@ import type { LifecycleDb, LifecycleRecipient, LifecycleStep } from '../types/ex
 import type { SendEmailOptions, SendEmailResult } from './email'
 import { isNotificationEnabled } from './notifications'
 import { isUndeliverableAddress } from './users'
+import { logEvent } from './log'
 
 // The step shapes live in server/types/extension-types.ts so core's seams do not depend on
 // this file; re-exported so `import … from './lifecycle'` still works.
@@ -65,9 +66,7 @@ export async function runLifecycle(
     try {
       recipients = await step.due(db, now, LIFECYCLE_SENDS_PER_STEP)
     } catch (error) {
-      console.error(
-        JSON.stringify({ kind: 'lifecycle_due_failed', step: step.id, error: String(error) }),
-      )
+      logEvent('error', 'lifecycle_due_failed', { step: step.id, error: String(error) })
       continue
     }
     report.due = recipients.length

@@ -1,16 +1,9 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
-// ─────────────────────────────────────────────
-// Database Schema (Drizzle ORM + Cloudflare D1)
-// ─────────────────────────────────────────────
-// Convention:
-//   - Table names: snake_case plural (e.g. users, posts)
-//   - Column names: snake_case
-//   - All tables have: id, created_at, and updated_at — unless the table is
-//     append-only, in which case updated_at is omitted rather than lied about
-//     (see audit_log)
-//   - Foreign keys: <table_singular>_id (e.g. user_id)
-// ─────────────────────────────────────────────
+// Conventions: snake_case plural tables and snake_case columns; every table has
+// id, created_at and updated_at, except append-only tables, which omit
+// updated_at rather than lie about it (audit_log); foreign keys are
+// <table_singular>_id.
 
 // Timestamps helper — spread into every table
 const timestamps = {
@@ -26,9 +19,8 @@ const timestamps = {
 // Users — baseline table, extend with your own columns.
 //
 // `email` is the account key: sign-in links providers by verified email rather
-// than minting a row per provider (see server/utils/users.ts for why).
-// `provider` records which one created the account — support context only,
-// never an authorization input.
+// than minting a row per provider (see server/utils/users.ts). `provider` is
+// support context only, never an authorization input.
 export const users = sqliteTable(
   'users',
   {
@@ -41,66 +33,37 @@ export const users = sqliteTable(
     role: text('role').notNull().default('user'),
     provider: text('provider'),
     lastLoginAt: integer('last_login_at', { mode: 'timestamp' }),
-    // ── Session revocation ─────────────────────────────────────────────────────
-    // Sessions are self-contained sealed cookies: nothing is stored server-side,
-    // so nothing could previously be taken away. Delete your account from your
-    // laptop and your phone kept full access to the retained entitlements until
-    // the cookie expired, because every check in the app reads the cookie and
-    // stops there.
-    //
-    // This column is the revocation primitive that was missing. Every session
-    // carries the second it was issued (server/utils/auth.ts › establishSession);
-    // a session issued before this instant is dead, checked on every
-    // authenticated request by server/middleware/auth.ts. Deletion sets it, and
-    // it is deliberately a *timestamp* rather than a `deleted_at` flag so the same
-    // column also answers "sign me out everywhere" and "an admin force-logged this
-    // account out" without another migration.
-    //
-    // NULL means nothing has ever been revoked — the state every account is in.
-    // A session with no issued-at that meets a non-null value here is treated as
-    // revoked: it cannot prove it postdates the revocation, and on this column
-    // "cannot prove" has to mean no.
+    // Revocation primitive for sealed-cookie sessions, which store nothing
+    // server-side. Every session carries its issue second
+    // (server/utils/auth.ts › establishSession); one issued before this instant
+    // is dead, checked per request by server/middleware/auth.ts. A timestamp, not
+    // a `deleted_at` flag, so it also answers "sign out everywhere" and admin
+    // force-logout. NULL = never revoked. A session with no issued-at that meets
+    // a non-null value is treated as revoked: "cannot prove" has to mean no.
     sessionsInvalidBefore: integer('sessions_invalid_before', { mode: 'timestamp' }),
-    // ── First-touch attribution ────────────────────────────────────────────────
-    // Written once, at account creation, from the cookie the attribution plugin
-    // set on the visitor's first landing (shared/utils/attribution.ts). Never
-    // updated afterwards — the question these answer is "which channel produced
-    // this customer", and last-touch overwrites destroy that the moment someone
-    // returns via a branded search.
-    //
-    // PostHog already keeps $initial_utm_* on the person, so why duplicate?
-    // Because that record is lossy exactly where it matters: ad blockers drop the
-    // SDK, and the visitors most likely to block are not a random sample. These
-    // columns are first-party, joinable against `entitlements` in one SQL query,
-    // and survive dropping PostHog — the same reasoning as the `feedback` table.
+    // First-touch attribution, written once at account creation from the cookie
+    // set on the first landing (shared/utils/attribution.ts), never updated:
+    // last-touch overwrites destroy "which channel produced this customer".
+    // Duplicated from PostHog because ad blockers make that record lossy exactly
+    // where it matters; these are first-party and joinable to `entitlements`.
     signupSource: text('signup_source'),
     signupMedium: text('signup_medium'),
     signupCampaign: text('signup_campaign'),
     signupReferrer: text('signup_referrer'),
-    // ── Referrals ──────────────────────────────────────────────────────────────
-    // The user's own code, minted once at provisioning (server/utils/users.ts).
-    // Nullable because accounts created before this column existed have none, and
-    // backfilling would hand codes to dormant accounts that will never share one.
-    // Unique, and nullable-unique is exactly right here: SQLite treats NULLs as
-    // distinct in a unique index, so every legacy row coexists while every minted
-    // code is still guaranteed to point at one account.
+    // The user's own code, minted at provisioning (server/utils/users.ts).
+    // Nullable: legacy accounts have none and backfilling would hand codes to
+    // dormant accounts. Nullable-unique is right: SQLite treats NULLs as distinct
+    // in a unique index.
     referralCode: text('referral_code').unique(),
-    // Who referred this user — the *other* account's referral_code, resolved at
-    // signup. Deliberately NOT a foreign key, for the reasons written out on
-    // `feedback.user_id` below: attribution must never be lost to a constraint
-    // failure, and the answer to "where did this customer come from" has to
-    // survive the referrer's row being deleted. A dangling code is a readable
-    // fact; a blocked signup is a lost customer.
+    // The *other* account's referral_code, resolved at signup. Deliberately NOT a
+    // foreign key (as with `feedback.user_id`): a blocked signup is a lost
+    // customer, and attribution must survive the referrer's row being deleted.
     referredBy: text('referred_by'),
     ...timestamps,
   },
   (table) => [
-    // "How many people used my code" — rendered on /account for every signed-in
-    // visitor who opens the referral card. Unindexed it was a full scan of the
-    // users table on a page view, which is the one shape of slow query that
-    // gets worse exactly as the product succeeds.
-    //
-    // Not unique: many accounts share one referrer's code, which is the point.
+    // "How many people used my code", read on every /account referral-card view;
+    // unindexed that is a full users scan. Not unique: many accounts share a code.
     index('users_referred_by_idx').on(table.referredBy),
   ],
 )
@@ -124,114 +87,75 @@ export const mcpConnectCodes = sqliteTable(
     ...timestamps,
   },
   (table) => [
-    // Redemption uses the unique index on `code_hash`, so these two exist
-    // purely for the nightly sweep in server/utils/purge.ts — same reasoning
-    // as on magic_link_tokens: the sweep's OR needs an index on each branch or
-    // the planner scans the table. This one grows far more slowly, but the
-    // scan cost is paid per run regardless of how few rows come back.
+    // Redemption uses the unique `code_hash` index; these two serve only the
+    // nightly sweep in server/utils/purge.ts, whose OR needs an index per branch.
     index('mcp_connect_codes_expires_at_idx').on(table.expiresAt),
     index('mcp_connect_codes_used_at_idx').on(table.usedAt),
   ],
 )
 
-// Magic-link tokens — the primary consumer sign-in path. Minted by
-// POST /api/auth/magic-link, redeemed from /auth/verify. Same construction as
-// mcp_connect_codes above and for the same reasons: only the SHA-256 hash is
-// stored, the row is single-use, and it expires in minutes.
+// Magic-link tokens — the primary consumer sign-in path (POST /api/auth/magic-link,
+// redeemed from /auth/verify). Built like mcp_connect_codes: SHA-256 hash only,
+// single-use, minutes to live.
 //
-// Deliberately NOT joined to `users`, and that is the point rather than an
-// omission. A link is minted for an *address*, not an account, which is what
-// lets one endpoint serve sign-in and sign-up with an identical response — an
-// endpoint that behaved differently for a known address would be an account
-// enumeration oracle. The account is found-or-created at redemption.
+// Deliberately NOT joined to `users`: a link is minted for an *address*, which
+// lets one endpoint serve sign-in and sign-up with an identical response (a
+// differing one is an account-enumeration oracle). The account is
+// found-or-created at redemption.
 export const magicLinkTokens = sqliteTable(
   'magic_link_tokens',
   {
     id: text('id')
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    // Normalized with normalizeEmail() before it is written, so this row and the
-    // `users.email` it eventually resolves to are keyed identically.
+    // Normalized with normalizeEmail(), so it keys identically to `users.email`.
     email: text('email').notNull(),
     tokenHash: text('token_hash').notNull().unique(),
     expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
     usedAt: integer('used_at', { mode: 'timestamp' }),
-    // ── Why these ride on the row instead of being read from cookies ──────────
-    // A magic link is the one sign-in flow that routinely *finishes in a
-    // different browser than it started in*: request it on the laptop, open the
-    // mail on the phone. Both values below normally come from cookies on the
-    // requesting browser (`auth-redirect`, `attr`), and on that path neither
-    // cookie exists when the session is established. Capturing them at mint time
-    // is what stops a deep link and a first-touch channel from being silently
-    // lost on every cross-device signup — and cross-device is not an edge case
-    // for email sign-in, it's the default on mobile.
-    //
-    // `redirect_to` is passed through safeRedirectPath() before it is written.
-    // It originates in a query string, so storing it unfiltered would turn this
-    // table into an open-redirect store with a 15-minute fuse.
+    // These ride on the row, not cookies: a magic link routinely finishes in a
+    // different browser than it started in (laptop request, phone open), where
+    // the `auth-redirect` and `attr` cookies do not exist. `redirect_to` is
+    // passed through safeRedirectPath() before it is written; it comes from a
+    // query string, so unfiltered it would be an open-redirect store.
     redirectTo: text('redirect_to'),
-    // First-touch attribution, same four columns as `users` — written there by
-    // establishSession() if this link ends up creating the account.
+    // First-touch attribution, same four columns as `users`.
     signupSource: text('signup_source'),
     signupMedium: text('signup_medium'),
     signupCampaign: text('signup_campaign'),
     signupReferrer: text('signup_referrer'),
-    // The fifth field of the same cookie, and the only one that is worth money.
-    //
-    // It rides here for exactly the reason the four above do, but the cost of
-    // omitting it is different in kind. A lost `signup_source` is a marketing
-    // row that reads `direct`; a lost referral code is a person who was
-    // promised days for inviting a friend and silently did not get them — and
-    // the case where it goes missing is *cross-device*, which for email sign-in
-    // is the common path rather than the edge one. Requested on a laptop,
-    // opened on a phone: no `attr` cookie exists on the phone, so without this
-    // column the credit simply evaporates on the majority of magic-link signups.
-    //
-    // Deliberately NOT a foreign key to `users.referral_code`, matching
-    // `users.referred_by`: this is an unverified claim copied off a cookie, and
-    // it is resolved to a real, live, other account at redemption
-    // (layers/referral/server/utils/referral-codes.ts › findReferrerByCode). A constraint here would let
-    // a junk cookie value fail somebody's sign-in.
+    // The fifth field of the same cookie, and the one worth money: a lost
+    // `signup_source` reads `direct`, a lost referral code silently denies
+    // someone promised days, and cross-device (no `attr` cookie on the phone) is
+    // the common magic-link path. NOT a foreign key, like `users.referred_by`: it
+    // is an unverified cookie claim resolved at redemption
+    // (layers/referral/server/utils/referral-codes.ts › findReferrerByCode), and
+    // a constraint would let a junk value fail someone's sign-in.
     referralCode: text('referral_code'),
     // The canonical mailbox (server/utils/users.ts › canonicalizeEmailForLimiting)
-    // the per-address budget counts on. `victim+1@gmail.com` … `+9999` are one
-    // inbox; counting on `email` alone is a limiter an attacker walks around.
-    // Empty on rows written before the column existed.
+    // the per-address budget counts on: `victim+1@gmail.com` … `+9999` are one
+    // inbox. Empty on rows written before the column existed.
     mailbox: text('mailbox').notNull().default(''),
     ...timestamps,
   },
   (table) => [
-    // Rows are looked up by `token_hash` (unique index, free) and swept by
-    // address when that address requests its next link — see
-    // server/utils/magic-link.ts › createMagicLinkToken. This index serves the
-    // sweep, and the support question "how many links did this address ask for".
+    // Lookup is by `token_hash` (unique); this serves the sweep by address in
+    // server/utils/magic-link.ts › createMagicLinkToken and support queries.
     index('magic_link_tokens_email_created_idx').on(table.email, table.createdAt),
-    // The per-address budget: "how many links did this MAILBOX mint in the last
-    // window", counted in the same D1 transaction as the insert.
+    // The per-address budget, counted in the same D1 transaction as the insert.
     index('magic_link_tokens_mailbox_created_idx').on(table.mailbox, table.createdAt),
-    // ── The retention sweep's indexes ────────────────────────────────────────
-    // server/utils/purge.ts selects `expires_at < cutoff OR (used_at IS NOT
-    // NULL AND used_at < cutoff)`. Without these it was a full table scan of
-    // the fastest-growing table in the database, every night — and the sweep's
-    // LIMIT bounds rows DELETED, not rows examined, so the scan grew even
-    // though the delete stayed small.
-    //
-    // BOTH columns are indexed, not just `expires_at`, because of the OR:
-    // SQLite can satisfy an OR from an index union only when every branch has
-    // one. Index one side and the planner falls back to scanning for the
-    // other, which is the same cost as indexing neither.
+    // server/utils/purge.ts selects `expires_at < cutoff OR (used_at IS NOT NULL
+    // AND used_at < cutoff)`. BOTH columns are indexed: SQLite serves an OR from
+    // an index union only if every branch has an index, else it scans anyway.
     index('magic_link_tokens_expires_at_idx').on(table.expiresAt),
     index('magic_link_tokens_used_at_idx').on(table.usedAt),
   ],
 )
 
 /**
- * Structured context on an audit row. Deliberately flat and scalar-only rather
- * than `unknown` or a nested blob: an audit row is read by a human at 2am
- * trying to reconstruct what happened, and a nested JSON tree does not get
- * read. Flat key/value also survives `LIKE '%…%'` when you have no index and no
- * time. Widen this union if you must — never to `any`, which would put
- * arbitrary un-serializable objects into a column D1 stores as TEXT.
+ * Structured context on an audit row: flat and scalar-only, because it is read
+ * by a human at 2am and survives `LIKE '%…%'`. Widen the union if you must,
+ * never to `any` (un-serializable objects in a TEXT column).
  */
 export type AuditMetadata = Record<string, string | number | boolean | null>
 
@@ -239,24 +163,16 @@ export type AuditMetadata = Record<string, string | number | boolean | null>
 // user's data, a system job changing an entitlement, anything you would need to
 // explain to a customer or a regulator).
 //
-// Append-only is the whole point, so it does NOT spread `timestamps`. An
-// `updated_at` on a table whose rows are never updated is a standing lie: it
-// invites code to "correct" a row, and a correctable audit trail is not one.
-// Rows are only ever inserted and read. Retention is a delete-by-age job, not
-// an edit.
+// It does NOT spread `timestamps`: an `updated_at` on never-updated rows invites
+// code to "correct" a row, and a correctable audit trail is not one. Retention
+// is a delete-by-age job, not an edit.
 //
-// `actor_user_id` is deliberately NOT a foreign key — three reasons, all of
-// which point the same way:
-//   1. Audit rows must outlive the actor. Deleting an account (or honouring an
-//      erasure request) must not cascade away the record of what that account
-//      did, nor be blocked by it.
-//   2. Not every actor is a user row. System actions record a sentinel id with
-//      `actor_type = 'system'`; an FK would make the most important class of
-//      automated action unrecordable.
-//   3. The write must never fail. Same reasoning as `feedback.user_id` above:
-//      an action that happened but went unrecorded is strictly worse than an
-//      orphaned row, and a constraint failure here would 500 the privileged
-//      operation itself.
+// `actor_user_id` is deliberately NOT a foreign key:
+//   1. Rows must outlive the actor; erasure must neither cascade them away nor
+//      be blocked by them.
+//   2. System actors have no user row (`actor_type = 'system'`, sentinel id).
+//   3. The write must never fail: an unrecorded action is worse than an orphaned
+//      row, and a constraint failure would 500 the privileged operation itself.
 export const auditLog = sqliteTable(
   'audit_log',
   {
@@ -264,45 +180,37 @@ export const auditLog = sqliteTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
     actorUserId: text('actor_user_id').notNull(),
-    // admin | system | user — notNull with a default because a null here makes
-    // a row ambiguous forever, and an ambiguous audit row is not evidence.
-    // 'user' is a person acting on their own account (e.g. self-serve
-    // deletion) — actorUserId and targetId are the same id on those rows.
+    // admin | system | user. notNull: a null makes a row ambiguous forever. 'user'
+    // is a person acting on their own account (actorUserId == targetId).
     actorType: text('actor_type').notNull().default('admin'),
     // Verb, past tense and namespaced: 'user.role_changed', 'feedback.replied'.
     action: text('action').notNull(),
-    // What was acted on. Null when the action has no single subject (a bulk
-    // export, a config change), which is why neither column is notNull.
+    // Null when the action has no single subject (bulk export, config change).
     targetType: text('target_type'),
     targetId: text('target_id'),
     metadata: text('metadata', { mode: 'json' }).$type<AuditMetadata>(),
-    // Salted SHA-256, same construction as `feedback.ip_hash` — enough to tell
-    // two sessions apart in an investigation, useless as an identifier.
+    // Salted SHA-256, same construction as `feedback.ip_hash`: tells sessions
+    // apart in an investigation, useless as an identifier.
     ipHash: text('ip_hash'),
     createdAt: integer('created_at', { mode: 'timestamp' })
       .$defaultFn(() => new Date())
       .notNull(),
   },
   (table) => [
-    // The only query this table serves in anger: "everything <actor> did,
-    // newest first."
+    // The one real query: "everything <actor> did, newest first."
     index('audit_log_actor_user_id_created_idx').on(table.actorUserId, table.createdAt),
   ],
 )
 
 // Notification preferences — per-user, per-channel, per-event opt-outs.
 //
-// Absence of a row means **default-on**. Storing only the exceptions is what
-// keeps this table from needing a backfill every time a new event type ships,
-// and it means a failed read degrades toward sending rather than toward silence.
+// Absence of a row means default-on: only exceptions are stored, so a new event
+// type needs no backfill and a failed read degrades toward sending.
 //
-// Billing and security mail (payment failed, subscription cancelled, sign-in
-// from a new device) is NOT opt-out-able, and that rule does NOT live here.
-// There is no column for it and there must never be one: the moment the
-// exemption is data, a bad UPDATE or a helpful admin can switch off the email
-// that tells someone their card was declined. It belongs in the reader function
-// that consults this table — a hardcoded allowlist of always-send event types
-// checked before the lookup, so no row in this table can suppress them.
+// Billing and security mail is NOT opt-out-able, and that rule must never be a
+// column: once the exemption is data, a bad UPDATE or a helpful admin can
+// silence "your card was declined". It lives in the reader, a hardcoded
+// allowlist checked before the lookup.
 export const notificationPreferences = sqliteTable(
   'notification_preferences',
   {
@@ -312,21 +220,18 @@ export const notificationPreferences = sqliteTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id),
-    // email today; push/sms later. notNull — see the unique index below.
+    // email today; push/sms later. notNull for the unique index below.
     channel: text('channel').notNull().default('email'),
-    // The event being opted out of, matching the keys the notification decider
-    // uses (layers/billing/server/utils/billing-notifications.ts › decideNotification).
+    // The event opted out of, matching the keys of
+    // layers/billing/server/utils/billing-notifications.ts › decideNotification.
     eventType: text('event_type').notNull(),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
     ...timestamps,
   },
   (table) => [
-    // One row per (user, channel, event) — anything else and a "did they opt
-    // out?" lookup has to pick between contradictory answers.
-    //
-    // This is also why `channel` and `event_type` are notNull: SQLite treats
-    // NULLs as distinct in a unique index, so a nullable component would let
-    // unlimited duplicate rows through the constraint that exists to stop them.
+    // One row per (user, channel, event), or a lookup meets contradictory answers.
+    // `channel` and `event_type` are notNull because SQLite treats NULLs as
+    // distinct in a unique index, which would let duplicates through.
     uniqueIndex('notification_preferences_user_channel_event_idx').on(
       table.userId,
       table.channel,
@@ -337,15 +242,10 @@ export const notificationPreferences = sqliteTable(
 
 // Lifecycle email sends — one row per (user, step, subject), written BEFORE the
 // send (server/utils/lifecycle.ts). The unique index is the idempotency guard:
-// two cron runs racing, or a run retried after a timeout, cannot mail the same
-// person the same step twice, because only one INSERT wins.
-//
-// `subject_key` is what makes a step repeatable where it should be: '' for a
-// once-per-account step (the activation nudge), the pass's end date for the
-// expiring-pass reminder, so buying another pass earns another reminder.
-//
-// Kept after an account is deleted (the row names a user id, never an address),
-// so the history of what was sent survives for support questions.
+// racing or retried cron runs cannot mail the same step twice, because only one
+// INSERT wins. `subject_key` makes a step repeatable where it should be: '' for
+// once-per-account, the pass's end date for the expiring-pass reminder. Kept
+// after account deletion (names a user id, never an address).
 export const lifecycleSends = sqliteTable(
   'lifecycle_sends',
   {
@@ -373,32 +273,19 @@ export const lifecycleSends = sqliteTable(
 
 // Instance secrets — server-generated derivation salts, one row each.
 //
-// ── Why this exists rather than another env var ──────────────────────────────
-// server/utils/unsubscribe.ts states the rule this table follows: "a new secret
-// is a human gate — every fork of this template would have to go set one before
-// this feature worked at all." That is why the unsubscribe key is derived from
-// `sessionPassword` instead of being its own secret.
+// Not another env var: a new secret is a human gate every fork would have to
+// clear (server/utils/unsubscribe.ts derives its key from `sessionPassword` for
+// that reason). The referral welcome trial cannot: its salt must be STABLE
+// FOREVER. The once-per-mailbox invariant is a deterministic ref
+// (`welcome_<hash of mailbox>`) meeting a unique index, so a changed salt
+// re-arms every spent trial, and `sessionPassword` is meant to be rotatable
+// after a compromise. So the salt is generated once at random and never rotated.
 //
-// The referral welcome trial cannot use that trick, and the reason is narrow
-// but decisive: its salt has to be STABLE FOREVER. The once-per-mailbox
-// invariant is enforced by a deterministic ref (`welcome_<hash of mailbox>`)
-// meeting a unique index, so if the salt ever changes, every mailbox gets a
-// brand-new ref and every spent trial silently re-arms. `sessionPassword` is a
-// secret an operator is supposed to be able to rotate after a compromise, and
-// "rotating your session secret quietly hands out a free month to everyone who
-// already used one" is not a property anybody would predict.
-//
-// So the salt is generated here, once, at random, and never rotated. It costs a
-// fork nothing to set up — which is the same goal the no-new-secret rule was
-// serving, reached by the other road.
-//
-// ── What may and may not live here ───────────────────────────────────────────
-// Server-generated derivation material ONLY. Never user input, never anything
-// rendered, never anything a request can name — an id here is chosen by code in
-// this repo, so this table can never become a generic key/value store that a
-// handler writes into. It holds no personal data and is not exported.
+// Server-generated derivation material ONLY: never user input, never anything a
+// request can name, so this can never become a generic key/value store. No
+// personal data; not exported.
 export const instanceSecrets = sqliteTable('instance_secrets', {
-  // A constant chosen in code, e.g. IDENTITY_SALT_ID. Not user-supplied.
+  // A constant chosen in code (IDENTITY_SALT_ID), never user-supplied.
   id: text('id').primaryKey(),
   value: text('value').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' })
@@ -406,19 +293,12 @@ export const instanceSecrets = sqliteTable('instance_secrets', {
     .notNull(),
 })
 
-// Ops events — the alerting spool. Anything that should wake the owner up gets
-// a row here, and server/tasks/ops/alert.ts drains it on a cron and emails a
-// digest. This exists because Workers Logs cannot be alerted on: the only
-// component that knows a request blew up is the Worker itself, at the moment
-// it happens — so it writes the fact down where a cron can find it.
-//
-// Distinct from `feedback` above, and deliberately so: ops_events is what the
-// Worker noticed, feedback is what a person said. They have different
-// retention (these rows are pruned after OPS_EVENT_RETENTION_DAYS, feedback is
-// kept), different audiences, and different triage paths.
-//
-// `notified_at` is the drain marker, not a timestamp anyone reads: NULL means
-// "still owed an email". Indexed because the cron filters on it every tick.
+// Ops events — the alerting spool. Workers Logs cannot be alerted on, so the
+// Worker writes what it noticed here and server/tasks/ops/alert.ts drains it on
+// a cron into an emailed digest. Distinct from `feedback` (what a person said):
+// different retention (pruned after OPS_EVENT_RETENTION_DAYS), audience and
+// triage. `notified_at` is the drain marker, NULL = still owed an email, and
+// indexed because the cron filters on it every tick.
 export const opsEvents = sqliteTable(
   'ops_events',
   {
@@ -434,7 +314,7 @@ export const opsEvents = sqliteTable(
   (t) => [index('ops_events_notified_at_idx').on(t.notifiedAt)],
 )
 
-// Type exports — use these in your app, not raw Drizzle types
+// Type exports
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type LifecycleSend = typeof lifecycleSends.$inferSelect
@@ -443,19 +323,14 @@ export type MagicLinkToken = typeof magicLinkTokens.$inferSelect
 export type NewMagicLinkToken = typeof magicLinkTokens.$inferInsert
 export type AuditLogEntry = typeof auditLog.$inferSelect
 export type NewAuditLogEntry = typeof auditLog.$inferInsert
-// `FileRecord`, not `File` — `File` is a DOM/Workers global, and shadowing it
-// here would silently retype every `File` in upload code that forgot to import.
 export type NotificationPreference = typeof notificationPreferences.$inferSelect
 export type OpsEvent = typeof opsEvents.$inferSelect
 export type NewOpsEvent = typeof opsEvents.$inferInsert
 export type NewNotificationPreference = typeof notificationPreferences.$inferInsert
 
-// ── Layer tables ────────────────────────────────────────────────────────────
-// This file is the app's composition root for the database: it re-exports the
-// schema of every layer the app uses, so the typed `db` (and every `*Db` type
-// derived from this module) includes their tables. NuxtHub merges layer schemas
-// on its own; this line is what makes core's types and drizzle-kit see them.
-// Removing a layer means deleting its line here and running `bun run db:generate`.
+// Composition root: re-exports each layer's schema so the typed `db` and
+// drizzle-kit see its tables (NuxtHub merges them on its own). Removing a layer
+// means deleting its line and running `bun run db:generate`.
 export * from '../../layers/billing/server/db/schema'
 export * from '../../layers/feedback/server/db/schema'
 export * from '../../layers/files/server/db/schema'

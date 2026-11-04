@@ -88,7 +88,7 @@ export default defineEventHandler(async (event) => {
         revokedEndsAt: target.currentPeriodEnd?.toISOString() ?? null,
         previousStatus: target.status,
       },
-      ipHash: await auditIpHash(event),
+      ipHash: await clientIpHash(event),
     },
     async () => {
       // The row is handed through rather than re-read: the pre-flight above

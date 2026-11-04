@@ -58,6 +58,7 @@
 import { z } from 'zod'
 
 import { completeOAuthSignIn, redirectToLoginError } from '../../utils/auth'
+import { logEvent } from '../../utils/log'
 
 /**
  * Apple sends the user's name exactly ONCE — on the very first authorization,
@@ -135,9 +136,7 @@ export default defineOAuthAppleEventHandler({
   },
 
   onError(event, error) {
-    console.error(
-      JSON.stringify({ kind: 'oauth_failed', provider: 'apple', message: error.message }),
-    )
+    logEvent('error', 'oauth_failed', { provider: 'apple', message: error.message })
     return redirectToLoginError(event, 'provider_error')
   },
 })

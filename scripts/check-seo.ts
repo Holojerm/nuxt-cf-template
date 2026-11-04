@@ -35,12 +35,13 @@
 // by fixtures embedded in a build script. What is left here is the walk, the
 // rules, and the report.
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
 import { DESCRIPTION_MAX, DESCRIPTION_MIN, TITLE_MAX } from '../shared/utils/seo-bounds'
 import { ownLayerDirs } from './lib/layers'
 import { seoDescription, useSeoArgument } from './lib/seo-source'
+import { walk } from './lib/walk'
 
 const ROOT = resolve(import.meta.dir, '..')
 const PAGES_DIRS = [join(ROOT, 'app', 'pages'), ...ownLayerDirs(join('app', 'pages'))]
@@ -51,16 +52,6 @@ interface Problem {
   rule: string
   detail: string
   remedy: string
-}
-
-function walk(dir: string, extension = '.vue'): string[] {
-  const found: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) found.push(...walk(full, extension))
-    else if (entry.endsWith(extension)) found.push(full)
-  }
-  return found
 }
 
 /** Strip comments so an example in a doc block can't trip a rule. */
@@ -79,7 +70,7 @@ function ignored(source: string, needle: string): boolean {
 
 const problems: Problem[] = []
 
-for (const file of PAGES_DIRS.flatMap((dir) => walk(dir))) {
+for (const file of PAGES_DIRS.flatMap((dir) => walk(dir, { extensions: ['.vue'] }))) {
   const relativePath = relative(ROOT, file)
   const raw = readFileSync(file, 'utf8')
   const source = stripComments(raw)
@@ -261,7 +252,7 @@ function postBody(raw: string): string {
 const TODAY = new Date().toISOString().slice(0, 10)
 
 if (existsSync(POSTS_DIR)) {
-  for (const file of walk(POSTS_DIR, '.md')) {
+  for (const file of walk(POSTS_DIR, { extensions: ['.md'] })) {
     const relativePath = relative(ROOT, file)
     const raw = readFileSync(file, 'utf8')
     const front = readFrontmatter(raw)

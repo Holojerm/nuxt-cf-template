@@ -56,6 +56,7 @@ import {
   shouldUseEmailQueue,
 } from './email-queue'
 import type { EmailQueueMessage } from './email-queue'
+import { logEvent } from './log'
 
 export interface SendEmailOptions {
   to: string
@@ -116,6 +117,27 @@ export interface ResendEmailRequest {
   headers?: Record<string, string>
 }
 
+/**
+ * The one Resend POST, shared by the inline path and the queue consumer.
+ * Throws when fetch does; callers decide what that means. `idempotencyKey` is
+ * the queue message id (see the consumer): Resend dedupes on it for 24 hours.
+ */
+export function postToResend(
+  request: ResendEmailRequest,
+  apiKey: string,
+  idempotencyKey?: string,
+): Promise<Response> {
+  return fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+    },
+    body: JSON.stringify(request),
+  })
+}
+
 function appendUnsubscribeToText(text: string, url: string): string {
   return `${text}\n\n—\nDon't want these? Unsubscribe: ${url}`
 }
@@ -141,13 +163,10 @@ export function buildResendEmailRequest(opts: SendEmailOptions, from: string): R
       : null
 
   if (opts.unsubscribe && !unsubscribe) {
-    console.warn(
-      JSON.stringify({
-        kind: 'unsubscribe_header_blocked_mandatory',
-        eventType: opts.unsubscribe.eventType,
-        subject: opts.subject,
-      }),
-    )
+    logEvent('warn', 'unsubscribe_header_blocked_mandatory', {
+      eventType: opts.unsubscribe.eventType,
+      subject: opts.subject,
+    })
   }
 
   return {
@@ -174,9 +193,7 @@ export async function sendEmail(opts: SendEmailOptions): Promise<SendEmailResult
   const from = config.resend.from
 
   if (!apiKey || !from) {
-    console.info(
-      JSON.stringify({ kind: 'email_skipped', reason: 'unconfigured', subject: opts.subject }),
-    )
+    logEvent('info', 'email_skipped', { reason: 'unconfigured', subject: opts.subject })
     return { sent: false, reason: 'unconfigured' }
   }
 
@@ -197,25 +214,12 @@ export async function sendEmail(opts: SendEmailOptions): Promise<SendEmailResult
       await queue.send({ v: 1, enqueuedAt: Date.now(), request } satisfies EmailQueueMessage)
       return { sent: true, id: null, queued: true }
     } catch (error) {
-      console.warn(
-        JSON.stringify({
-          kind: 'email_enqueue_failed',
-          subject: opts.subject,
-          error: String(error),
-        }),
-      )
+      logEvent('warn', 'email_enqueue_failed', { subject: opts.subject, error: String(error) })
     }
   }
 
   try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    })
+    const res = await postToResend(request, apiKey)
 
     // The SAME classifier the queue consumer uses, so one status cannot mean
     // two things depending on which path happened to carry the message.
@@ -224,15 +228,12 @@ export async function sendEmail(opts: SendEmailOptions): Promise<SendEmailResult
       // Log the status and Resend's message, never the recipient's address
       // alongside the body — logs are the easiest place to leak PII by accident.
       const detail = await res.text().catch(() => '')
-      console.error(
-        JSON.stringify({
-          kind: EMAIL_FAILURE_KIND[outcome],
-          path: 'inline',
-          status: res.status,
-          subject: opts.subject,
-          detail: detail.slice(0, 300),
-        }),
-      )
+      logEvent('error', EMAIL_FAILURE_KIND[outcome], {
+        path: 'inline',
+        status: res.status,
+        subject: opts.subject,
+        detail: detail.slice(0, 300),
+      })
       // `transient` is the provider being unwell, not this address being bad —
       // reporting it as `rejected` told magic-link "that mailbox refused you",
       // which it answers with 200 to avoid an enumeration oracle. A Resend
@@ -243,9 +244,7 @@ export async function sendEmail(opts: SendEmailOptions): Promise<SendEmailResult
     const body = (await res.json().catch(() => null)) as { id?: string } | null
     return { sent: true, id: body?.id ?? null }
   } catch (error) {
-    console.error(
-      JSON.stringify({ kind: 'email_error', subject: opts.subject, error: String(error) }),
-    )
+    logEvent('error', 'email_error', { subject: opts.subject, error: String(error) })
     return { sent: false, reason: 'error' }
   }
 }

@@ -50,6 +50,7 @@ import { z } from 'zod'
 
 import { getPurgeContributors } from '../utils/extensions'
 import { purgeExpiredTokens, PURGE_BATCH_LIMIT, PURGE_GRACE_SECONDS } from '../utils/purge'
+import { logEvent } from '../utils/log'
 
 // Cron delivers `{ scheduledTime }` and nothing else, so in practice this
 // validates the hand-run dev route above — where the values arrive as query
@@ -72,9 +73,7 @@ export default defineTask({
     // defaults and say so.
     const parsed = PayloadSchema.safeParse(payload ?? {})
     if (!parsed.success) {
-      console.warn(
-        JSON.stringify({ kind: 'purge_payload_invalid', issues: parsed.error.issues.length }),
-      )
+      logEvent('warn', 'purge_payload_invalid', { issues: parsed.error.issues.length })
     }
     const options = parsed.success ? parsed.data : PayloadSchema.parse({})
 
@@ -91,15 +90,12 @@ export default defineTask({
     for (const c of getPurgeContributors()) sweeps.push([c.key, await c.run(db, options)])
     const counts = Object.fromEntries(sweeps.map(([key, sweep]) => [key, sweep.count]))
 
-    console.info(
-      JSON.stringify({
-        kind: 'purge_expired_tokens',
-        ...result,
-        ...counts,
-        truncated: result.truncated || sweeps.some(([, sweep]) => sweep.truncated),
-        durationMs: Date.now() - started,
-      }),
-    )
+    logEvent('info', 'purge_expired_tokens', {
+      ...result,
+      ...counts,
+      truncated: result.truncated || sweeps.some(([, sweep]) => sweep.truncated),
+      durationMs: Date.now() - started,
+    })
 
     return { result: { ...result, ...counts } }
   },

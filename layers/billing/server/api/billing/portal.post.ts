@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
   const apiKey = config.paddle.apiKey
   if (!apiKey) {
     // Required config, not an optional feature: this route IS the cancel path.
-    console.error(JSON.stringify({ kind: 'paddle_portal_unconfigured' }))
+    logEvent('error', 'paddle_portal_unconfigured')
     throw createError({
       statusCode: 503,
       message: 'Billing portal not configured',
@@ -40,9 +40,7 @@ export default defineEventHandler(async (event) => {
       subscriptionIds: overview.cancellableSubscriptionIds,
     })
   } catch (error) {
-    console.error(
-      JSON.stringify({ kind: 'paddle_portal_failed', message: (error as Error).message }),
-    )
+    logEvent('error', 'paddle_portal_failed', { message: (error as Error).message })
     throw createError({
       statusCode: 502,
       message: 'Could not reach Paddle',

@@ -20,6 +20,7 @@ import { FleetManifestSchema } from '#shared/utils/fleet-manifest'
 import rawManifest from '../../../fleet.json'
 import { getOpsMailer } from '../../utils/ops-mail'
 import { drainOpsEvents, pruneOpsEvents } from '../../utils/ops'
+import { logEvent } from '../../utils/log'
 
 interface CloudflareTaskContext {
   cloudflare?: { env?: Record<string, unknown> }
@@ -38,7 +39,7 @@ export default defineTask({
     if (!mailer) {
       // Nothing can be sent, but the spool must not grow without bound.
       const pruned = await pruneOpsEvents(db)
-      console.warn(JSON.stringify({ kind: 'ops_alert_unconfigured', pruned }))
+      logEvent('warn', 'ops_alert_unconfigured', { pruned })
       return { result: { skipped: 'unconfigured', pruned } }
     }
 
@@ -50,7 +51,7 @@ export default defineTask({
     })
     // Quiet ticks stay quiet — only say something when something happened.
     if (outcome.sent || outcome.error) {
-      console.warn(JSON.stringify({ kind: 'ops_alert_run', ...outcome }))
+      logEvent('warn', 'ops_alert_run', { ...outcome })
     }
     return { result: outcome }
   },

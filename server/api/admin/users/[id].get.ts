@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
       // No email in metadata — `targetId` already identifies the account, and
       // audit rows are append-only and never deleted. See server/utils/audit.ts
       // › "What does NOT go in metadata".
-      ipHash: await auditIpHash(event),
+      ipHash: await clientIpHash(event),
     },
     async () => {
       const [auditRows, sections] = await Promise.all([

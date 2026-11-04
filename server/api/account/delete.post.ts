@@ -39,7 +39,7 @@ export default defineEventHandler(async (event) => {
 
   // The request context the guards and resolvers audit with: billing's cancel
   // row records the same salted IP hash the other audit rows carry.
-  const outcome = await deleteAccount(db, user.id, { ipHash: await auditIpHash(event) })
+  const outcome = await deleteAccount(db, user.id, { ipHash: await clientIpHash(event) })
 
   if (outcome.outcome === 'not_found') {
     // Unreachable in practice — the session already proves the row exists —

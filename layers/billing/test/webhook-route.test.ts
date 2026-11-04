@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as schema from '~~/server/db/schema'
 import { deleteAccount } from '~~/server/utils/account'
 import { clearExtensionsForTest } from '~~/server/utils/extensions'
-import { pathForLog } from '~~/server/utils/log'
+import { logEvent, pathForLog } from '~~/server/utils/log'
 import {
   recordOpsEvent,
   recordUnauthenticatedOpsEvent,
@@ -89,6 +89,7 @@ beforeEach(async () => {
   vi.stubGlobal('recordOpsEvent', recordOpsEvent)
   vi.stubGlobal('recordUnauthenticatedOpsEvent', recordUnauthenticatedOpsEvent)
   vi.stubGlobal('pathForLog', pathForLog)
+  vi.stubGlobal('logEvent', logEvent)
   vi.stubGlobal('verifyPaddleSignature', verifyPaddleSignature)
   vi.stubGlobal('paddleEventSchema', paddleEventSchema)
   vi.stubGlobal('applyPaddleEvent', applyPaddleEvent)

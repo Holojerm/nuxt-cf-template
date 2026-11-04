@@ -71,7 +71,7 @@ export default defineEventHandler(async (event) => {
       previousStatus: row.status,
       replyLength: body.message.length,
     },
-    ipHash: await auditIpHash(event),
+    ipHash: await clientIpHash(event),
   })
 
   const config = useRuntimeConfig()

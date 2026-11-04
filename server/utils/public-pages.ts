@@ -25,6 +25,7 @@
 
 import type { ExtensionDb } from './extensions'
 import type { LlmsTxtSection, SitemapEntry } from './seo'
+import { logEvent } from './log'
 
 /** One URL a source contributes. */
 export interface PublicPageItem {
@@ -112,13 +113,7 @@ export async function collectPublicPages(
       try {
         return { source, items: await source.list(db, context), ok: true }
       } catch (error) {
-        console.warn(
-          JSON.stringify({
-            kind: 'public_page_source_failed',
-            key: source.key,
-            error: String(error),
-          }),
-        )
+        logEvent('warn', 'public_page_source_failed', { key: source.key, error: String(error) })
         return { source, items: [] as PublicPageItem[], ok: false }
       }
     }),

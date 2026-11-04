@@ -12,10 +12,11 @@
 // line directly above. Use it for genuine exceptions (a third-party brand
 // color, a canvas fill) — not to silence a rule you find inconvenient.
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
 import { ownLayerDirs } from './lib/layers'
+import { walk } from './lib/walk'
 
 const ROOT = resolve(import.meta.dir, '..')
 const SCAN_DIRS = [join(ROOT, 'app'), ...ownLayerDirs('app')]
@@ -170,19 +171,6 @@ const REFINEMENTS: Record<string, (match: string) => boolean> = {
     /\s:?icon[=\s]/.test(match) && !/\s:?label[=\s]/.test(match) && !/\bmin-touch\b/.test(match),
 }
 
-function walk(dir: string): string[] {
-  const found: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      found.push(...walk(full))
-    } else if (SCAN_EXTENSIONS.some((ext) => entry.endsWith(ext))) {
-      found.push(full)
-    }
-  }
-  return found
-}
-
 interface Violation {
   file: string
   line: number
@@ -196,7 +184,7 @@ const violations: Violation[] = []
 /** Multi-line matches are unreadable in a one-line report. */
 const collapse = (text: string) => text.trim().replace(/\s+/g, ' ')
 
-for (const file of SCAN_DIRS.flatMap((dir) => walk(dir))) {
+for (const file of SCAN_DIRS.flatMap((dir) => walk(dir, { extensions: SCAN_EXTENSIONS }))) {
   const relativePath = relative(ROOT, file)
   if (EXEMPT_FILES.includes(relativePath)) continue
 

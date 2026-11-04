@@ -1,21 +1,12 @@
 // User provisioning — the bridge between an OAuth callback and a `users` row.
+// Every function takes the Drizzle client explicitly (not the auto-imported
+// `db`) so test/users.test.ts can drive it against real D1 in workerd.
 //
-// Like layers/billing/server/utils/entitlements.ts, every function here takes the Drizzle
-// client explicitly instead of reaching for the auto-imported `db`, so the
-// workerd suite (test/users.test.ts) can drive account creation against a real
-// D1 binding without booting Nitro.
-//
-// ── Identity model ───────────────────────────────────────────────────────────
-// A verified email address IS the account key. Sign in with GitHub today and
-// Google tomorrow on the same address and you land on the same row — which is
-// what users expect, and what avoids the duplicate-account support tickets that
-// per-provider identities create.
-//
-// That model is only safe because the caller guarantees the email is verified
-// (see server/utils/auth.ts › completeOAuthSignIn). An unverified email from
-// any provider is an account-takeover primitive: register the victim's address
-// at a sloppy provider, sign in here, inherit their subscription. Never relax
-// that check.
+// A verified email IS the account key: GitHub today and Google tomorrow on the
+// same address land on one row. That is only safe because the caller guarantees
+// verification (server/utils/auth.ts › completeOAuthSignIn); an unverified
+// address is an account-takeover primitive (register the victim's address at a
+// sloppy provider, inherit their subscription). Never relax that check.
 
 import { eq } from 'drizzle-orm'
 import type { Attribution } from '#shared/utils/attribution'
@@ -47,36 +38,23 @@ export function normalizeEmail(email: string): string {
 }
 
 /**
- * Addresses this app must never mail, and must never mint a credential for.
+ * Addresses this app must never mail, and never mint a credential for.
  *
- * ── The one that matters: deleted-account tombstones ─────────────────────────
- * Deleting an account anonymizes the `users` row in place rather than removing
- * it (server/utils/account.ts — the id has to survive, because
- * `entitlements.user_id` is a real foreign key and billing records are kept for
- * tax law). The scrubbed row keeps a synthetic address,
- * `deleted-<id>@deleted.invalid`.
+ * The one that matters: deleted-account tombstones. Deletion anonymizes the
+ * `users` row in place (server/utils/account.ts; the id survives because
+ * `entitlements.user_id` is a real FK and billing records are kept for tax law)
+ * and leaves `deleted-<id>@deleted.invalid`. Identity here is the email, so a
+ * magic link minted for it would redeem to a session for the deleted account's
+ * id, with its entitlement history, audit trail and `role`: resurrection from a
+ * leaked user id. Resend refusing `.invalid` today is a coincidence, not a
+ * guard; an authentication boundary does not get to live in someone else's input
+ * validation.
  *
- * That address is still an address, and identity here is the email. Mint a
- * magic link for it and redeeming that link would find the tombstone row by
- * email and hand out a session for the deleted account's id — with its
- * entitlement history, its audit trail, and whatever `role` it had. Account
- * resurrection, from nothing but a leaked user id.
- *
- * In practice Resend refuses `.invalid` today, so the mail never leaves. That
- * is not a guard, it's a coincidence: it depends on a third party's address
- * validation, and a fork that swaps mail providers or points a catch-all domain
- * at itself loses it silently. An authentication boundary does not get to live
- * in someone else's input validation.
- *
- * ── Why the whole TLD, not the exact tombstone string ────────────────────────
- * `.invalid` is reserved by RFC 2606 precisely so that it can never resolve, so
- * refusing all of it costs zero real users and survives the tombstone's
- * spelling changing later. The sibling reservations are deliberately NOT here:
- * `.example` is what this repo's own fixtures and dev sign-in run on.
- *
- * Lives beside normalizeEmail() rather than with the magic-link code because it
- * is a rule about the identity key itself — the session guard
- * (server/utils/session-guard.ts) reads it too.
+ * The whole TLD, not the exact string: RFC 2606 reserves `.invalid` so it never
+ * resolves, so this costs no real user and survives the tombstone's spelling
+ * changing. Sibling reservations are NOT here: `.example` is what our fixtures
+ * and dev sign-in use. Lives beside normalizeEmail() because it is a rule about
+ * the identity key; server/utils/session-guard.ts reads it too.
  */
 export function isUndeliverableAddress(email: string): boolean {
   const domain = normalizeEmail(email).split('@').pop() ?? ''
@@ -93,25 +71,18 @@ const DOT_INSENSITIVE_DOMAINS = new Map([
 ])
 
 /**
- * The one mailbox an address actually reaches, for rate-limiting purposes only.
+ * The one mailbox an address actually reaches, for rate-limiting ONLY.
  *
- * ── Why normalizeEmail() is not enough ───────────────────────────────────────
- * Trim-and-lowercase makes `Ada@Example.com` and `ada@example.com` one bucket,
- * and stops there. But `victim+1@gmail.com` … `victim+9999@gmail.com` are
- * thousands of distinct strings that all land in ONE inbox, so a per-address
- * limiter keyed on the normalized form is a limiter an attacker steps around by
- * incrementing a counter — while every message still arrives at the person
- * being flooded. Gmail also ignores dots, so `v.i.c.t.i.m@gmail.com` multiplies
- * that again.
+ * normalizeEmail() is not enough: `victim+1@gmail.com` … `+9999` are thousands
+ * of strings for ONE inbox, so a limiter keyed on the normalized form is
+ * stepped around by incrementing a counter while every message still reaches
+ * the person flooded (Gmail also ignores dots).
  *
- * ── Why this is NOT the identity key ─────────────────────────────────────────
- * Two different people can legitimately own `a.b@example.com` and
- * `ab@example.com` on a provider that treats dots as significant — which is
- * most of them, and which is why this function only special-cases the two
- * domains that document otherwise. Collapsing identities on a guess would merge
- * two strangers' accounts. Accounts stay keyed on normalizeEmail(); this is
- * only ever the budget's bucket key (`magic_link_tokens.mailbox`), where a
- * false merge costs one person a slower retry and nothing else.
+ * NOT the identity key: `a.b@` and `ab@` are different people on most providers
+ * (hence only the two documented domains are special-cased), and collapsing
+ * identities on a guess would merge strangers' accounts. Accounts stay keyed on
+ * normalizeEmail(); this is only the budget's bucket (`magic_link_tokens.mailbox`),
+ * where a false merge costs one person a slower retry.
  */
 export function canonicalizeEmailForLimiting(email: string): string {
   const normalized = normalizeEmail(email)
@@ -122,9 +93,7 @@ export function canonicalizeEmailForLimiting(email: string): string {
   const rawDomain = normalized.slice(at + 1)
   const domain = DOT_INSENSITIVE_DOMAINS.get(rawDomain) ?? rawDomain
 
-  // `plus > 0`, not `>= 0`: an address whose local part IS the tag (`+x@…`)
-  // would otherwise canonicalize to `@domain` and put every such address in one
-  // shared bucket.
+  // `plus > 0`, not `>= 0`: a local part that IS the tag (`+x@…`) would collapse to `@domain`, one shared bucket.
   const plus = local.indexOf('+')
   if (plus > 0) local = local.slice(0, plus)
 
@@ -134,28 +103,13 @@ export function canonicalizeEmailForLimiting(email: string): string {
 }
 
 /**
- * Do these two addresses reach the same inbox?
- *
- * ── Why this is allowed to use the limiting form, when identity may not ──────
- * canonicalizeEmailForLimiting() carries a loud warning that it is NOT the
- * identity key, because collapsing `a.b@` and `ab@` on a provider where dots
- * are significant would merge two strangers' accounts. That warning is about
- * MERGING. This function only ever REFUSES, and the two failure directions are
- * not comparable:
- *
- *   - A false merge grants one stranger access to another's account.
- *   - A false refusal here costs two people who genuinely share a canonical
- *     form one referral reward, and they can email support.
- *
- * On money, the refusing direction is the safe one, so the looser comparison is
- * the right one. It is also the only comparison that catches the attack it
- * exists for: `me+1@gmail.com` referred by `me@gmail.com`'s own code is one
- * person with one mailbox and two accounts, and an exact-match check waves it
- * straight through. Note the surface stays narrow — outside the two
- * dot-insensitive domains this only folds `+tags`, which are the same mailbox
- * by definition rather than by guess.
- *
- * Accounts are still keyed on normalizeEmail(). Nothing here merges anything.
+ * Do these two addresses reach the same inbox? May use the looser limiting form
+ * because it only ever REFUSES, never merges: a false merge hands one stranger
+ * another's account, a false refusal costs two people sharing a canonical form
+ * one referral reward. On money the refusing direction is safe, and it is the
+ * only comparison that catches `me+1@gmail.com` referred by `me@gmail.com`'s
+ * code. Outside the two dot-insensitive domains it folds only `+tags`, the same
+ * mailbox by definition. Accounts stay keyed on normalizeEmail().
  */
 export function isSameMailbox(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false
@@ -171,28 +125,17 @@ function displayName(profile: OAuthProfile, email: string): string {
 
 /**
  * Find-or-create the user behind an OAuth profile, and record the sign-in.
- *
- * Returning users get their name/avatar refreshed from the provider (people
- * change their avatar and expect the app to notice) but never their role —
- * that's ours to set, not the identity provider's.
- *
- * `attribution` is written on the INSERT branch only. It is first-touch by
- * definition (see server/db/schema.ts › users), so a returning user's channel
- * is already recorded and must not be overwritten by the cookie they happen to
- * be carrying today.
+ * Returning users get name/avatar refreshed but never their role (ours to set).
+ * `attribution` is written on the INSERT branch only: first-touch by definition
+ * (see server/db/schema.ts › users).
  */
 export interface UpsertOAuthUserOptions {
   /**
    * Replaces the registered signup contributors. Production never passes this.
-   *
-   * It exists because the mint-and-retry below is the kind of code that is
-   * written once, never executed, and quietly wrong — a collision on a minted
-   * column is a 1-in-10^11 event, so nothing would ever have exercised the
-   * branch OR the error-string match a contributor's `isCollision` does. That
-   * match is against a message D1 produces, so it cannot be verified by
-   * reasoning; it has to be run against a real driver. This lets a test hand in
-   * a contributor whose generator it controls, force a genuine unique-index
-   * violation and prove the retry recovers.
+   * A collision on a minted column is a 1-in-10^11 event, so the retry branch and
+   * a contributor's `isCollision` match against a D1-produced message would never
+   * run; a test hands in a contributor it controls and forces a real
+   * unique-index violation to prove the retry recovers.
    */
   contributors?: SignupContributor[]
 }
@@ -222,12 +165,10 @@ export async function upsertOAuthUser(
     return { user: updated ?? existing, created: false }
   }
 
-  // ── What features resolve about a new account, exactly once ────────────────
-  // On the INSERT branch only, for the same reason the four attribution columns
-  // are: these answer "who introduced this customer" and similar, and each has
-  // one true answer forever. It is also the only place a *claim* from a cookie
-  // becomes a fact (the referral feature drops a code that does not name a
-  // real, live, other account). See server/utils/signup-contributors.ts.
+  // INSERT branch only, like the attribution columns: each answers "who
+  // introduced this customer" once, forever. Also the only place a cookie
+  // *claim* becomes a fact (referral drops a code that names no real, live,
+  // other account). See server/utils/signup-contributors.ts.
   let resolved: Partial<NewUser> = {}
   for (const contributor of contributors) {
     if (contributor.resolve) {
@@ -248,16 +189,11 @@ export async function upsertOAuthUser(
     ...resolved,
   }
 
-  // Columns a feature mints for the new row (the referral code) are made here,
-  // at creation, so no later code path has to handle "user without one" — the
-  // column is nullable only for rows that predate it.
-  //
-  // The retry is the deliberate half. A pre-flight SELECT would be a race, and
-  // the unique index is the real guarantee anyway, so the collision is handled
-  // where it actually surfaces: catch it, mint different values, try again.
-  // Bounded, because an unbounded loop turns a genuine schema problem into a
-  // hung sign-in. At 30^8 this should never fire once; if it fires five times
-  // the randomness is broken and that deserves to be thrown, not papered over.
+  // Columns a feature mints (the referral code) are made at creation so no later
+  // path handles "user without one". Collisions are caught where they surface
+  // (the unique index; a pre-flight SELECT would race) and retried with new
+  // values. Bounded: at 30^8 a first collision should never happen, and five in
+  // a row means broken randomness, which must throw rather than hang sign-in.
   const attempts = Math.max(1, ...contributors.map((c) => c.mintAttempts ?? 1))
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
@@ -271,8 +207,7 @@ export async function upsertOAuthUser(
         .returning()
 
       if (!created) {
-        // Practically unreachable — D1 returns the row or throws — but a missing
-        // row here would mean issuing a session for a user that doesn't exist.
+        // Practically unreachable, but a missing row would mean a session for a nonexistent user.
         throw new Error('User insert returned no row')
       }
 
@@ -282,12 +217,11 @@ export async function upsertOAuthUser(
     }
   }
 
-  // Unreachable — the loop above either returns or rethrows on its last attempt.
+  // Unreachable: the loop returns or rethrows on its last attempt.
   throw new Error('User insert exhausted its mint attempts')
 }
 
-/** Look up a user for a notification. Returns null rather than throwing — a
- *  missing row must not fail the webhook that triggered the lookup. */
+/** Null rather than a throw: a missing row must not fail the webhook that asked. */
 export async function findUserById(db: Db, id: string): Promise<User | null> {
   const user = await db.query.users.findFirst({ where: eq(tables.users.id, id) })
   return user ?? null

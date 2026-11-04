@@ -25,6 +25,7 @@ import { likePrefix } from '#server/utils/sql'
 import type { ExtensionDb } from '#server/utils/extensions'
 import { SUBSCRIPTION_REF_PREFIX, isSubscriptionRef } from './paddle-refs'
 import { resolvePaddlePrice, type PaddlePriceCatalogue } from './paddle-prices'
+import { logEvent } from '#server/utils/log'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type EntitlementDb = ExtensionDb
@@ -45,7 +46,7 @@ export let PASS_DAYS = 30
 /** Apply the app's pass length. Whole days, 1–366; anything else is ignored. */
 export function setPassDays(days: number): boolean {
   if (!Number.isInteger(days) || days < 1 || days > 366) {
-    console.error(JSON.stringify({ kind: 'billing_pass_days_invalid', days }))
+    logEvent('error', 'billing_pass_days_invalid', { days })
     return false
   }
   PASS_DAYS = days
@@ -888,9 +889,7 @@ async function reverseAdjustment(
         } else {
           // Charged back before the column was written: the window it had is
           // gone. Worth a line — a customer owed days only a comp can give back.
-          console.warn(
-            JSON.stringify({ kind: 'entitlement_reversal_unrestorable', paddleRef: ref }),
-          )
+          logEvent('warn', 'entitlement_reversal_unrestorable', { paddleRef: ref })
         }
       } else if (isSubscriptionRef(row.paddleSubscriptionId)) {
         // Overwritten by a later lifecycle event (a new period); the reward's

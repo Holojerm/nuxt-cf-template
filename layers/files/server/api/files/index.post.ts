@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireAccess(event)
 
   // 20/60s does NOT match NATIVE_LIMITER's (30, 60) (server/utils/rate-limit.ts),
-  // so chooseBackend() routes this to the KV fallback rather than Cloudflare's
+  // so chooseBackendAmong() routes this to the KV fallback rather than Cloudflare's
   // native binding — expected and fine here: this is routine abuse control on
   // an authenticated, already-metered surface, not the login-form case the
   // native binding exists for. Keyed on the user, not the caller's IP: this is
@@ -129,9 +129,7 @@ export default defineEventHandler(async (event) => {
     // The row stays `pending` — exactly what that status exists for (see
     // the file header above). Surface a clean failure; the client's retry
     // mints a fresh row and key rather than reusing this one.
-    console.error(
-      JSON.stringify({ kind: 'file_upload_put_failed', fileId: record.id, error: String(error) }),
-    )
+    logEvent('error', 'file_upload_put_failed', { fileId: record.id, error: String(error) })
     throw createError({ statusCode: 502, message: 'Could not store the file — please try again.' })
   }
 

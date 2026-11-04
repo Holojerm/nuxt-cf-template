@@ -36,6 +36,7 @@ import * as tables from '../db/schema'
 import type { NotificationDb } from './notifications'
 import { base64url, timingSafeEqual } from './hash'
 import { isUndeliverableAddress } from './users'
+import { logEvent } from './log'
 
 const encoder = new TextEncoder()
 
@@ -244,9 +245,7 @@ export async function applyUnsubscribeRequest(
   })
 
   if (!user || isUndeliverableAddress(user.email)) {
-    console.warn(
-      JSON.stringify({ kind: 'unsubscribe_refused', reason: user ? 'deleted' : 'no_account' }),
-    )
+    logEvent('warn', 'unsubscribe_refused', { reason: user ? 'deleted' : 'no_account' })
     return { userId, eventType }
   }
 

@@ -117,10 +117,8 @@ hit this on its first sync.
 
 ## Transactional Email
 
-The functions that build each email are in `server/utils/email-templates.ts`, except the
-sign-in link, which
-lives in `server/utils/auth-email-templates.ts` because it is the one email that is
-load-bearing rather than a courtesy — `POST /api/auth/magic-link` inspects
+The functions that build each email are in `server/utils/email-templates.ts`. The sign-in link is the
+one load-bearing email rather than a courtesy: `POST /api/auth/magic-link` inspects
 `sendEmail()`'s result and 503s in production rather than claiming to have sent one.
 
 `sendEmail()` (Resend over fetch) **never throws** — it's always called from

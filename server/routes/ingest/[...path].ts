@@ -33,7 +33,8 @@ export default defineEventHandler(async (event) => {
   // list of visitor IPs sitting in KV. Fails open, like every limiter here — a
   // broken KV must not silently switch analytics off.
   const limiter = getIngestLimiter()
-  if (limiter) await rateLimit(event, { ...limiter, identifier: await hashedClientIp(event) })
+  if (limiter)
+    await rateLimit(event, { ...limiter, identifier: (await clientIpHash(event)) ?? undefined })
 
   const path = (getRouterParam(event, 'path') ?? '').replace(/^\/+/, '')
   const search = getRequestURL(event).search

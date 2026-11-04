@@ -21,7 +21,7 @@
 // the exception it was trying to record.
 import { db } from '@nuxthub/db'
 
-import { pathForLog } from '../utils/log'
+import { pathForLog, logEvent } from '../utils/log'
 import { recordOpsEvent } from '../utils/ops'
 
 export default defineNitroPlugin((nitro) => {
@@ -30,19 +30,15 @@ export default defineNitroPlugin((nitro) => {
     if (status < 500) return
 
     const err = error as Error
-    console.error(
-      JSON.stringify({
-        kind: 'server_error',
-        status,
-        message: err.message,
-        stack: err.stack,
-        // Never event.path — the unsubscribe and magic-link routes carry a live
-        // credential in their query string, and a 5xx is precisely when it is
-        // still unspent. See server/utils/log.ts.
-        path: pathForLog(event?.path),
-        method: event?.method,
-      }),
-    )
+    logEvent('error', 'server_error', {
+      status,
+      message: err.message,
+      stack: err.stack, // Never event.path — the unsubscribe and magic-link routes carry a live
+      // credential in their query string, and a 5xx is precisely when it is
+      // still unspent. See server/utils/log.ts.
+      path: pathForLog(event?.path),
+      method: event?.method,
+    })
 
     await recordOpsEvent(db, {
       kind: 'server_error',

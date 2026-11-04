@@ -1,42 +1,24 @@
 // Can this sealed session still act?
 //
-// ── The gap this closes ──────────────────────────────────────────────────────
-// nuxt-auth-utils sessions are self-contained sealed cookies. Nothing is stored
-// server-side, so before this file there was nothing to revoke: the middleware
-// checked that `session.user` existed and every gate downstream trusted
-// `session.user.id`. Delete your account from your laptop and your phone kept
-// full paid access to the retained entitlements, could export the tombstone, and
-// could re-create preference rows — for as long as the cookie lived. "Sign out
-// everywhere" was not merely missing, it was unimplementable.
+// nuxt-auth-utils sessions are self-contained sealed cookies, so there was
+// nothing to revoke: delete your account on your laptop and your phone kept full
+// paid access until the cookie expired. The smallest fix that makes a stateless
+// cookie revocable: date it (`issuedAt`, server/utils/auth.ts) and give the
+// account a watermark (`users.sessions_invalid_before`); a session issued before
+// the watermark is dead.
 //
-// The fix is the smallest thing that makes a stateless cookie revocable: date
-// the cookie (`issuedAt`, set in server/utils/auth.ts) and give the account a
-// watermark (`users.sessions_invalid_before`, set by deletion). A session
-// issued before the watermark is dead.
-//
-// ── The cost, stated plainly ─────────────────────────────────────────────────
-// One indexed primary-key read on `users` per authenticated request. That is a
-// real cost on a stack whose whole auth story was "zero reads", and it was
-// weighed against a KV cache of the answer.
-//
-// A cache was rejected, and not on latency grounds. Caching "this session is
-// valid" for N seconds means a revoked session keeps working for up to N
-// seconds — reintroducing, in miniature, exactly the bug being fixed. KV is
-// eventually consistent on top of that, so the window would not even be a
-// number you could quote to a customer asking "is my old phone signed out
-// yet?". A deny-list in KV fails the same way and in the more dangerous
-// direction: a revocation that has not propagated is a session that still
-// works, and it fails OPEN. D1 is strongly consistent and the read is a
-// point lookup on the primary key; most authenticated routes already talk to
-// D1 anyway. If a fork ever needs the read back, the honest lever is a shorter
-// session cookie lifetime, not a cache that makes the guarantee fuzzy.
+// Cost: one indexed primary-key read on `users` per authenticated request. A KV
+// cache was rejected, not for latency: caching "valid" for N seconds keeps a
+// revoked session working for N seconds (the bug, in miniature), KV is
+// eventually consistent so N is not even quotable, and a KV deny-list fails
+// OPEN. D1 is strongly consistent and most routes hit it anyway. If a fork needs
+// the read back, shorten the cookie lifetime; do not blur the guarantee.
 
 import { eq } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
 
 import * as tables from '../db/schema'
-// Explicit, not the Nitro auto-import: the workerd vitest suite loads this file
-// directly and nothing is injected there.
+// Explicit, not auto-imported: the workerd vitest suite loads this file directly.
 import { isUndeliverableAddress } from './users'
 
 export type SessionGuardDb = ReturnType<typeof drizzle<typeof tables>>
@@ -53,43 +35,31 @@ export type SessionVerdict =
   | { valid: false; reason: 'no_account' | 'deleted' | 'revoked' | 'undated' }
 
 /**
- * Where the middleware parks the row it just read, for requireAdmin().
- *
- * A per-request cache, not a cross-request one — `event.context` dies with the
- * request, so this cannot go stale the way the KV cache rejected in the note
- * above would. It exists because the guard and requireAdmin() were reading the
- * same primary key on every single admin call: two round trips for one row.
+ * Where the middleware parks the row it read, so requireAdmin() does not repeat
+ * the same primary-key read. Per-request (`event.context`), so it cannot go
+ * stale like the rejected KV cache.
  */
 export const SESSION_ROLE_CONTEXT_KEY = 'sessionRole'
 
 /**
  * Should a revoked session be cleared WITHOUT aborting this request?
  *
- * ── The lockout this prevents ────────────────────────────────────────────────
- * The guard used to 401 everything, including the sign-in surface — and the one
- * cookie guaranteed to be present at the moment somebody is trying to sign in
- * again is the stale one. So: `/login`'s SSR fetch of `/api/auth/providers`
- * 401d and the page rendered "No sign-in method is configured" forever; a
- * perfectly good magic link read as "we don't recognise that sign-in link"; and
- * an OAuth callback dumped raw JSON into the browser. A dead cookie became an
- * unrecoverable lockout from the product.
+ * A guard that 401s the sign-in surface locks the user out: the stale cookie is
+ * exactly what is present when they try to sign in again (/login's SSR fetch of
+ * `/api/auth/providers` 401d into "No sign-in method is configured", a good
+ * magic link read as unrecognised, an OAuth callback dumped raw JSON). Anything
+ * whose job is to END or REPLACE the credential proceeds, as none read the
+ * session to decide anything:
  *
- * The rule: anything whose whole job is to END or REPLACE the credential is
- * allowed to proceed, because none of them read the session to decide anything.
- *
- *   /api/auth/*   the sign-in surface — OAuth callbacks, the magic-link mint
- *                 and verify, the provider list, logout. How someone recovers.
+ *   /api/auth/*   the sign-in surface, how someone recovers.
  *   /api/health   a liveness probe must not depend on a cookie.
- *   DELETE /api/_auth/session   signing out authorizes nothing; it destroys a
- *                 credential. 401ing it would also make
- *                 useUserSession().clear() throw, which it does not catch.
+ *   DELETE /api/_auth/session   signing out authorizes nothing; a 401 would make
+ *                 useUserSession().clear() throw uncaught.
  *
- * GET /api/_auth/session is deliberately NOT here. It must fail, because
- * useUserSession().fetch() catches a failed response and nulls the session —
- * that is what flips the other browser to signed-out. Letting it through would
- * achieve nothing anyway: h3's clearSession drops the cached session from the
- * request context, so the endpoint would re-unseal the same cookie and report
- * the revoked user as present.
+ * GET /api/_auth/session is deliberately NOT here: it must fail, since
+ * useUserSession().fetch() catches that and nulls the session (flipping the
+ * other browser to signed-out), and letting it through would re-unseal the same
+ * cookie (clearSession only drops the cached one) and report the revoked user.
  */
 export function isSessionClearOnlyPath(path: string, method: string): boolean {
   if (path.startsWith('/api/auth/')) return true
@@ -98,30 +68,22 @@ export function isSessionClearOnlyPath(path: string, method: string): boolean {
 }
 
 /**
- * Is the account behind this session still allowed to act?
+ * Is the account behind this session still allowed to act? Refusals in order:
  *
- * Three refusals, in the order they matter:
+ *   no_account  The row is gone (nothing deletes one today; deletion anonymizes
+ *               in place): a hand-run DELETE, restored backup, other database.
+ *   deleted     A tombstone. Redundant with the watermark but free (the email is
+ *               in the row already read), and it means a tombstone never
+ *               authorizes a call even if a future path forgets the watermark.
+ *   revoked /   The account has a revocation instant and the session predates it
+ *   undated     or cannot say. "Cannot say" refuses on purpose: a session with
+ *               no `issuedAt` predates this feature, and waving it through would
+ *               exempt exactly the cookie an attacker would hold. A NULL
+ *               watermark (never revoked) is unaffected, so nobody was logged
+ *               out by the upgrade.
  *
- *   no_account  The row is gone entirely. Nothing in this app deletes a `users`
- *               row today (deletion anonymizes in place), so this is the
- *               belt-and-braces case: a hand-run DELETE, a restored backup, a
- *               session minted against a different database.
- *   deleted     The row is a tombstone. Redundant with the watermark below,
- *               since deletion sets both — and kept anyway, because it costs
- *               nothing (the email is in the row we already read) and it means
- *               a tombstone can never authorize a call even if some future code
- *               path forgets to set the watermark.
- *   revoked /   The account has a revocation instant and this session either
- *   undated     predates it or cannot say. "Cannot say" is a refusal on purpose:
- *               a session with no `issuedAt` is one sealed before this feature
- *               existed, and letting it through would mean the one class of
- *               cookie an attacker would most like to be holding is the one
- *               class the check waves past. Accounts that have never revoked
- *               anything have a NULL watermark and are unaffected, so the
- *               upgrade logs nobody out.
- *
- * Takes the Drizzle client explicitly, like the rest of server/utils, so
- * test/session-guard.test.ts can drive it against a real D1 inside workerd.
+ * Takes the Drizzle client explicitly so test/session-guard.test.ts runs it
+ * against real D1 in workerd.
  */
 export async function checkSession(
   db: SessionGuardDb,
@@ -129,9 +91,7 @@ export async function checkSession(
 ): Promise<SessionVerdict> {
   const row = await db.query.users.findFirst({
     where: eq(tables.users.id, claim.userId),
-    // `role` is not needed here — it is fetched so requireAdmin() can reuse the
-    // row this guard has already read. Both run on every admin request, both on
-    // the same primary key, and reading two columns costs the same as one.
+    // `role` is fetched only so requireAdmin() can reuse this row; two columns cost the same as one.
     columns: { email: true, role: true, sessionsInvalidBefore: true },
   })
 
@@ -142,11 +102,9 @@ export async function checkSession(
   if (!watermark) return { valid: true, role: row.role }
 
   if (claim.issuedAt === undefined) return { valid: false, reason: 'undated' }
-  // Seconds on both sides: D1 stores timestamps at second resolution, so a
-  // millisecond comparison would round-trip a session issued in the same second
-  // as the revocation into whichever side the truncation fell on. `<` rather
-  // than `<=` — a session issued in the revocation second is the one being
-  // created by a *new* sign-in, and must survive.
+  // Seconds on both sides (D1 resolution; ms would round a same-second session
+  // either way). `<` not `<=`: a session issued in the revocation second is the
+  // NEW sign-in and must survive.
   return claim.issuedAt < Math.floor(watermark.getTime() / 1000)
     ? { valid: false, reason: 'revoked' }
     : { valid: true, role: row.role }

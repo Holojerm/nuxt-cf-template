@@ -18,23 +18,13 @@
 // a smoke test against the built Worker is the only thing that does. Escape hatch: `methods-check-ignore`
 // in a comment on the same line or the line above.
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
 import { bodyReads, isBodyless, routeMethod } from './lib/method-bodies'
+import { walk } from './lib/walk'
 
 const ROOT = resolve(import.meta.dir, '..')
-
-function walk(dir: string): string[] {
-  const found: string[] = []
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules') continue
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) found.push(...walk(full))
-    else found.push(full)
-  }
-  return found
-}
 
 const layersDir = join(ROOT, 'layers')
 const roots = [
@@ -46,7 +36,7 @@ const roots = [
 
 const problems: string[] = []
 let scanned = 0
-for (const file of roots.flatMap(walk)) {
+for (const file of roots.flatMap((dir) => walk(dir, { skip: (name) => name === 'node_modules' }))) {
   const method = routeMethod(file)
   if (!isBodyless(method)) continue
   scanned += 1

@@ -136,7 +136,7 @@ export interface ImagesBindingLike {
 /**
  * Pull the Images binding off the Worker env, or undefined when there isn't one.
  *
- * A runtime feature-detect for the same reason resolveNativeLimiter() in
+ * A runtime feature-detect for the same reason resolveNativeLimiters() in
  * server/utils/rate-limit.ts is one: `event.context.cloudflare` is typed as
  * `any`, so it typechecks whatever you write, and `typeof input === 'function'`
  * is the only thing that actually proves a binding is there.

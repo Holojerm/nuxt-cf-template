@@ -1,92 +1,47 @@
 // Audit trail — the append-only record of privileged actions.
 //
-// Like layers/billing/server/utils/entitlements.ts, every function here takes the Drizzle
-// client as its first argument rather than reaching for the auto-imported `db`,
-// so test/audit.test.ts can drive it against a real D1 binding inside workerd
-// without booting Nitro. The H3-facing helper at the bottom is the exception,
-// and it is the only thing in this file a test can't call.
+// Every function takes the Drizzle client as its first argument rather than the
+// auto-imported `db`, so test/audit.test.ts drives it against a real D1 binding
+// in workerd without booting Nitro.
 //
-// ── Policy: audit before act ─────────────────────────────────────────────────
-// The audit row is written BEFORE the privileged action runs, and a failed
-// audit write fails the action. This is the whole reason `withAudit()` exists
-// rather than a pair of calls a handler is trusted to order correctly.
+// Policy: audit before act. The row is written BEFORE the privileged action, and
+// a failed audit write fails the action; `withAudit()` exists so a handler is
+// not trusted to order a pair of calls. Unlike a dropped email (an inconvenience;
+// failing the Paddle webhook to save it would replay a payment), a dropped audit
+// row is the disappearance of the only evidence an admin reached into someone's
+// account. An unrecorded action is worse than a refused one: a refusal is
+// visible and retried. D1 being down already takes the app down, so the cost is
+// small.
 //
-// The alternative — act first, then record, and swallow a failed insert the way
-// sendEmail() swallows a failed send — is the wrong trade here, and the two
-// cases are worth separating because they look similar:
+// Metadata describes intent ("grant 2 passes to X, because Y"), not outcome:
+// the row is written first, and the resulting state lives in the table the action
+// wrote to.
 //
-//   - A dropped email is a customer inconvenience. The money event behind it
-//     already happened and is still in the database. Failing the webhook to
-//     save the email would make Paddle replay a payment.
-//   - A dropped audit row is the *disappearance of the only evidence* that an
-//     admin reached into someone else's account. Nothing else records it. An
-//     entitlement appears in a customer's billing history with no explanation,
-//     and there is no query that recovers who did it or why.
-//
-// So: an unrecorded privileged action is strictly worse than a refused one.
-// A refused grant is visible immediately — the admin sees an error and retries.
-// An unrecorded grant is invisible forever. This is the same reasoning the
-// `audit_log` table comment gives for having no foreign key and no updated_at:
-// the write must not fail for an incidental reason, and the row must not be
-// editable afterwards. Everything here is in service of "the record is true".
-//
-// The cost is real and accepted: D1 being down takes the admin console's
-// mutations down with it. D1 being down has already taken the rest of the app
-// down, so the marginal loss is small.
-//
-// ── What this means for metadata ─────────────────────────────────────────────
-// Because the row is written first, its metadata describes the *intent*, not
-// the outcome — "grant 2 passes to user X, because Y", not "user X now expires
-// on Z". Anything the action computes is not available yet, and deliberately so:
-// a row that could be corrected after the fact is a row that can be corrected
-// after the fact. The resulting state lives in the table the action wrote to;
-// this one answers "who decided, and what did they decide".
-//
-// ── What does NOT go in metadata ─────────────────────────────────────────────
-// Personal data that `target_id` already points at — an email address above all.
-// This table is append-only and has no retention job, so anything written here
-// outlives the account it describes. /account promises we will "remove the
-// account and everything attached to it", and an email frozen into an
-// undeletable row makes that promise false in a way nobody would notice.
-//
-// The id is the durable identifier and the email is a *display* concern, so it
-// is resolved at read time by joining `users` (see server/api/admin/audit.get.ts).
-// The join returns null once the account is gone, which is the correct answer
-// rather than a stale one. Storing it would also have meant the console relying
-// on client-side filtering to keep it off the screen — a display detail standing
-// in for a storage decision.
-//
-// `admin.user_searched` looks like an exception and is not one. Its metadata
-// keeps the search needle — because "who did this admin go looking for" is the
-// entire reason to audit a search — but as a SALTED HASH, never the address
-// itself. An investigator who suspects a value can hash it and compare; nobody
-// can read an email back out of the table. Same discipline, applied to a field
-// that genuinely has to survive.
+// Never put personal data that `target_id` already points at (an email above
+// all) in metadata. The table is append-only with no retention job, so it would
+// outlive the account and falsify /account's "remove everything attached". The
+// id is durable; the email is resolved at read time by joining `users`
+// (server/api/admin/audit.get.ts), returning null once the account is gone.
+// `admin.user_searched` is the one exception that is not one: it keeps the
+// search needle ("who did this admin look for" is the point of auditing it) as a
+// SALTED HASH, which an investigator can match but nobody can read back.
 
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
-import type { H3Event } from 'h3'
 import * as tables from '../db/schema'
 import type { AuditLogEntry, AuditMetadata } from '../db/schema'
-import { saltedHash } from './hash'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type AuditDb = ReturnType<typeof drizzle<typeof tables>>
 
 /**
- * Every action this app records, as a closed union.
- *
- * Closed rather than free text for the same reason FEEDBACK_KINDS is: a typo'd
- * action name doesn't fail anything, it just quietly splits the trail into two
- * buckets, and you find out when the one query this table exists to serve comes
- * back short. Adding an action is one line here.
- *
- * Naming: past tense, namespaced by surface. `admin.*` is a human acting on
- * someone else's data through the console. `account.*` is a signed-in person
- * acting on their own account — actorUserId and targetId are the same id.
+ * Every action this app records, as a closed union: a typo'd action name fails
+ * nothing, it just splits the trail in two. Past tense, namespaced by surface:
+ * `admin.*` is a human acting on someone else's data through the console,
+ * `account.*` a signed-in person acting on their own (actorUserId == targetId).
  */
 export const AUDIT_ACTIONS = [
-  /** An admin searched the user directory by email. Records the needle. */
+  /** An admin searched the user directory by email. Records the needle (hashed). */
   'admin.user_searched',
   /** An admin opened one user's detail page — identity, billing, feedback. */
   'admin.user_viewed',
@@ -98,81 +53,44 @@ export const AUDIT_ACTIONS = [
   'admin.pass_revoked',
   /** An admin moved a feedback row through triage. */
   'feedback.status_changed',
-  /**
-   * An admin sent a customer an email. The most consequential thing in this
-   * list: it leaves the building under the company's name and cannot be
-   * recalled, so it was the conspicuous gap while merely *reading* a customer's
-   * record was already audited.
-   */
+  /** An admin emailed a customer: it leaves under the company's name and cannot be recalled. */
   'feedback.replied',
   /**
-   * A person deleted their own account through self-serve /account —
-   * `actorType: 'user'`, the one action in this list nobody but the account's
-   * own owner can take. `metadata` carries row counts only (see
-   * server/utils/account.ts) — the whole point of this row is to survive the
-   * account it describes, so nothing that identifies the person may live here.
+   * A person deleted their own account (`actorType: 'user'`). `metadata` is row
+   * counts only: this row must survive the account, so nothing identifying.
    */
   'account.deleted',
   /**
-   * Account deletion is about to ask Paddle to cancel a live subscription
-   * immediately — `actorType: 'user'`. Written BEFORE the call, so it records
-   * intent, not outcome (a refused call leaves this row and no `account.deleted`).
-   * Metadata carries the `sub_` id only. Written by the billing layer, and only
-   * with `billing.cancelOnDeletion` on.
+   * Deletion is about to ask Paddle to cancel a live subscription immediately.
+   * Written BEFORE the call, so it records intent (a refused call leaves this row
+   * and no `account.deleted`). Metadata: the `sub_` id only. Written by billing,
+   * only with `billing.cancelOnDeletion` on.
    */
   'account.subscription_cancel_requested',
   /**
-   * A person signed out of every device from /account — `actorType: 'user'`.
-   * Records that `sessions_invalid_before` moved (metadata: the watermark),
-   * which is otherwise invisible: it kills cookies, and cookies leave no rows.
+   * A person signed out everywhere. Records the `sessions_invalid_before`
+   * watermark, otherwise invisible: cookies leave no rows.
    */
   'account.sessions_revoked',
   /**
-   * The first-run checklist (server/utils/onboarding.ts) was observed
-   * complete for this account, for the first time. `actorType: 'user'`,
-   * same as `account.deleted` — this is a person's own activity, not an
-   * admin acting on them. This row is not really "evidence" the way the
-   * rest of the table is; it's the idempotency guard for the one-time
-   * `user_activated` PostHog event: POST /api/onboarding/activated checks
-   * for an existing row with this action (server/utils/onboarding.ts ›
-   * hasActivated) before firing the event, so refreshing the dashboard
-   * after finishing onboarding doesn't refire it. GET /api/onboarding
-   * checks the same guard too, but only to report `activated` in its
-   * response — it never writes. See server/utils/onboarding.ts ›
-   * recordActivationOnce for the full reasoning.
+   * The first-run checklist was observed complete, once. Not evidence like the
+   * rest: it is the idempotency guard for the one-time `user_activated` PostHog
+   * event (server/utils/onboarding.ts › hasActivated, recordActivationOnce).
    */
   'onboarding.activated',
   /**
-   * The referral loop granted access nobody paid for — `actorType: 'system'`,
-   * both sides of it (metadata `side: 'referee' | 'referrer'`).
-   *
-   * One action rather than two, because the question this table gets asked
-   * about the loop is "what has it given away, and to whom", and splitting the
-   * answer across two verbs makes that a union query forever. Metadata carries
-   * ids, day counts, and the entitlement ref — never a referral code, which is
-   * a shareable credential rather than a fact worth freezing into an
-   * append-only table.
+   * The referral loop granted access nobody paid for (`actorType: 'system'`,
+   * metadata `side: 'referee' | 'referrer'`). One action so "what has it given
+   * away" is one query. Metadata: ids, days, entitlement ref; never a referral
+   * code, a shareable credential.
    */
   'referral.rewarded',
   /**
-   * A referral reward was clawed back because the referee's purchase went
-   * backwards — refunded or charged back. `actorType: 'system'`.
-   *
-   * Its own action rather than a `reason` on the line above, because the two
-   * are asked about separately: "what has the loop given away" is a growth
-   * question and "what has it taken back" is a fraud question, and the second
-   * one is the one somebody reads at speed when a refund pattern shows up.
+   * A referral reward was clawed back (refund or chargeback). Its own action:
+   * "given away" is a growth question, "taken back" a fraud one.
    */
   'referral.revoked',
-  /**
-   * A clawed-back referral reward was PUT BACK, because the chargeback behind
-   * the clawback was reversed — the merchant won the dispute.
-   *
-   * Its own verb rather than a second `referral.rewarded`, because the two are
-   * different events with different causes and only this one implies a dispute
-   * happened at all. Reading the pair `revoked` → `restored` on one account is
-   * the whole story of a chargeback that came to nothing.
-   */
+  /** A clawed-back reward was put back because the chargeback was reversed. */
   'referral.restored',
 ] as const
 
@@ -180,10 +98,7 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[number]
 
 /** What gets recorded. Only `actorUserId` and `action` are ever required. */
 export interface AuditEntry {
-  /**
-   * The user id behind the action. Not a foreign key (see the table comment) —
-   * for `actorType: 'system'` this is a sentinel like `system` rather than a row.
-   */
+  /** The user id behind the action. Not a foreign key; a sentinel for `system`. */
   actorUserId: string
   actorType?: 'admin' | 'system' | 'user'
   action: AuditAction
@@ -192,7 +107,7 @@ export interface AuditEntry {
   targetId?: string | null
   /** Flat scalars only — see AuditMetadata in server/db/schema.ts for why. */
   metadata?: AuditMetadata | null
-  /** Salted SHA-256 of the caller's IP; use auditIpHash(event) to build it. */
+  /** Salted SHA-256 of the caller's IP; use clientIpHash(event) to build it. */
   ipHash?: string | null
 }
 
@@ -214,26 +129,19 @@ export async function writeAudit(db: AuditDb, entry: AuditEntry): Promise<AuditL
     })
     .returning()
 
-  // A silent no-op insert would be indistinguishable from a recorded action, so
-  // it gets the same treatment as a thrown error rather than a warning.
+  // A silent no-op insert looks like a recorded action; treat it as an error.
   if (!row) throw new Error('audit insert returned no row')
   return row
 }
 
 /**
- * Run a privileged action behind its audit row — the executable form of the
- * policy at the top of this file.
- *
- * `act` runs only if the audit row landed. Nothing here catches: an audit
- * failure propagates to the handler as a 500, the action never happens, and
- * the admin sees an error instead of a silent success.
+ * Run a privileged action behind its audit row: `act` runs only if the row
+ * landed, and nothing here catches, so an audit failure is a 500 and the action
+ * never happens. Reads go through it too: looking up a customer is a privileged
+ * read even though it changes nothing.
  *
  *   return withAudit(db, { actorUserId: admin.id, action: 'admin.pass_granted', … },
  *     () => grantCompPasses(db, { … }))
- *
- * Reads go through it too, not just mutations. Looking up a customer's email,
- * billing history, and support tickets is a privileged read of another person's
- * data; that it changes nothing does not make it unremarkable.
  */
 export async function withAudit<T>(
   db: AuditDb,
@@ -241,11 +149,8 @@ export async function withAudit<T>(
   act: () => Promise<T>,
 ): Promise<T> {
   await writeAudit(db, entry)
-  // `return await`, not `return`. Returning the promise bare makes an async
-  // function adopt it a microtask later, which leaves a rejecting action
-  // momentarily unhandled — workerd reports that as an unhandled rejection even
-  // though the caller does catch it. Awaiting attaches the handler in the same
-  // tick, so a failed action logs once, as itself.
+  // `return await`: a bare promise is adopted a microtask later, leaving a
+  // rejecting action briefly unhandled, which workerd reports.
   return await act()
 }
 
@@ -278,19 +183,10 @@ export async function listAudit(
 }
 
 /**
- * Resolve the email address behind each `user` target, for display only.
- *
- * Lives here rather than in the endpoint so it can be tested: the chunking
- * below is the kind of thing that works on every fixture anyone writes by hand
- * and fails on a real page of audit rows.
- *
- * `inArray` expands to one bound parameter per id, and D1 caps a statement at
- * 100 bound parameters. `listAudit` returns up to 200 rows, so a page touching
- * mostly distinct users would exceed that — a runtime error on the console's
- * busiest screen, invisible to the type checker.
- *
- * A missing id simply has no entry: the account was deleted, and falling back
- * to the raw id is the honest answer rather than a stale one.
+ * Resolve the email behind each `user` target, for display only. D1 caps a
+ * statement at 100 bound parameters and `listAudit` returns up to 200 rows, so
+ * the lookup is chunked (passes every hand-written fixture, fails a real page).
+ * A missing id has no entry: the account was deleted.
  */
 export async function resolveAuditSubjectEmails(
   db: AuditDb,
@@ -329,10 +225,7 @@ export interface AuditView {
 }
 
 export function toAuditView(row: AuditLogEntry): AuditView {
-  // `ip_hash` is deliberately not on the wire. It is an investigation aid for
-  // someone with database access, not something the console needs to render,
-  // and shipping it to a browser makes an opaque identifier one screenshot away
-  // from being pasted into a ticket.
+  // `ip_hash` stays off the wire: an investigation aid, not console content.
   return {
     id: row.id,
     actorUserId: row.actorUserId,
@@ -343,17 +236,4 @@ export function toAuditView(row: AuditLogEntry): AuditView {
     metadata: row.metadata,
     createdAt: row.createdAt.toISOString(),
   }
-}
-
-// ─── H3-facing ───────────────────────────────────────────────────────────────
-
-/**
- * Salted hash of the caller's IP for an audit row, built exactly the way
- * layers/feedback/server/api/feedback.post.ts builds the one on a feedback row — same salt,
- * same construction, so the two are comparable in an investigation and neither
- * is an identifier on its own.
- */
-export async function auditIpHash(event: H3Event): Promise<string | null> {
-  const ip = getHeader(event, 'cf-connecting-ip') ?? getRequestIP(event, { xForwardedFor: true })
-  return saltedHash(ip, useRuntimeConfig(event).sessionPassword)
 }

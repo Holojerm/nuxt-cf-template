@@ -12,6 +12,7 @@
 
 import { createError, getRequestHeader, setResponseHeader, type H3Event } from 'h3'
 import { sha256Hex, timingSafeEqual } from './hash'
+import { logEvent } from './log'
 
 export type FleetTokenVerdict = 'ok' | 'unauthorized' | 'unconfigured'
 
@@ -45,7 +46,7 @@ export async function verifyFleetToken(
   if (current.length < FLEET_TOKEN_MIN_LENGTH) {
     // Refusing is the safe direction: a weak token that works is indistinguishable
     // from a strong one until the day it isn't.
-    console.warn(JSON.stringify({ kind: 'fleet_token_too_short', length: current.length }))
+    logEvent('warn', 'fleet_token_too_short', { length: current.length })
     return 'unconfigured'
   }
 

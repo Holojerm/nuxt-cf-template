@@ -79,6 +79,7 @@ import type { BillingAdjustmentResult } from '#server/utils/billing-outcome'
 import type { ExtensionDb } from '#server/utils/extensions'
 import { saltedHash } from '#server/utils/hash'
 import { getIdentitySalt } from '#server/utils/identity'
+import { logEvent } from '#server/utils/log'
 import { generateReferralCode, findReferrerByCode, isReferralCodeCollision } from './referral-codes'
 import { getWelcomeLedger } from './referral-ledger'
 import { REFERRAL_REF_PREFIX, referralRewardRef, referralWelcomeRef } from './referral-refs'
@@ -105,7 +106,7 @@ export type ReferralGrantPlan = EarnedGrantPlan
 
 /** One structured line per decision. Skips are the ones worth reading. */
 function logReferral(kind: string, fields: Record<string, string | number | undefined>): void {
-  console.warn(JSON.stringify({ kind, ...fields }))
+  logEvent('warn', kind, fields)
 }
 
 // ─── The two payouts ─────────────────────────────────────────────────────────

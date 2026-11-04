@@ -76,14 +76,11 @@ export default defineEventHandler(async (event) => {
         // unsupported image must cost the caller a larger download, never a
         // broken page. Logged because a transform failing EVERY time is a
         // misconfiguration, and nothing else would surface it.
-        console.warn(
-          JSON.stringify({
-            kind: 'image_transform_failed',
-            fileId: file.id,
-            mimeType: file.mimeType,
-            error: error instanceof Error ? error.message : String(error),
-          }),
-        )
+        logEvent('warn', 'image_transform_failed', {
+          fileId: file.id,
+          mimeType: file.mimeType,
+          error: error instanceof Error ? error.message : String(error),
+        })
       }
     }
   }

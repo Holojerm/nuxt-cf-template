@@ -14,6 +14,7 @@
 // about the Paddle event itself.
 
 import type { PaddleEvent } from './entitlements'
+import { logEvent } from '#server/utils/log'
 
 export type UnknownUserExpectation = (event: PaddleEvent) => boolean
 
@@ -30,13 +31,7 @@ export function isUnknownUserExpected(event: PaddleEvent): boolean {
       if (check(event)) return true
     } catch (error) {
       // A broken check must not silence an alert: treat it as "not expected".
-      console.error(
-        JSON.stringify({
-          kind: 'billing_unknown_user_check_failed',
-          check: key,
-          error: String(error),
-        }),
-      )
+      logEvent('error', 'billing_unknown_user_check_failed', { check: key, error: String(error) })
     }
   }
   return false

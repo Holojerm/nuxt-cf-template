@@ -11,6 +11,7 @@ import { and, eq, inArray, lt } from 'drizzle-orm'
 import * as tables from '../db/schema'
 import { PURGE_BATCH_LIMIT, PURGE_GRACE_SECONDS } from '#server/utils/purge'
 import type { PurgeDb, PurgeOptions } from '#server/utils/purge'
+import { logEvent } from '#server/utils/log'
 
 /** The slice of NuxtHub's blob handle this needs — lets tests pass a fake. */
 export interface PurgeBlobStore {
@@ -76,13 +77,10 @@ export async function purgePendingUploads(
     // Best-effort, and deliberately not fatal — see the docblock. Keys are not
     // logged: an r2_key is derived per user and naming them in bulk turns a log
     // line into an inventory of someone's uploads.
-    console.error(
-      JSON.stringify({
-        kind: 'purge_uploads_blob_failed',
-        count: abandoned.length,
-        error: String(error),
-      }),
-    )
+    logEvent('error', 'purge_uploads_blob_failed', {
+      count: abandoned.length,
+      error: String(error),
+    })
     return { files: 0, truncated: false }
   }
 

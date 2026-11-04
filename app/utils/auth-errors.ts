@@ -55,7 +55,8 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
  */
 export function authErrorMessage(code: unknown): string | null {
   if (typeof code !== 'string' || !code) return null
-  return AUTH_ERROR_MESSAGES[code] ?? AUTH_ERROR_MESSAGES[AUTH_ERROR_FALLBACK] ?? null
+  const known = Object.hasOwn(AUTH_ERROR_MESSAGES, code) ? AUTH_ERROR_MESSAGES[code] : undefined
+  return known ?? AUTH_ERROR_MESSAGES[AUTH_ERROR_FALLBACK] ?? null
 }
 
 /**

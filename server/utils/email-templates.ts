@@ -120,6 +120,47 @@ export function feedbackReplyEmail(
   })
 }
 
+/**
+ * Sent by POST /api/account/delete BEFORE the `users` row is anonymized: the
+ * last message that can reach the real address. No button on purpose: the
+ * account it is about no longer exists, and a "Go to your account" link under a
+ * deletion notice would be a broken promise.
+ */
+export function accountDeletedEmail(brand: Branding, opts: { name: string }): EmailContent {
+  return composeEmail('account-deleted', 'Your account has been deleted', brand, {
+    name: opts.name,
+  })
+}
+
+/**
+ * The sign-in email's class in the taxonomy of shared/utils/notifications.ts.
+ * The `security.` prefix makes isMandatoryNotification() true, so every
+ * enforcement point already refuses to make it unsubscribable, even if a later
+ * refactor starts passing `unsubscribe` to sendEmail(). It is sent before we
+ * know whether the address has an account, so there is no user to key a
+ * preference or unsubscribe URL on either.
+ */
+export const MAGIC_LINK_EVENT_TYPE = 'security.sign_in_link'
+
+export interface MagicLinkEmailOptions {
+  /** Absolute URL of the confirmation page, token included. */
+  url: string
+  /** Minutes until the link stops working — said out loud, so it isn't a surprise. */
+  expiresMinutes: number
+}
+
+/**
+ * The sign-in link. The copy states the expiry (so a stale link is retried, not
+ * reported), gives the URL as text as well as a button (gateways rewrite
+ * anchors), and tells a non-requester that ignoring it is enough.
+ */
+export function magicLinkEmail(brand: Branding, opts: MagicLinkEmailOptions): EmailContent {
+  return composeEmail('magic-link', `Sign in to ${brand.appName}`, brand, {
+    url: opts.url,
+    expiresMinutes: opts.expiresMinutes,
+  })
+}
+
 /** Pull app name + absolute URL out of runtime config for the templates above. */
 export function emailBranding(): Branding {
   const config = useRuntimeConfig()
