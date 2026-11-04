@@ -1,15 +1,15 @@
 # Agent tooling — MCP servers, skills, commands, routines
 
-What ships in `.mcp.json` and `.claude/`: the MCP servers available for live introspection, the NuxtUI skill, the slash commands, and the cloud operations routines that run the commercial side of a fork.
+What ships in `.mcp.json.example` and `.claude/`: the MCP servers available for live introspection, the NuxtUI skill, the slash commands, and the cloud operations routines that run the commercial side of a fork.
 
 > **Load this when:** configuring Claude Code for this repo, wiring a new MCP server, or setting up the operations routines after a fork.
 > Canonical index: [AGENTS.md](../../AGENTS.md).
 
 ---
 
-This project ships with Claude Code configuration in `.mcp.json` and `.claude/`. All forks inherit this setup automatically.
+This project ships with Claude Code configuration in `.mcp.json.example` and `.claude/`. All forks inherit this setup automatically. The live `.mcp.json` is gitignored: `bun dev` creates it from the example on first run, and `nuxt-mcp` keeps rewriting it after that, so it is never committed.
 
-## MCP Servers (`.mcp.json`)
+## MCP Servers (`.mcp.json.example`)
 
 | Server | Type | Purpose |
 | --- | --- | --- |
@@ -23,8 +23,8 @@ This project ships with Claude Code configuration in `.mcp.json` and `.claude/`.
 **Setup notes:**
 - `cloudflare-*` and `nuxt-ui` work with no credentials — always available.
 - For GitHub MCP: set `GITHUB_TOKEN` in your shell (a PAT with repo read scope is enough).
-- For live Nuxt introspection: start `bun dev` before opening Claude Code. The `nuxt` server URL in `.mcp.json` is `https://<portless-name>.localhost/__mcp/sse` and must match the `portless.name` in `package.json`. Rename both when you fork.
-- **In a linked worktree the dev host is different**, so that committed URL is wrong there by design — see the worktree section below. `bun dev` prints the host it's using, and `nuxt-mcp` repoints `.mcp.json` at it on boot so introspection keeps working. That leaves a modified `.mcp.json` in the worktree: expected, and **not something to commit**.
+- For live Nuxt introspection: start `bun dev` before opening Claude Code. The `nuxt` server URL in the MCP config is `https://<portless-name>.localhost/__mcp/sse` and must match the `portless.name` in `package.json`. Rename both when you fork.
+- **In a linked worktree the dev host is different**, so that committed URL is wrong there by design — see the worktree section below. `bun dev` prints the host it's using, and `nuxt-mcp` repoints the local MCP config at it on boot so introspection keeps working. The file is gitignored, so there is nothing to commit.
 - Drizzle MCP works automatically via `bunx`.
 
 ## NuxtUI Skill (`.claude/skills/nuxt-ui/`)

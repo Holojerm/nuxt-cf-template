@@ -47,3 +47,6 @@ coverage
 # Playwright (axe a11y suite)
 playwright-report/
 test-results/
+
+# Local MCP config; nuxt-mcp rewrites it on every dev boot. Copied from .mcp.json.example.
+.mcp.json

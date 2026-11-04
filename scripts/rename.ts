@@ -86,7 +86,9 @@ interface Target {
 const TARGETS: Target[] = [
   { file: 'wrangler.toml' },
   { file: 'package.json' },
-  { file: '.mcp.json' },
+  { file: '.mcp.json.example' },
+  // The untracked local copy, if a clone already made one.
+  { file: '.mcp.json', optional: true },
   // The fleet manifest names the Worker (slug, workers[0]) and the D1 / R2
   // resources. `bun run fleet:check` fails the build if it stops matching
   // wrangler.toml, so it has to be renamed in the same pass.

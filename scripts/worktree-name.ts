@@ -23,7 +23,7 @@
 // worktrees after the task — still readable, which is the point of portless.
 //
 // The main checkout keeps the bare configured name, so `bun dev` there is
-// exactly what it was and the `.mcp.json` URL that `bun run rename` maintains
+// exactly what it was and the `.mcp.json.example` URL that `bun run rename` maintains
 // stays correct.
 
 /**

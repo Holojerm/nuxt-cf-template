@@ -10,7 +10,7 @@
 # `database_name`, `bucket_name`, both queue names and their dead-letter
 # queues, `NUXT_EMAIL_QUEUE_NAME`, `NUXT_PUBLIC_APP_NAME` — and all of that
 # again inside [env.preview], which repeats every binding. It also covers
-# package.json (scripts + portless.name), .mcp.json, and mcp/. Run it once and
+# package.json (scripts + portless.name), .mcp.json.example, and mcp/. Run it once and
 # read what it prints; the placeholders it cannot fill in are listed there.
 # ─────────────────────────────────────────────────────────────────────────────
 

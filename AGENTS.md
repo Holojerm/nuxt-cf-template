@@ -254,7 +254,7 @@ bun db:migrate:preview # Apply migrations to the preview D1 — nothing does thi
 bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db)
 bun run rename <name> # Rewrite the `my-app` placeholder across wrangler.toml, package.json,
-                      # .mcp.json, fleet.json and mcp/ — every occurrence, in one go
+                      # .mcp.json.example, fleet.json and mcp/ — every occurrence, in one go
 bun run ci            # Lint + format:check + design/brand/seo/fleet/crons/methods gates + typecheck + test + build —
                       # Workers Builds runs this. NO browser suites: that image cannot
                       # launch Chromium (see Gotchas).

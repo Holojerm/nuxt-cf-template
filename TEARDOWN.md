@@ -251,7 +251,7 @@ Nothing in the app depends on it — it is a second Worker that reads the same D
    [`app/pages/account.vue`](app/pages/account.vue).
 8. Delete the `OAUTH_KV` namespace in Cloudflare, and the deployed worker if you shipped it.
 
-> **Not the same thing as `.mcp.json`.** That file configures the MCP servers *Claude
+> **Not the same thing as `.mcp.json.example`.** That file configures the MCP servers *Claude
 > Code* talks to while you develop. It has nothing to do with `mcp/` and you almost
 > certainly want to keep it.
 

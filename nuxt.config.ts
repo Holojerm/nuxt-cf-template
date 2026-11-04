@@ -287,7 +287,7 @@ export default defineNuxtConfig({
     //      layers/files/server/utils/images.ts.
     '@nuxt/image',
     'nuxt-auth-utils',
-    // nuxt-mcp rewrites `.mcp.json` — a *tracked* file — with the live dev
+    // nuxt-mcp rewrites the local MCP config (untracked, copied from `.mcp.json.example`) with the live dev
     // server URL every time a dev server boots. Helpful when you started that
     // server yourself; destructive in automation, because `bun run test:a11y`
     // boots one too. An agent or CI run would finish with a dirty tree, and a
