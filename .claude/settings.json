@@ -21,5 +21,19 @@
       "Bash(wrangler secret *)",
       "Bash(rm -rf *)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/scripts/format-edited.ts\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
   }
 }

@@ -94,7 +94,7 @@ restart. The rest are in [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).
 │                           # through server/utils/extensions.ts (and its sibling seams), never
 │                           # imports another layer, and reads like its own small app
 ├── public/                 # Static assets — og.png, favicon.svg, apple-touch-icon.png
-├── .github/                # Dependabot + browser-suites.yml (axe/CSP/E2E — the only CI
+├── .github/                # Dependabot + browser-suites.yml (PR checks: ci, forkless, axe/CSP/E2E — the browser half is the only CI
 │                           # not in Workers Builds; that image can't launch Chromium)
 ├── fleet.json              # How this app describes itself to the portfolio dashboard — see bun run fleet:check
 ├── content.config.ts       # Blog collection + frontmatter schema
@@ -217,7 +217,7 @@ Each of these has a full contract in its own doc — this is the one-line versio
 - **`dev`** — integration branch (optional for larger features)
 - **Feature branches**: `feat/workout-builder`, `fix/auth-redirect`, `chore/update-deps`
 - **Commit format**: `feat: add workout builder`, `fix: correct auth redirect`, `chore: update deps`
-- **PRs require**: lint + typecheck + tests to pass before merge — enforced by the Workers Builds check (non-production branch builds run `bun run ci` and post status + a preview URL back to the PR)
+- **PRs require**: the `ci`, `forkless` and `browser-suites` jobs in `.github/workflows/browser-suites.yml`, enforced by the "main: merge when green" ruleset. Open the PR, run `gh pr merge <n> --auto --squash --delete-branch`, and stop; GitHub merges once the checks pass
 
 ---
 
@@ -255,9 +255,10 @@ bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db)
 bun run rename <name> # Rewrite the `my-app` placeholder across wrangler.toml, package.json,
                       # .mcp.json.example, fleet.json and mcp/ — every occurrence, in one go
-bun run ci            # Lint + format:check + design/brand/seo/fleet/crons/methods gates + typecheck + test + build —
-                      # Workers Builds runs this. NO browser suites: that image cannot
-                      # launch Chromium (see Gotchas).
+bun run ci            # Every gate, concurrently (scripts/ci.ts): lint, format, design/brand/seo/fleet/crons/methods,
+                      # typecheck, test, build. Workers Builds runs this. NO browser suites: that image cannot
+                      # launch Chromium (see Gotchas). CI_SERIAL=1 runs the gates one at a time.
+bun run ci:fast       # While iterating: the cheap gates + typecheck + tests touched since origin/main, no build
 bun run ci:browser    # playwright:install + test:a11y — what GitHub Actions runs
 bun run deploy        # Manual deploy to Cloudflare via wrangler (normally unnecessary —
                       # Workers Builds deploys automatically on push to main).
@@ -268,8 +269,11 @@ bun run mcp:deploy    # Deploy the MCP worker
 ```
 
 `bun run ci` is the merge gate. It is a gate on finished work, not a precondition for
-starting — run it when you have something to merge, and again after any change you think
-is trivial. If it fails, fix the failure; do not work around it.
+starting: iterate with `bun run ci:fast`, then run `bun run ci` once when you have something to
+merge, and again after any change you think is trivial. It runs every gate even after one fails
+and prints only the failures, so fix them all in one pass. If it fails, fix the failure; do not
+work around it. Edits made through Claude Code are formatted by a PostToolUse hook
+(`scripts/format-edited.ts`), so a `format:check` failure means a file was written some other way.
 
 ---
 
