@@ -3,12 +3,11 @@
 // consumeRateLimit takes its store and its clock as arguments precisely so this
 // suite can test the boundary behaviour that matters — a window rolling over
 // mid-attack — without sleeping through real seconds. consumeRateLimitWithFallback
-// takes the native binding the same way, for the same reason.
+// takes the native bindings the same way, for the same reason.
 
 import { env } from 'cloudflare:test'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  chooseBackend,
   chooseBackendAmong,
   clearNativeLimitersForTest,
   consumeRateLimit,
@@ -47,6 +46,9 @@ function makeNative(verdicts: boolean[]): NativeRateLimiter & { keys: string[] }
     },
   }
 }
+
+/** The core binding resolved, as resolveNativeLimiters() would hand it over. */
+const natives = (native: NativeRateLimiter) => ({ [NATIVE_LIMITER.binding]: native })
 
 const THROWING_NATIVE: NativeRateLimiter = {
   limit: async () => {
@@ -129,16 +131,16 @@ describe('consumeRateLimit', () => {
   })
 })
 
-describe('chooseBackend', () => {
+describe('chooseBackendAmong', () => {
   it('picks the native binding when both numbers match what it was deployed with', () => {
     const native = makeNative([])
-    expect(chooseBackend(native, MATCHED)).toEqual({ backend: 'native', native })
+    expect(chooseBackendAmong(natives(native), MATCHED)).toEqual({ backend: 'native', native })
   })
 
   it('falls back to KV when there is no binding', () => {
     // The `nuxt build` output on a non-Cloudflare preset, a trimmed
     // wrangler.toml, a wrangler too old to know the binding. None of them throw.
-    expect(chooseBackend(undefined, MATCHED)).toEqual({
+    expect(chooseBackendAmong(undefined, MATCHED)).toEqual({
       backend: 'kv',
       reason: 'binding-absent',
     })
@@ -147,7 +149,7 @@ describe('chooseBackend', () => {
   it('falls back to KV for a window the binding was not deployed for', () => {
     // The real case: mcp-connect-code wants 10 per 300s. The platform only
     // permits periods of 10 or 60, so no binding could serve this one.
-    expect(chooseBackend(makeNative([]), { limit: 10, windowSeconds: 300 })).toEqual({
+    expect(chooseBackendAmong(natives(makeNative([])), { limit: 10, windowSeconds: 300 })).toEqual({
       backend: 'kv',
       reason: 'window-mismatch',
     })
@@ -157,7 +159,7 @@ describe('chooseBackend', () => {
     // /api/auth/dev asks for 20/60s. The binding is 30/60s and cannot be told
     // otherwise at call time, so delegating would enforce 30 while the response
     // header promised 20. This is the case the exact-match rule exists for.
-    expect(chooseBackend(makeNative([]), { limit: 20, windowSeconds: 60 })).toEqual({
+    expect(chooseBackendAmong(natives(makeNative([])), { limit: 20, windowSeconds: 60 })).toEqual({
       backend: 'kv',
       reason: 'limit-mismatch',
     })
@@ -170,7 +172,7 @@ describe('consumeRateLimitWithFallback', () => {
     const store = makeStore()
 
     const verdict = await consumeRateLimitWithFallback(
-      { native, store },
+      { natives: natives(native), store },
       { ...MATCHED, key: 'auth:1.2.3.4' },
     )
 
@@ -189,9 +191,11 @@ describe('consumeRateLimitWithFallback', () => {
     const store = makeStore()
     const opts = { ...MATCHED, key: 'auth:1.2.3.4' }
 
-    expect((await consumeRateLimitWithFallback({ native, store }, opts)).remaining).toBeNull()
+    expect(
+      (await consumeRateLimitWithFallback({ natives: natives(native), store }, opts)).remaining,
+    ).toBeNull()
 
-    const blocked = await consumeRateLimitWithFallback({ native, store }, opts)
+    const blocked = await consumeRateLimitWithFallback({ natives: natives(native), store }, opts)
     expect(blocked).toMatchObject({ allowed: false, remaining: 0 })
     // No reset clock is exposed, so Retry-After is the whole period: an upper
     // bound, which is the safe direction to be wrong in.
@@ -208,7 +212,7 @@ describe('consumeRateLimitWithFallback', () => {
     for (let i = 0; i < 4; i++) {
       const a = await consumeRateLimit(direct, opts, now)
       const b = await consumeRateLimitWithFallback(
-        { native: makeNative([]), store: viaFallback },
+        { natives: natives(makeNative([])), store: viaFallback },
         opts,
         now,
       )
@@ -224,7 +228,7 @@ describe('consumeRateLimitWithFallback', () => {
     const store = makeStore()
 
     const verdict = await consumeRateLimitWithFallback(
-      { native: THROWING_NATIVE, store },
+      { natives: natives(THROWING_NATIVE), store },
       { ...MATCHED, key: 'auth:1.2.3.4' },
     )
 

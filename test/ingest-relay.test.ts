@@ -11,7 +11,8 @@ import {
   getIngestLimiter,
   resetIngestRelayForTest,
 } from '../server/utils/ingest-relay'
-import { hashedClientIp, NATIVE_LIMITER } from '../server/utils/rate-limit'
+import { clientIpHash } from '../server/utils/hash'
+import { NATIVE_LIMITER } from '../server/utils/rate-limit'
 
 const h3 = vi.hoisted(() => ({
   headers: {} as Record<string, string>,
@@ -42,7 +43,7 @@ beforeAll(async () => {
   )
   vi.stubGlobal('getRequestURL', (event: { search: string }) => ({ search: event.search }))
   vi.stubGlobal('rateLimit', rateLimit)
-  vi.stubGlobal('hashedClientIp', async () => 'hashed-ip')
+  vi.stubGlobal('clientIpHash', async () => 'hashed-ip')
   handler = (await import('../server/routes/ingest/[...path]')).default as unknown as Handler
 })
 
@@ -170,7 +171,7 @@ describe('the /ingest route', () => {
   })
 })
 
-describe('hashedClientIp', () => {
+describe('clientIpHash', () => {
   const asEvent = (headers: Record<string, string>) =>
     ({ node: { req: { headers } }, headers: new Headers(headers) }) as never
 
@@ -182,18 +183,24 @@ describe('hashedClientIp', () => {
     )
   })
 
-  it('is 32 hex characters, stable per address, and never the address itself', async () => {
-    const a = await hashedClientIp(asEvent({ 'cf-connecting-ip': '203.0.113.5' }))
-    expect(a).toMatch(/^[0-9a-f]{32}$/)
-    expect(a).toBe(await hashedClientIp(asEvent({ 'cf-connecting-ip': '203.0.113.5' })))
+  it('is 64 hex characters, stable per address, and never the address itself', async () => {
+    const a = await clientIpHash(asEvent({ 'cf-connecting-ip': '203.0.113.5' }))
+    expect(a).toMatch(/^[0-9a-f]{64}$/)
+    expect(a).toBe(await clientIpHash(asEvent({ 'cf-connecting-ip': '203.0.113.5' })))
     expect(a).not.toContain('203')
-    expect(a).not.toBe(await hashedClientIp(asEvent({ 'cf-connecting-ip': '203.0.113.6' })))
+    expect(a).not.toBe(await clientIpHash(asEvent({ 'cf-connecting-ip': '203.0.113.6' })))
+  })
+
+  it('falls back to the first x-forwarded-for hop, and is null with no address at all', async () => {
+    const viaCf = await clientIpHash(asEvent({ 'cf-connecting-ip': '203.0.113.5' }))
+    expect(await clientIpHash(asEvent({ 'x-forwarded-for': '203.0.113.5, 10.0.0.1' }))).toBe(viaCf)
+    expect(await clientIpHash(asEvent({}))).toBeNull()
   })
 
   it('is salted: another deployment gets other digests', async () => {
     const event = asEvent({ 'cf-connecting-ip': '203.0.113.5' })
-    const before = await hashedClientIp(event)
+    const before = await clientIpHash(event)
     vi.stubGlobal('useRuntimeConfig', () => ({ sessionPassword: 'salt-two' }))
-    expect(await hashedClientIp(event)).not.toBe(before)
+    expect(await clientIpHash(event)).not.toBe(before)
   })
 })

@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
         // repo, and this table is append-only.
         issueUrlSet: body.issueUrl !== undefined && body.issueUrl !== null,
       },
-      ipHash: await auditIpHash(event),
+      ipHash: await clientIpHash(event),
     },
     async () => {
       const row = await updateFeedbackStatus(db, id, body)

@@ -25,7 +25,7 @@
 //   * It answers `{ success }` and nothing else — no count, no reset time. What
 //     that costs us is spelled out at `rateLimit` below.
 //   * Its (limit, period) is FIXED AT DEPLOY. `limit()` takes only a key, so one
-//     binding enforces exactly one budget. That is why `chooseBackend` refuses
+//     binding enforces exactly one budget. That is why `chooseBackendAmong` refuses
 //     to delegate a call site whose numbers differ: the alternative is a handler
 //     asking for 20/60s, silently getting 30/60s, and nothing anywhere saying so.
 //
@@ -50,6 +50,7 @@
 // failing open is the whole design. An explicit import can't do that quietly.
 import { kv } from '@nuxthub/kv'
 import type { H3Event } from 'h3'
+import { clientIp } from './hash'
 import { pathForLog, logEvent } from './log'
 
 /** The slice of unstorage's Storage we use — lets tests pass a Map-backed fake. */
@@ -186,7 +187,7 @@ export function clearNativeLimitersForTest(): void {
  *
  * ── Why these numbers are NOT NATIVE_LIMITER's ───────────────────────────────
  * They were, by accident: both handlers passed a literal `30`/`60`, which is an
- * exact match for the binding, so `chooseBackend` silently routed the whole
+ * exact match for the binding, so `chooseBackendAmong` silently routed the whole
  * unsubscribe surface onto the native limiter. Two consequences nobody chose.
  * The binding counts PER COLO, so "30 a minute" became 30 per Cloudflare
  * location — and this is the one endpoint whose realistic caller is a mail
@@ -248,14 +249,6 @@ export function chooseBackendAmong(
   return { backend: 'kv', reason: sameWindow ? 'limit-mismatch' : 'window-mismatch' }
 }
 
-/** Single-binding form of `chooseBackendAmong`: `native` is NATIVE_LIMITER's binding. */
-export function chooseBackend(
-  native: NativeRateLimiter | undefined,
-  opts: Pick<RateLimitOptions, 'limit' | 'windowSeconds'>,
-): BackendChoice {
-  return chooseBackendAmong(native ? { [NATIVE_LIMITER.binding]: native } : undefined, opts)
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -289,11 +282,6 @@ export function resolveNativeLimiters(event: H3Event): NativeLimiters | undefine
   return Object.keys(found).length > 0 ? found : undefined
 }
 
-/** NATIVE_LIMITER's binding alone — kept for callers that predate the registry. */
-export function resolveNativeLimiter(event: H3Event): NativeRateLimiter | undefined {
-  return resolveNativeLimiters(event)?.[NATIVE_LIMITER.binding]
-}
-
 /** What actually happened, once a backend has been picked and run. */
 export interface RateLimitVerdict {
   allowed: boolean
@@ -322,20 +310,11 @@ export interface RateLimitVerdict {
  * broken, the request goes through and the log says so.
  */
 export async function consumeRateLimitWithFallback(
-  backends: { native?: NativeRateLimiter; natives?: NativeLimiters; store: RateLimitStore },
+  backends: { natives?: NativeLimiters; store: RateLimitStore },
   opts: RateLimitOptions,
   now: number = Date.now(),
 ): Promise<RateLimitVerdict> {
-  // `native` is NATIVE_LIMITER's binding (the form that predates the registry);
-  // `natives` carries every registered binding. Either, or both, may be given.
-  const natives: NativeLimiters | undefined =
-    backends.native || backends.natives
-      ? {
-          ...backends.natives,
-          ...(backends.native ? { [NATIVE_LIMITER.binding]: backends.native } : {}),
-        }
-      : undefined
-  const choice = chooseBackendAmong(natives, opts)
+  const choice = chooseBackendAmong(backends.natives, opts)
 
   try {
     if (choice.backend === 'native') {
@@ -368,46 +347,12 @@ export async function consumeRateLimitWithFallback(
 }
 
 /**
- * The caller's IP as Cloudflare sees it.
- *
- * `cf-connecting-ip` is set by the edge and cannot be spoofed by the client;
- * x-forwarded-for can be, so it's only a local-dev fallback. Unknown callers
- * share one bucket — deliberately, so a header-stripping proxy fails closed
- * into a shared limit rather than open into no limit at all.
+ * The rate-limit bucket for a caller with no `identifier`: their IP, or one
+ * shared `unknown` bucket so a header-stripping proxy fails closed into a
+ * shared limit rather than open into none.
  */
 export function getClientIp(event: H3Event): string {
-  return (
-    getRequestHeader(event, 'cf-connecting-ip') ??
-    getRequestHeader(event, 'x-forwarded-for')?.split(',')[0]?.trim() ??
-    'unknown'
-  )
-}
-
-/**
- * A stable, non-reversible identifier for the caller, for the buckets that live
- * on public surfaces.
- *
- * `/ingest/**` and any other anonymous, busy route would otherwise leave its
- * counters as a rolling list of visitor IP addresses sitting in KV for the
- * length of the window. Hashing costs one SHA-256 and removes the question
- * entirely: the key still separates callers, and nothing readable comes back
- * out of the namespace.
- *
- * Salted with the session password so the digests are useless outside this
- * deployment, and truncated because 32 hex characters is already far past
- * collision-relevant for a per-window counter. Pass the result as
- * `rateLimit()`'s `identifier`.
- */
-export async function hashedClientIp(event: H3Event): Promise<string> {
-  const salt = useRuntimeConfig(event).sessionPassword
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(`${salt}:${getClientIp(event)}`),
-  )
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, 32)
+  return clientIp(event) ?? 'unknown'
 }
 
 /**

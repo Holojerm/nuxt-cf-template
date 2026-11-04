@@ -99,7 +99,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Pull the producer binding off the Worker env, or undefined when there is none.
  *
- * Unlike resolveNativeLimiter() in rate-limit.ts this takes no H3Event, because
+ * Unlike resolveNativeLimiters() in rate-limit.ts this takes no H3Event, because
  * sendEmail() has none — it is called from webhooks, from tasks, and from
  * request handlers alike. The three-way lookup is the same expression NuxtHub
  * generates for its own `db` binding: `process.env` is where workerd surfaces

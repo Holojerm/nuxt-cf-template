@@ -143,7 +143,7 @@ and writes its days into billing's table, and neither file imports the other.
 
 **Request context for deletion.** `deleteAccount(db, userId, { ipHash })` hands the same
 object to every guard and resolver as an optional third argument (`DeletionContext` in
-`server/utils/extensions.ts`). The route passes `auditIpHash(event)`; a caller with no request
+`server/utils/extensions.ts`). The route passes `clientIpHash(event)`; a caller with no request
 (a test, a script) passes none and gets `{}`. A guard or resolver that writes an audit row sets
 `ipHash: context?.ipHash`, which is how billing's `account.subscription_cancel_requested` row
 carries the caller's hash. An implementation written with two parameters keeps working.

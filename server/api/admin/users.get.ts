@@ -53,7 +53,7 @@ export default defineEventHandler(async (event) => {
         queryLength: needle.length,
         limit: query.limit,
       },
-      ipHash: await auditIpHash(event),
+      ipHash: await clientIpHash(event),
     },
     async () => {
       const rows = await db

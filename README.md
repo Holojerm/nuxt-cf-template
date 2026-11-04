@@ -590,7 +590,7 @@ positive integer unique to your account — there is nothing to create in the da
 
 **Backend 2, fallback: a fixed-window counter in KV.** The original implementation, unchanged.
 
-Which one runs is decided per call site by `chooseBackend`, and the rule is exact-match on *both*
+Which one runs is decided per call site by `chooseBackendAmong`, and the rule is exact-match on *both*
 numbers:
 
 | Call site | Backend | Why |

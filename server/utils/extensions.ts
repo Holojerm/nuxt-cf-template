@@ -113,7 +113,7 @@ export interface FleetExtraContributor {
  * passes none, and a guard or resolver that ignores it keeps working.
  */
 export interface DeletionContext {
-  /** Salted IP hash for an audit row (`auditIpHash(event)`); null when unknown. */
+  /** Salted IP hash for an audit row (`clientIpHash(event)`); null when unknown. */
   ipHash?: string | null
 }
 

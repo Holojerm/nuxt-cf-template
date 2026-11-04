@@ -65,10 +65,8 @@
 
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
-import type { H3Event } from 'h3'
 import * as tables from '../db/schema'
 import type { AuditLogEntry, AuditMetadata } from '../db/schema'
-import { saltedHash } from './hash'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
 export type AuditDb = ReturnType<typeof drizzle<typeof tables>>
@@ -192,7 +190,7 @@ export interface AuditEntry {
   targetId?: string | null
   /** Flat scalars only — see AuditMetadata in server/db/schema.ts for why. */
   metadata?: AuditMetadata | null
-  /** Salted SHA-256 of the caller's IP; use auditIpHash(event) to build it. */
+  /** Salted SHA-256 of the caller's IP; use clientIpHash(event) to build it. */
   ipHash?: string | null
 }
 
@@ -343,17 +341,4 @@ export function toAuditView(row: AuditLogEntry): AuditView {
     metadata: row.metadata,
     createdAt: row.createdAt.toISOString(),
   }
-}
-
-// ─── H3-facing ───────────────────────────────────────────────────────────────
-
-/**
- * Salted hash of the caller's IP for an audit row, built exactly the way
- * layers/feedback/server/api/feedback.post.ts builds the one on a feedback row — same salt,
- * same construction, so the two are comparable in an investigation and neither
- * is an identifier on its own.
- */
-export async function auditIpHash(event: H3Event): Promise<string | null> {
-  const ip = getHeader(event, 'cf-connecting-ip') ?? getRequestIP(event, { xForwardedFor: true })
-  return saltedHash(ip, useRuntimeConfig(event).sessionPassword)
 }

@@ -88,7 +88,7 @@ export default defineEventHandler(async (event) => {
         // reconstructible anyway.
         previousEndsAt: before?.currentPeriodEnd?.toISOString() ?? null,
       },
-      ipHash: await auditIpHash(event),
+      ipHash: await clientIpHash(event),
     },
     async () => {
       const result = await grantCompPasses(db, {

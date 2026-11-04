@@ -172,7 +172,7 @@ the original **KV fixed window**. Applied to the whole `/api/auth/` surface in
 per-mailbox budget is **not** one of its call sites — it is counted in D1 (above).
 
 The binding's `(limit, period)` is fixed at deploy — `limit({ key })` takes only a
-key — so `chooseBackend` delegates to it **only when both numbers match**
+key — so `chooseBackendAmong` delegates to it **only when both numbers match**
 `NATIVE_LIMITER`, and everything else stays on KV. Don't relax that: routing a
 20/60s handler through a 30/60s binding enforces 30 while `X-RateLimit-Limit: 20`
 goes out on the response, and nothing fails. `period` may only be **10 or 60**.
@@ -188,7 +188,7 @@ goes out on the response, and nothing fails. `period` may only be **10 or 60**.
   not in `rate-limit.ts`.
 - **`/ingest/**`** (the PostHog relay) can be rate-limited: off by default, because the KV
   backend costs a read and a write per relayed request. `configureIngestRelay({ rateLimit: true })`
-  turns on 300 requests per 120s per address, on KV, keyed by `hashedClientIp()` so the counters
+  turns on 300 requests per 120s per address, on KV, keyed by `clientIpHash()` so the counters
   hold no visitor IPs. 120s is
   deliberately not a window the binding accepts, so it can never land on the per-colo limiter.
   An app that needs other numbers calls `configureIngestRelay({ limit, windowSeconds })` from a
