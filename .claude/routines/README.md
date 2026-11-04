@@ -34,6 +34,8 @@ so the repo ships the *definitions* and a sync command:
 | `growth-review.md` | Weekly Mon 13:30 | Judges last week's `growth-bet`s, picks ≤3 new ones against `fleet.json` › `product`, ships each as a flagged (default-off) or content PR | GitHub connector (+ Cloudflare API token); tier 2 |
 | `x-post.md` | Tue/Thu 15:00 | One post about something that shipped, from the product's X account (`scripts/x-post.ts`); drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
 | `ops-triage.md` | Every 6 h at :37 | Reads the ops spool (`GET /api/ops/events`), retriggers a deploy that never landed, fixes **Mechanical fixes** classes, files the rest as triaged issues | GitHub connector + OPS_BASE_URL / OPS_TOKEN env vars (+ optional deploy hook URL); tier 2 |
+| `dependency-merge.md` | Weekly Mon 15:15 | Merges Dependabot minor/patch PRs that touch only the manifest and lockfile once every check is green; majors and red checks go to the owner | GitHub connector; tier 2 |
+| `template-sync.md` | Weekly Wed 14:00 | In a fork: opens the `chore/template-sync` PR when `fleet.json` › `template.syncedSha` is behind (never merges) | GitHub connector |
 | `daily-digest.md` | Daily 22:00 | Sends **one email per day** to the owner summarizing all actions taken | Gmail connector |
 
 ## Coordination: the ops journal
