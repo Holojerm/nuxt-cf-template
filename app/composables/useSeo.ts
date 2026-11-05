@@ -59,6 +59,7 @@ export function useSiteContext(): SiteContext {
     appUrl: normalizeOrigin(config.public.appUrl),
     supportEmail: config.public.supportEmail,
     legalEntity: config.public.legalEntity,
+    sameAs: config.public.sameAs,
   }
 }
 

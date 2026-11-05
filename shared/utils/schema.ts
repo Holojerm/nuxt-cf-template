@@ -31,6 +31,8 @@ export interface SiteContext {
   supportEmail: string
   /** The legal entity behind the app — the company, not the product. */
   legalEntity: string
+  /** The organization's profiles elsewhere; becomes Organization.sameAs. */
+  sameAs?: readonly string[]
 }
 
 /** Stable @id anchors so nodes across pages resolve to the same entities. */
@@ -48,6 +50,7 @@ export function organizationSchema(site: SiteContext): JsonLdNode | null {
     name: site.legalEntity,
     url: site.appUrl,
     logo: `${site.appUrl}/og.png`,
+    ...(site.sameAs?.length ? { sameAs: [...site.sameAs] } : {}),
     contactPoint: {
       '@type': 'ContactPoint',
       contactType: 'customer support',
