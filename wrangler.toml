@@ -156,7 +156,7 @@ head_sampling_rate = 1
 # Worker on schedule and runs nothing, with no error and no log line.
 # `bun run crons:check` (part of `bun run ci`) fails the build on a mismatch.
 #
-#   "0 4 * * *"     purge-expired-tokens — retention sweep
+#   "0 4 * * *"     purge-expired-tokens — retention sweep; lifecycle-email; seo:indexnow
 #   "*/30 * * * *"  ops:alert — drains the ops_events spool into a digest email
 #
 # Cron triggers run on UTC, and changes take up to 15 minutes to propagate.

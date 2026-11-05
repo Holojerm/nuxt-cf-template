@@ -42,6 +42,29 @@ The `useSeo()` one-call-per-page contract, how `publicPage` meta feeds both `sit
   every page render `noindex`, and sitemap/llms.txt go empty. `NUXT_PUBLIC_ALLOW_AI_CRAWLERS=false`
   blocks the named answer-engine crawlers (`server/utils/seo.ts` › `AI_CRAWLERS`); it defaults
   to **true** because being quotable by an answer engine is distribution for a SaaS marketing site.
+- **IndexNow** (`server/utils/indexnow.ts`): the 04:00 `seo:indexnow` task reads this app's own
+  `/sitemap.xml` and submits every URL whose `<lastmod>` is on or after the last accepted run,
+  so Bing (and through it ChatGPT search, Copilot, DuckDuckGo) recrawls changed pages within
+  minutes. It reads the served sitemap rather than rebuilding the list, so a fork's custom
+  sitemap route needs no port. Opt in with `NUXT_INDEXNOW_KEY` in `[vars]` (8–128 of
+  `[A-Za-z0-9-]`, `openssl rand -hex 16`); `/indexnow-key.txt` serves it. It is not a secret.
+  Preview deploys and non-https origins never ping. State lives in KV at
+  `seo:indexnow:last-submitted` and only advances on a 200/202, so a failed day is resubmitted.
+- **`sameAs`**: `runtimeConfig.public.sameAs` lists the organization's own profiles (GitHub, X,
+  LinkedIn, Wikidata) and becomes `Organization.sameAs`. Set it when another entity shares the
+  name; it is the signal that tells them apart.
+
+## Search console verification (once per domain, by hand)
+
+Both consoles want the owner's own login, so an agent cannot finish this. Use DNS, not a
+meta tag: it survives redesigns and needs no deploy.
+
+1. **Google Search Console** → Add property → *Domain* → copy the `google-site-verification=…`
+   TXT value. Add it at the apex with `cf` (find the command with
+   `cf cli search "create dns record"`). Verify, then Sitemaps → submit `/sitemap.xml`.
+2. **Bing Webmaster Tools** → *Import from Google Search Console* (fastest; carries the
+   sitemap), or add the site and verify by DNS the same way.
+3. Both report indexed pages, query impressions and inbound links, which nothing else here can.
 
 ## Blog content (@nuxt/content)
 

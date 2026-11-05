@@ -229,11 +229,12 @@ const securityHeaders = {
 // triggers Cloudflare says it registered.
 //
 //   04:00 UTC  — retention sweep, server/tasks/purge-expired-tokens.ts; then
-//                lifecycle email, server/tasks/lifecycle-email.ts
+//                lifecycle email, server/tasks/lifecycle-email.ts; then the
+//                IndexNow ping, server/tasks/seo/indexnow.ts
 //   */30       — ops digest, server/tasks/ops/alert.ts. Silence is the healthy
 //                state: an empty spool costs one indexed SELECT per tick.
 const SCHEDULED_TASKS: Record<string, string[]> = {
-  '0 4 * * *': ['purge-expired-tokens', 'lifecycle-email'],
+  '0 4 * * *': ['purge-expired-tokens', 'lifecycle-email', 'seo:indexnow'],
   '*/30 * * * *': ['ops:alert'],
 }
 
@@ -632,6 +633,11 @@ export default defineNuxtConfig({
     // route 404s. Its own secret, not the fleet token: different consumer, rotated
     // separately. `wrangler secret put NUXT_OPS_TOKEN`; 32+ characters.
     opsToken: '',
+    // IndexNow key, 8–128 of [A-Za-z0-9-] (`openssl rand -hex 16`). Not a secret:
+    // /indexnow-key.txt serves it so Bing can verify submissions. Set as
+    // NUXT_INDEXNOW_KEY in wrangler.toml [vars]. Empty = the daily seo:indexnow
+    // task and the key route both no-op. See server/utils/indexnow.ts.
+    indexnowKey: '',
     // Ops alerting — where the cron digest goes (server/tasks/ops/alert.ts).
     // `from` must be on a domain in the Cloudflare account with Email Routing
     // enabled; `to` must be a verified destination address. That combination
@@ -756,6 +762,11 @@ export default defineNuxtConfig({
       supportEmail: 'support@example.com',
       // Legal entity named in /terms and /privacy. Your company, not your app.
       legalEntity: 'My Company Ltd',
+      // The organization's own profiles elsewhere (GitHub, X, LinkedIn, a
+      // Wikidata item), emitted as Organization.sameAs. It is how a search engine
+      // tells your entity apart from another with the same name. Empty = omitted.
+      // Env: NUXT_PUBLIC_SAME_AS='["https://github.com/you"]' (parsed as JSON).
+      sameAs: [] as string[],
     },
   },
 

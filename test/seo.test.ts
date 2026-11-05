@@ -113,6 +113,14 @@ describe('organizationSchema / webPageSchema', () => {
     expect(node?.name).toBe('My Company Ltd')
   })
 
+  it('emits sameAs only when profiles are configured', () => {
+    expect(organizationSchema(SITE)).not.toHaveProperty('sameAs')
+    expect(organizationSchema({ ...SITE, sameAs: [] })).not.toHaveProperty('sameAs')
+    expect(organizationSchema({ ...SITE, sameAs: ['https://github.com/acme'] })?.sameAs).toEqual([
+      'https://github.com/acme',
+    ])
+  })
+
   it('returns null with no origin, rather than emitting relative @ids', () => {
     expect(organizationSchema({ ...SITE, appUrl: '' })).toBeNull()
     expect(

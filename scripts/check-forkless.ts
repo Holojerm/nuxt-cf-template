@@ -205,7 +205,7 @@ const scenarios: Scenario[] = [
       // The documented edits (TEARDOWN.md, "Lifecycle email").
       edit(dir, 'nuxt.config.ts', (source) =>
         source
-          .replace("['purge-expired-tokens', 'lifecycle-email']", "['purge-expired-tokens']")
+          .replace("'purge-expired-tokens', 'lifecycle-email'", "'purge-expired-tokens'")
           .replace(/;\s*then\n\/\/\s+lifecycle email, server\/tasks\/lifecycle-email\.ts/, ''),
       )
       edit(dir, '.claude/docs/email.md', (source) =>
