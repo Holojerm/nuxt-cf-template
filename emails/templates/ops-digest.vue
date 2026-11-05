@@ -1,25 +1,33 @@
-<!-- Data: summary, generated, logsUrl?, kinds[]. Each kind carries exactly one of
-     bad/warn/good (its tone), a label, the raw kind id, the total count, up to five
-     rows, and `more` — how many rows were left out, or 0.
+<!-- Data: kicker, summary, generated, logsUrl?, kinds[]. Each kind carries exactly one
+     of bad/warn/good/info (its tone), a label, the raw kind id, the total count, up to
+     five rows, and `more` — how many rows were left out, or 0. With a classifier it
+     also carries `severity` (Critical/Warning/Info) and maybe `action`, one line on
+     what to check first.
 
      The tone is three copies of the bar and the badge, selected at runtime, because
      a color has to be inlined at build time and the kind is only known at runtime. -->
 <template>
-  <EmailLayout wide title="{{appName}} alert" kicker="{{appName}} alert" heading="{{summary}}">
+  <EmailLayout wide title="{{kicker}}" kicker="{{kicker}}" heading="{{summary}}">
     <Raw>{{#kinds}}</Raw>
     <table role="presentation" class="mb-5 w-full">
       <tr>
         <Raw>{{#bad}}</Raw><td class="w-[3px] bg-bad"></td><Raw>{{/bad}}</Raw>
         <Raw>{{#warn}}</Raw><td class="w-[3px] bg-warn"></td><Raw>{{/warn}}</Raw>
         <Raw>{{#good}}</Raw><td class="w-[3px] bg-good"></td><Raw>{{/good}}</Raw>
+        <Raw>{{#info}}</Raw><td class="w-[3px] bg-rule"></td><Raw>{{/info}}</Raw>
         <td class="pl-3">
           <p class="m-0 mb-1 text-[15px] font-semibold text-ink">
             <Raw>{{label}}</Raw>
             <Raw>{{#bad}}</Raw><span class="ml-1.5 rounded-full bg-bad px-2 py-px text-xs font-semibold text-on-accent"><Raw>{{count}}</Raw></span><Raw>{{/bad}}</Raw>
             <Raw>{{#warn}}</Raw><span class="ml-1.5 rounded-full bg-warn px-2 py-px text-xs font-semibold text-on-accent"><Raw>{{count}}</Raw></span><Raw>{{/warn}}</Raw>
             <Raw>{{#good}}</Raw><span class="ml-1.5 rounded-full bg-good px-2 py-px text-xs font-semibold text-on-accent"><Raw>{{count}}</Raw></span><Raw>{{/good}}</Raw>
+            <Raw>{{#info}}</Raw><span class="ml-1.5 rounded-full border border-solid border-rule px-2 py-px text-xs font-semibold text-muted"><Raw>{{count}}</Raw></span><Raw>{{/info}}</Raw>
+            <Raw>{{#severity}}</Raw><span class="ml-1.5 text-xs font-semibold uppercase tracking-wide text-muted"><Raw>{{severity}}</Raw></span><Raw>{{/severity}}</Raw>
             <span class="ml-1.5 font-mono text-xs font-normal text-muted"><Raw>{{kind}}</Raw></span>
           </p>
+          <Raw>{{#action}}</Raw>
+          <p class="m-0 mb-2 text-sm leading-normal text-ink"><strong>What to do:</strong> <Raw>{{action}}</Raw></p>
+          <Raw>{{/action}}</Raw>
           <Raw>{{#rows}}</Raw>
           <div class="border-0 border-t border-solid border-rule py-2">
             <div class="font-mono text-xs text-muted">

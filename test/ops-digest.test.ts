@@ -7,7 +7,9 @@ import {
   opsDigestSubject,
   opsKindLabel,
   opsLogsUrl,
+  rankOpsKinds,
   renderOpsDigest,
+  type OpsClassifier,
   type OpsDigestRow,
 } from '../server/utils/ops-digest'
 
@@ -108,5 +110,54 @@ describe('renderOpsDigest', () => {
     expect(withUrl.html).not.toContain('href="https://acme.testhttps')
     const noUrl = renderOpsDigest(kinds, 2, T, { ...opts, appUrl: undefined })
     expect(noUrl.html).not.toContain('/api/thing"')
+  })
+})
+
+describe('severity', () => {
+  const classify: OpsClassifier = (kind, count) =>
+    kind === 'down' || (kind === 'burst' && count >= 3)
+      ? { severity: 'critical', action: 'restart it' }
+      : kind === 'note'
+        ? { severity: 'info' }
+        : { severity: 'warning' }
+
+  it('ranks by severity before count, and lets a burst escalate', () => {
+    const rows = [row('note'), row('note'), row('note'), row('warn_failed'), row('down')]
+    expect(rankOpsKinds(groupOpsRows(rows), classify).map(([k]) => k)).toEqual([
+      'down',
+      'warn_failed',
+      'note',
+    ])
+    const burst = rankOpsKinds(
+      groupOpsRows([row('down'), ...Array(3).fill(row('burst'))]),
+      classify,
+    )
+    expect(opsDigestSubject('Acme', burst, classify)).toBe('[Critical] Acme · Burst ×3 + 1 more')
+  })
+
+  it('tags the subject with the highest tier present', () => {
+    expect(opsDigestSubject('Acme', groupOpsRows([row('note')]), classify)).toBe(
+      '[Info] Acme · Note ×1',
+    )
+    expect(opsDigestSubject('Acme', groupOpsRows([row('x_failed')]), classify)).toBe(
+      '[Warning] Acme · X failed ×1',
+    )
+  })
+
+  it('renders the tier, the action and the kicker', () => {
+    const kinds = rankOpsKinds(groupOpsRows([row('note'), row('down')]), classify)
+    const { html, text } = renderOpsDigest(kinds, 2, T, { appName: 'Acme', now: T, classify })
+    expect(text.startsWith('Acme · Critical\n')).toBe(true)
+    expect(text).toContain('Down (down) ×1 · Critical')
+    expect(text).toContain('What to do: restart it')
+    expect(text).toContain('Note (note) ×1 · Info')
+    expect(html).toContain('restart it')
+    expect(html).toContain('Acme · Critical')
+  })
+
+  it('keeps the unranked wording without a classifier', () => {
+    const { text } = renderOpsDigest(groupOpsRows([row('down')]), 1, T, { appName: 'Acme', now: T })
+    expect(text.startsWith('Acme alert\n')).toBe(true)
+    expect(text).not.toContain('What to do')
   })
 })

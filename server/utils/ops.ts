@@ -20,7 +20,14 @@ import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
 import type { OpsEvent } from '../db/schema'
 
-import { groupOpsRows, opsDigestSubject, renderOpsDigest } from './ops-digest'
+import {
+  groupOpsRows,
+  opsDigestSeverity,
+  opsDigestSubject,
+  rankOpsKinds,
+  renderOpsDigest,
+  type OpsClassifier,
+} from './ops-digest'
 import { logEvent } from './log'
 
 export type OpsDb = ReturnType<typeof drizzle<typeof tables>>
@@ -36,6 +43,13 @@ export const OPS_EVENT_RETENTION_DAYS = 7
 export const OPS_DIGEST_SAMPLE_LIMIT = 200
 
 const DAY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * How long a spool holding only `info` rows waits before it is mailed on its
+ * own. Info rows ride along with any louder digest sooner; alone they make at
+ * most one email a day, so the inbox keeps its volume for things that matter.
+ */
+export const OPS_INFO_HOLD_MS = DAY_MS
 
 export interface OpsEventInput {
   kind: string
@@ -101,6 +115,11 @@ export interface OpsDigestOptions {
   /** The app Worker's name, for the Observability deep link. Omit to skip the link. */
   workerName?: string
   now?: Date
+  /**
+   * Ranks kinds by severity, tags the subject, and lets an info-only spool wait
+   * (OPS_INFO_HOLD_MS). Omit it for the unranked digest.
+   */
+  classify?: OpsClassifier
 }
 
 export interface OpsDigest {
@@ -119,11 +138,12 @@ export interface OpsDigest {
 export function buildOpsDigest(rows: OpsEvent[], options: OpsDigestOptions): OpsDigest | null {
   if (rows.length === 0) return null
   const render = { ...options, now: options.now ?? new Date() }
-  const kinds = groupOpsRows(rows)
+  const grouped = groupOpsRows(rows)
+  const kinds = options.classify ? rankOpsKinds(grouped, options.classify) : grouped
   const oldest = rows.reduce((a, b) => (a.createdAt < b.createdAt ? a : b)).createdAt
 
   return {
-    subject: opsDigestSubject(options.appName, kinds),
+    subject: opsDigestSubject(options.appName, kinds, options.classify),
     ...renderOpsDigest(kinds, rows.length, oldest, render),
     ids: rows.map((r) => r.id),
   }
@@ -139,6 +159,8 @@ export interface DrainResult {
   sent: boolean
   /** Rows deleted by the retention sweep. */
   pruned: number
+  /** True when only info rows were waiting and they are being held (OPS_INFO_HOLD_MS). */
+  held?: boolean
   error?: string
 }
 
@@ -167,6 +189,11 @@ export async function drainOpsEvents(
   let sent = false
   let error: string | undefined
 
+  if (holdInfoOnly(pending, options.classify, now)) {
+    const pruned = await pruneOpsEvents(db, now)
+    return { pending: pending.length, sent, pruned, held: true }
+  }
+
   const digest = buildOpsDigest(pending, { ...options, now })
   if (digest) {
     try {
@@ -189,6 +216,22 @@ export async function drainOpsEvents(
   const pruned = await pruneOpsEvents(db, now)
 
   return { pending: pending.length, sent, pruned, error }
+}
+
+/**
+ * True when every waiting row is `info` and the oldest is younger than
+ * OPS_INFO_HOLD_MS. The rows stay pending, so the first louder event (or the
+ * hold running out) mails them; nothing is dropped.
+ */
+export function holdInfoOnly(
+  pending: OpsEvent[],
+  classify: OpsClassifier | undefined,
+  now: Date,
+): boolean {
+  if (!classify || pending.length === 0) return false
+  if (opsDigestSeverity(groupOpsRows(pending), classify) !== 'info') return false
+  const oldest = Math.min(...pending.map((r) => r.createdAt.getTime()))
+  return now.getTime() - oldest < OPS_INFO_HOLD_MS
 }
 
 /**
