@@ -33,7 +33,8 @@ export const SAMPLES: Record<string, EmailSample> = {
   },
   'ops-digest': {
     ...brand,
-    summary: '9 new events since Oct 4, 20:00 UTC',
+    kicker: 'My App · Critical',
+    summary: '10 new events since Oct 4, 20:00 UTC',
     generated: 'Oct 4, 21:30 UTC',
     logsUrl:
       'https://dash.cloudflare.com/?to=/:account/workers/services/view/my-app/production/observability',
@@ -43,6 +44,8 @@ export const SAMPLES: Record<string, EmailSample> = {
         label: 'Server error',
         count: 7,
         bad: true,
+        severity: 'Critical',
+        action: 'Many requests are failing at once. Open the logs.',
         rows: rows('server_error', 5),
         more: 2,
       },
@@ -51,7 +54,19 @@ export const SAMPLES: Record<string, EmailSample> = {
         label: 'Paddle webhook rejected',
         count: 1,
         warn: true,
+        severity: 'Warning',
+        action: null,
         rows: [{ time: 'Oct 4, 20:05 UTC', path: null, pathUrl: null, detail: 'bad signature' }],
+        more: 0,
+      },
+      {
+        kind: 'export_noted',
+        label: 'Export noted',
+        count: 1,
+        info: true,
+        severity: 'Info',
+        action: null,
+        rows: [{ time: 'Oct 4, 20:07 UTC', path: null, pathUrl: null, detail: 'nightly export' }],
         more: 0,
       },
       {

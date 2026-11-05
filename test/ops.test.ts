@@ -10,10 +10,12 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
+import type { OpsClassifier } from '../server/utils/ops-digest'
 import {
   buildOpsDigest,
   drainOpsEvents,
   OPS_EVENT_RETENTION_DAYS,
+  OPS_INFO_HOLD_MS,
   pruneOpsEvents,
   recentOpsEvents,
   recordOpsEvent,
@@ -153,6 +155,62 @@ describe('buildOpsDigest', () => {
     const bare = buildOpsDigest(rows, { appName: 'My App', now: NOW })!
     expect(bare.text).not.toContain('Logs:')
     expect(bare.html).not.toContain('Open logs')
+  })
+})
+
+describe('drainOpsEvents with a classifier', () => {
+  const classify: OpsClassifier = (kind) =>
+    kind === 'judge_silent'
+      ? { severity: 'critical', action: 'check the routine' }
+      : kind.endsWith('_noted')
+        ? { severity: 'info' }
+        : { severity: 'warning' }
+  const RANKED = { ...OPTIONS, classify }
+
+  it('headlines the most severe kind, not the most repeated one', async () => {
+    await spool('source_failed', 24)
+    await spool('judge_silent', 1)
+    const { sent, mail } = collector()
+    await drainOpsEvents(db, mail, RANKED)
+    expect(sent[0]!.subject).toBe('[Critical] My App · Judge silent ×1 + 24 more')
+    expect(sent[0]!.text).toContain('What to do: check the routine')
+    expect(sent[0]!.text.indexOf('Judge silent')).toBeLessThan(
+      sent[0]!.text.indexOf('Source failed'),
+    )
+  })
+
+  it('holds a spool of only info rows, and keeps them pending', async () => {
+    await spool('map_noted', 2)
+    const { sent, mail } = collector()
+    const result = await drainOpsEvents(db, mail, RANKED)
+    expect(result).toMatchObject({ sent: false, held: true, pending: 2 })
+    expect(sent).toHaveLength(0)
+    expect(await pendingCount()).toBe(2)
+  })
+
+  it('mails held info rows alongside the next louder event', async () => {
+    await spool('map_noted', 2)
+    await spool('source_failed', 1)
+    const { sent, mail } = collector()
+    await drainOpsEvents(db, mail, RANKED)
+    expect(sent[0]!.subject).toBe('[Warning] My App · Source failed ×1 + 2 more')
+    expect(sent[0]!.ids).toHaveLength(3)
+    expect(await pendingCount()).toBe(0)
+  })
+
+  it('mails info rows on their own once the hold runs out', async () => {
+    await spool('map_noted', 1, new Date(NOW.getTime() - OPS_INFO_HOLD_MS))
+    const { sent, mail } = collector()
+    const result = await drainOpsEvents(db, mail, RANKED)
+    expect(result.sent).toBe(true)
+    expect(sent[0]!.subject).toBe('[Info] My App · Map noted ×1')
+  })
+
+  it('never holds without a classifier', async () => {
+    await spool('map_noted', 1)
+    const { sent, mail } = collector()
+    await drainOpsEvents(db, mail, OPTIONS)
+    expect(sent[0]!.subject).toBe('My App alert · Map noted ×1')
   })
 })
 

@@ -44,6 +44,7 @@ import type { ExtensionDb } from '#server/utils/extensions'
 import { registerAccessGate } from '#server/utils/access-gate'
 import { registerEarnedAccess } from '#server/utils/earned-access'
 import { registerEntitlementViewFields } from '#server/utils/entitlement-view-fields'
+import { registerOpsSeverity } from '#server/utils/ops-severity'
 import { PURGE_BATCH_LIMIT } from '#server/utils/purge'
 
 /** One entitlement as the data export shows it. */
@@ -165,6 +166,16 @@ export function registerBillingExtensions(
   options: BillingOptions = {},
   deps: BillingExtensionDeps = {},
 ): void {
+  // Every other billing kind is a warning, the default. A missing webhook
+  // secret is not: every billing event is refused, so customers pay and get
+  // nothing until it is set (Paddle keeps retrying, so nothing is lost yet).
+  registerOpsSeverity({
+    paddle_webhook_unconfigured: {
+      severity: 'critical',
+      action:
+        'Paid customers are not getting access. Set NUXT_PADDLE_WEBHOOK_SECRET on the Worker; Paddle redelivers the refused events on its own.',
+    },
+  })
   if (options.passDays !== undefined) setPassDays(options.passDays)
   if (options.notify !== undefined) setBillingNotify(options.notify)
   if (options.stackAtBilledAt !== undefined) setStackAtBilled(options.stackAtBilledAt)

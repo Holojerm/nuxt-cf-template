@@ -58,6 +58,15 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   cannot grow without bound. Rows are marked notified only after the send resolves, so a mail
   hiccup retries instead of losing the alert. Always `await` the record call:
   a 5xx is exactly the path that ends the request before a floated promise runs.
+- **Severity.** Every kind has a tier, from `server/utils/ops-severity.ts`: `critical` (the app
+  stopped doing its job), `warning` (one part degraded, and the default for any kind nobody
+  registered), or `info` (the system handled it). Core knows `server_error` only, escalated to
+  critical at `SERVER_ERROR_CRITICAL_COUNT` in one digest. A layer or the app registers its own
+  kinds with `registerOpsSeverity({ kind: { severity, action? } })` from a Nitro plugin, next to
+  the `recordOpsEvent` call (billing registers `paddle_webhook_unconfigured`). The digest leads
+  with the most severe kind, the subject starts `[Critical]`, `[Warning]` or `[Info]` so a mail
+  filter can split them, critical kinds carry their "What to do" line, and a spool of only info
+  rows waits up to `OPS_INFO_HOLD_MS` (a day) unless something louder goes out first.
   The `ops-triage` routine reads the same spool through `GET /api/ops/events`
   (bearer `NUXT_OPS_TOKEN`, 404 when unset). That route also reports the build sha
   and pending migrations, so the routine can tell when a merge never deployed.

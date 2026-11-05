@@ -1,8 +1,12 @@
-{{! html-only: bad, warn, good, pathUrl }}
+{{! html-only: bad, warn, good, info, pathUrl }}
+{{kicker}}
 {{summary}}.
 
 {{#kinds}}
-{{label}} ({{kind}}) ×{{count}}
+{{label}} ({{kind}}) ×{{count}}{{#severity}} · {{severity}}{{/severity}}
+{{#action}}
+  What to do: {{action}}
+{{/action}}
 {{#rows}}
   • {{time}}{{#path}}  {{path}}{{/path}}
 {{#detail}}
