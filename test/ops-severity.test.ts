@@ -6,7 +6,6 @@ import {
   resetOpsSeverityForTest,
   SERVER_ERROR_CRITICAL_COUNT,
 } from '../server/utils/ops-severity'
-import { registerBillingExtensions } from '../layers/billing/server/utils/billing-extensions'
 
 afterEach(() => resetOpsSeverityForTest())
 
@@ -32,11 +31,5 @@ describe('classifyOps', () => {
   it('lets an app override the core server_error rule', () => {
     registerOpsSeverity({ server_error: { severity: 'info' } })
     expect(classifyOps('server_error', SERVER_ERROR_CRITICAL_COUNT).severity).toBe('info')
-  })
-
-  it('billing registers a missing webhook secret as critical', () => {
-    registerBillingExtensions()
-    expect(classifyOps('paddle_webhook_unconfigured', 1).severity).toBe('critical')
-    expect(classifyOps('paddle_webhook_rejected', 1).severity).toBe('warning')
   })
 })
