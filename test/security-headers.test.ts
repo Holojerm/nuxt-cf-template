@@ -21,7 +21,7 @@ const PADDLE_HOSTS = [
 ]
 
 // What production serves; dev differs by one frame-src source.
-const csp = contentSecurityPolicy(false)
+const csp = contentSecurityPolicy(false, { billing: HAS_BILLING })
 const directive = (name: string): string =>
   new RegExp(`(?:^|; )${name} ([^;]+)`).exec(csp)?.[1] ?? ''
 
@@ -96,12 +96,17 @@ describe('the directives that make the policy worth having', () => {
   })
 
   it('differs between dev and production by the DevTools frame source only', () => {
-    expect(contentSecurityPolicy(true).replace(" 'self'; worker-src", '; worker-src')).toBe(csp)
+    expect(
+      contentSecurityPolicy(true, { billing: HAS_BILLING }).replace(
+        " 'self'; worker-src",
+        '; worker-src',
+      ),
+    ).toBe(csp)
   })
 })
 
 describe('the other security headers', () => {
-  const headers = securityHeaders(false)
+  const headers = securityHeaders(false, { billing: HAS_BILLING })
 
   it('sets HSTS without preload (a registry submission is the owner’s call)', () => {
     expect(headers['Strict-Transport-Security']).toBe('max-age=31536000; includeSubDomains')

@@ -105,7 +105,7 @@ environment are `layers/billing/test/e2e/`; `playwright.config.ts` finds them th
 layer gone the `e2e-billing` project, the webhook secret and price ids on the dev server, and the
 webhook warm-up are gone too, and nothing needs deleting. The a11y and CSP specs follow the layer
 the same way: no `/pricing` scan, and the CSP spec instead asserts that no Paddle host is left in
-the policy, which is what step 9's `nuxt.config.ts` edit is checked against.
+the policy, which the `billing` flag `nuxt.config.ts` passes to `securityHeaders()` guarantees.
 
 **9. Strip the config.** The `runtimeConfig` declarations went with the layer. Remove from
 `.env.example` and `wrangler.toml` (both `[vars]` and `[env.preview.vars]`), and any
@@ -120,8 +120,9 @@ NUXT_PUBLIC_PADDLE_PRICE_MONTHLY
 NUXT_PUBLIC_PADDLE_PRICE_PASS
 ```
 
-Also remove `https://*.paddle.com` from the CSP in `shared/security-headers.ts` — `test/security-headers.test.ts`
-asserts the header, so a stale entry there is a silently over-permissive policy.
+The CSP needs no edit: `nuxt.config.ts` builds it with `billing` set from whether
+`layers/billing/` exists, so the Paddle origins leave with the layer, and
+`test/security-headers.test.ts` asserts that no Paddle host is left.
 
 **10. Fix the legal copy.** [`app/pages/privacy.vue`](app/pages/privacy.vue) and
 [`app/pages/terms.vue`](app/pages/terms.vue) name Paddle as the merchant of record and

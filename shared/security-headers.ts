@@ -69,123 +69,134 @@ const CF_WEB_ANALYTICS = {
 // Everything else Vite dev was assumed to need turned out to be unnecessary —
 // see connect-src.
 
-const cspSources = (isDev: boolean): Record<string, string[]> => ({
-  'default-src': ["'self'"],
+/** Which optional layers shipped. Billing alone adds origins: without it the policy names no Paddle host. */
+export type PolicyLayers = { billing: boolean }
 
-  // 'unsafe-inline' is load-bearing, and not something to quietly accept.
-  //
-  // Nuxt SSR emits two executable inline scripts on every page. The payload is
-  // NOT one of them — it ships as `<script type="application/json">`, which the
-  // browser never executes and CSP therefore never blocks. The two real ones are
-  // @nuxtjs/color-mode's pre-paint FOUC guard (NuxtUI depends on it; removing it
-  // makes every page flash the wrong theme) and Nuxt's runtime-config
-  // serialization.
-  //
-  // Neither can be nonced: `routeRules` headers are static strings, and even
-  // behind a middleware Nuxt has no API for stamping a nonce onto framework
-  // injected script tags — the color-mode guard would stay unnonced and dark
-  // mode would break instead.
-  //
-  // Neither can be safely hashed either, and this is the trap worth naming: the
-  // color-mode guard's bytes change when that dependency updates, and the config
-  // script's bytes contain `appName` and `appUrl`, so it changes on `bun run
-  // rename` and on any [vars] edit. A hash allowlist would ship green through
-  // lint, typecheck and this repo's own tests, then white-screen production
-  // after a routine `bun update`.
-  //
-  // What survives: script-src still refuses every *external* origin except
-  // Paddle's CDN, Turnstile's and the Web Analytics beacon, so an injected
-  // `<script src="//evil.tld/x.js">` does not load. Paired with object-src/
-  // base-uri below, the classic bypasses stay shut. test/security-headers.test.ts pins that list.
-  'script-src': [
-    "'self'",
-    "'unsafe-inline'",
-    ...PADDLE.cdn,
-    ...TURNSTILE,
-    ...CF_WEB_ANALYTICS.script,
-  ],
+const cspSources = (isDev: boolean, { billing }: PolicyLayers): Record<string, string[]> => {
+  const paddle = billing ? PADDLE : { cdn: [], checkout: [], api: [] }
+  return {
+    'default-src': ["'self'"],
 
-  // Vue SSR emits inline style attributes and Vite dev injects <style> blocks;
-  // there is no build flag that stops either. Paddle's overlay pulls
-  // assets/css/paddle.css from its CDN (verified: that file has no @font-face
-  // and no url(), so it drags nothing else in with it).
-  'style-src': ["'self'", "'unsafe-inline'", ...PADDLE.cdn],
+    // 'unsafe-inline' is load-bearing, and not something to quietly accept.
+    //
+    // Nuxt SSR emits two executable inline scripts on every page. The payload is
+    // NOT one of them — it ships as `<script type="application/json">`, which the
+    // browser never executes and CSP therefore never blocks. The two real ones are
+    // @nuxtjs/color-mode's pre-paint FOUC guard (NuxtUI depends on it; removing it
+    // makes every page flash the wrong theme) and Nuxt's runtime-config
+    // serialization.
+    //
+    // Neither can be nonced: `routeRules` headers are static strings, and even
+    // behind a middleware Nuxt has no API for stamping a nonce onto framework
+    // injected script tags — the color-mode guard would stay unnonced and dark
+    // mode would break instead.
+    //
+    // Neither can be safely hashed either, and this is the trap worth naming: the
+    // color-mode guard's bytes change when that dependency updates, and the config
+    // script's bytes contain `appName` and `appUrl`, so it changes on `bun run
+    // rename` and on any [vars] edit. A hash allowlist would ship green through
+    // lint, typecheck and this repo's own tests, then white-screen production
+    // after a routine `bun update`.
+    //
+    // What survives: script-src still refuses every *external* origin except
+    // Paddle's CDN, Turnstile's and the Web Analytics beacon, so an injected
+    // `<script src="//evil.tld/x.js">` does not load. Paired with object-src/
+    // base-uri below, the classic bypasses stay shut. test/security-headers.test.ts pins that list.
+    'script-src': [
+      "'self'",
+      "'unsafe-inline'",
+      ...paddle.cdn,
+      ...TURNSTILE,
+      ...CF_WEB_ANALYTICS.script,
+    ],
 
-  // data: because the @nuxt/icon client bundle inlines icons as
-  // `mask-image: url("data:image/svg+xml,…")`, which is img-src, not style-src.
-  // The two avatar hosts are where `users.avatar_url` comes from — GitHub's
-  // profile CDN and Google's, which shards across *.googleusercontent.com.
-  // Paddle's CDN serves the overlay's images plus a health-check.gif.
-  'img-src': [
-    "'self'",
-    'data:',
-    ...PADDLE.cdn,
-    'https://avatars.githubusercontent.com',
-    'https://*.googleusercontent.com',
-  ],
+    // Vue SSR emits inline style attributes and Vite dev injects <style> blocks;
+    // there is no build flag that stops either. Paddle's overlay pulls
+    // assets/css/paddle.css from its CDN (verified: that file has no @font-face
+    // and no url(), so it drags nothing else in with it).
+    'style-src': ["'self'", "'unsafe-inline'", ...paddle.cdn],
 
-  // @nuxt/fonts downloads Inter / Instrument Serif / JetBrains Mono at build
-  // time and serves them from /_fonts — there is deliberately no Google Fonts
-  // origin here, and if one ever appears it means the build stopped self-hosting.
-  'font-src': ["'self'"],
+    // data: because the @nuxt/icon client bundle inlines icons as
+    // `mask-image: url("data:image/svg+xml,…")`, which is img-src, not style-src.
+    // The two avatar hosts are where `users.avatar_url` comes from — GitHub's
+    // profile CDN and Google's, which shards across *.googleusercontent.com.
+    // Paddle's CDN serves the overlay's images plus a health-check.gif.
+    'img-src': [
+      "'self'",
+      'data:',
+      ...paddle.cdn,
+      'https://avatars.githubusercontent.com',
+      'https://*.googleusercontent.com',
+    ],
 
-  // PostHog needs no host of its own: the SDK is pinned to `api_host: '/ingest'`
-  // and server/routes/ingest/[...path].ts reverse-proxies events, decide, replay
-  // snapshots and the SDK's own assets. Adding a *.posthog.com origin here would
-  // defeat that proxy (its point is to survive ad blockers) — so if you find
-  // yourself reaching for one, fix the proxy instead.
-  //
-  // No `ws:` for Vite's HMR socket, which is the obvious thing to add here and
-  // measurably unnecessary: CSP3 has `'self'` match ws/wss on the document's own
-  // host, and dropping it changed nothing in test/csp. It is also not a cheap
-  // addition — `ws:` is a bare scheme source, so it would permit a socket to
-  // *any* host, which is a strange thing to hand a dev server.
-  'connect-src': ["'self'", ...PADDLE.api, ...CF_WEB_ANALYTICS.connect],
+    // @nuxt/fonts downloads Inter / Instrument Serif / JetBrains Mono at build
+    // time and serves them from /_fonts — there is deliberately no Google Fonts
+    // origin here, and if one ever appears it means the build stopped self-hosting.
+    'font-src': ["'self'"],
 
-  // The overlay checkout is an iframe into this page, which is frame-src.
-  // X-Frame-Options / frame-ancestors govern the opposite direction and do not
-  // conflict with it — a common reason people delete one of the two.
-  //
-  // 'self' in dev is the one genuine dev/prod difference, and it is here to stop
-  // this policy from getting itself deleted. Nuxt DevTools mounts its panel in a
-  // same-origin iframe (/__nuxt_devtools__/client/), and frame-src does NOT fall
-  // back to default-src's 'self' — a same-origin frame is refused unless listed.
-  // Worse, a refused iframe still fires `load`, so the panel renders *blank*: it
-  // reads as a broken DevTools, not as a CSP decision, and the natural next move
-  // is to rip the header out. DevTools does not exist in a production build, so
-  // the shipped policy keeps frame-src to Paddle and Turnstile alone.
-  'frame-src': [...PADDLE.cdn, ...PADDLE.checkout, ...TURNSTILE, ...(isDev ? ["'self'"] : [])],
+    // PostHog needs no host of its own: the SDK is pinned to `api_host: '/ingest'`
+    // and server/routes/ingest/[...path].ts reverse-proxies events, decide, replay
+    // snapshots and the SDK's own assets. Adding a *.posthog.com origin here would
+    // defeat that proxy (its point is to survive ad blockers) — so if you find
+    // yourself reaching for one, fix the proxy instead.
+    //
+    // No `ws:` for Vite's HMR socket, which is the obvious thing to add here and
+    // measurably unnecessary: CSP3 has `'self'` match ws/wss on the document's own
+    // host, and dropping it changed nothing in test/csp. It is also not a cheap
+    // addition — `ws:` is a bare scheme source, so it would permit a socket to
+    // *any* host, which is a strange thing to hand a dev server.
+    'connect-src': ["'self'", ...paddle.api, ...CF_WEB_ANALYTICS.connect],
 
-  // PostHog session replay runs rrweb's packer in a worker built from a Blob
-  // (`new Worker(URL.createObjectURL(...))` in posthog-js/dist/recorder.js), so
-  // blob: here is the difference between replay working and replay being
-  // silently absent from your dashboard.
-  'worker-src': ["'self'", 'blob:'],
-  // Same blob worker, for Safari < 15.4, which never shipped worker-src and
-  // falls back to child-src. Not redundant with frame-src: frame-src is set
-  // explicitly above and wins for frames in every browser that has it.
-  'child-src': ["'self'", 'blob:'],
+    // The overlay checkout is an iframe into this page, which is frame-src.
+    // X-Frame-Options / frame-ancestors govern the opposite direction and do not
+    // conflict with it — a common reason people delete one of the two.
+    //
+    // 'self' in dev is the one genuine dev/prod difference, and it is here to stop
+    // this policy from getting itself deleted. Nuxt DevTools mounts its panel in a
+    // same-origin iframe (/__nuxt_devtools__/client/), and frame-src does NOT fall
+    // back to default-src's 'self' — a same-origin frame is refused unless listed.
+    // Worse, a refused iframe still fires `load`, so the panel renders *blank*: it
+    // reads as a broken DevTools, not as a CSP decision, and the natural next move
+    // is to rip the header out. DevTools does not exist in a production build, so
+    // the shipped policy keeps frame-src to Paddle and Turnstile alone.
+    'frame-src': [...paddle.cdn, ...paddle.checkout, ...TURNSTILE, ...(isDev ? ["'self'"] : [])],
 
-  // No <object>/<embed> anywhere in this app, and leaving it open is one of the
-  // two standard ways to bypass a script-src that allows 'unsafe-inline'.
-  'object-src': ["'none'"],
-  // The other one: without this, injected markup can repoint every relative
-  // script URL at an attacker's origin.
-  'base-uri': ["'self'"],
-  // Sign-in is a top-level navigation to /api/auth/<provider> (which then
-  // redirects out), not a cross-origin form post — so nothing legitimate here
-  // submits off-origin.
-  'form-action': ["'self'"],
-  'frame-ancestors': ["'none'"],
-})
+    // PostHog session replay runs rrweb's packer in a worker built from a Blob
+    // (`new Worker(URL.createObjectURL(...))` in posthog-js/dist/recorder.js), so
+    // blob: here is the difference between replay working and replay being
+    // silently absent from your dashboard.
+    'worker-src': ["'self'", 'blob:'],
+    // Same blob worker, for Safari < 15.4, which never shipped worker-src and
+    // falls back to child-src. Not redundant with frame-src: frame-src is set
+    // explicitly above and wins for frames in every browser that has it.
+    'child-src': ["'self'", 'blob:'],
 
-export const contentSecurityPolicy = (isDev: boolean): string =>
-  Object.entries(cspSources(isDev))
+    // No <object>/<embed> anywhere in this app, and leaving it open is one of the
+    // two standard ways to bypass a script-src that allows 'unsafe-inline'.
+    'object-src': ["'none'"],
+    // The other one: without this, injected markup can repoint every relative
+    // script URL at an attacker's origin.
+    'base-uri': ["'self'"],
+    // Sign-in is a top-level navigation to /api/auth/<provider> (which then
+    // redirects out), not a cross-origin form post — so nothing legitimate here
+    // submits off-origin.
+    'form-action': ["'self'"],
+    'frame-ancestors': ["'none'"],
+  }
+}
+
+// `layers` defaults to the template's own shape. nuxt.config.ts passes what is actually on disk,
+// so a fork that removes layers/billing loses the Paddle origins with it — no hand edit to forget.
+export const contentSecurityPolicy = (
+  isDev: boolean,
+  layers: PolicyLayers = { billing: true },
+): string =>
+  Object.entries(cspSources(isDev, layers))
     .map(([directive, sources]) => `${directive} ${sources.join(' ')}`)
     .join('; ')
 
-export const securityHeaders = (isDev: boolean) => ({
-  'Content-Security-Policy': contentSecurityPolicy(isDev),
+export const securityHeaders = (isDev: boolean, layers: PolicyLayers = { billing: true }) => ({
+  'Content-Security-Policy': contentSecurityPolicy(isDev, layers),
   // Two years is the preload-list minimum, but `preload` itself is deliberately
   // absent: it is a submission to a browser-vendor registry that ships in binary
   // releases and takes months to reverse. That is the app owner's call to make

@@ -1,5 +1,6 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 import { execSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 
 import { useNitro, useNuxt } from '@nuxt/kit'
 
@@ -560,7 +561,11 @@ export default defineNuxtConfig({
   // pattern would drop. It also means a route added later is covered by
   // default rather than by remembering to come back here.
   routeRules: {
-    '/**': { headers: securityHeaders(process.env.NODE_ENV !== 'production') },
+    '/**': {
+      headers: securityHeaders(process.env.NODE_ENV !== 'production', {
+        billing: existsSync(new URL('./layers/billing/nuxt.config.ts', import.meta.url)),
+      }),
+    },
   },
 
   // Nitro — Cloudflare Workers preset for production build

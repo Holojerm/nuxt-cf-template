@@ -246,5 +246,7 @@ test.describe('the policy still permits what the vendors need', () => {
 // the server really sends that policy.
 test('the policy on the wire is the one the config defines', async ({ page }) => {
   const response = await page.goto('/')
-  expect(response!.headers()['content-security-policy']).toBe(contentSecurityPolicy(true))
+  expect(response!.headers()['content-security-policy']).toBe(
+    contentSecurityPolicy(true, { billing: HAS_BILLING }),
+  )
 })
