@@ -25,22 +25,17 @@
 #
 # Three jobs run side by side, and each is a required check in the
 # "main: merge when green" ruleset, which is what lets `gh pr merge --auto`
-# merge a PR unattended: `ci` (the same `bun run ci` Workers Builds runs as its
-# deploy gate), `forkless` (the slow full `ci:forkless`) and `browser-suites`.
+# merge a PR unattended: `ci` (the full `bun run ci`; the template has no Worker,
+# so forks get this gate from Workers Builds instead), `forkless` (the slow full
+# `ci:forkless`) and `browser-suites`.
 # Renaming a job means renaming its required check in the ruleset too, or every
 # PR stays BLOCKED.
 
 name: Browser suites
 
-# `push` is limited to main rather than '**' because a pull-request branch
-# already gets a `pull_request` run. Matching on both fired this workflow twice
-# for every push to an open PR, under two different concurrency groups
-# (refs/heads/… and refs/pull/N/merge), so neither cancelled the other — two
-# full browser suites per push, and the stale one ran to completion.
+# Pull requests only: branches must be up to date before merging, so a run on
+# main after the merge would repeat the check that just passed.
 on:
-  push:
-    branches:
-      - main
   pull_request:
 
 # A second push to the same branch makes the first run irrelevant.

@@ -155,25 +155,30 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
 
 1. Select (or create) the Worker — its name **must match** `name` in `wrangler.toml`.
 2. Go to **Settings → Build → Connect** and pick this repository.
-3. Configure the build:
-   - **Build command**: `bun run ci` (lint → design:check → brand:check → seo:check → typecheck → test → build)
-     The browser suites are deliberately absent — Workers Builds cannot launch Chromium, so
+3. Configure two build triggers:
+   - **Production branch `main`**:
+     - **Build command**: `bun run typecheck && bun run build`
+     - **Deploy command**: `bun run deploy:ci`. This applies pending D1 migrations to
+       production, then deploys. If a migration fails, the deploy doesn't run and production
+       stays on the previous build.
+   - **Non-production branches** (`*`, excluding `main` and `ops-journal`):
+     - **Build command**: `bun run ci` (the PR gate: format → lint → design:check → brand:check → seo:check → typecheck → test → build)
+     - **Deploy command**: `echo "Preview uploads disabled: branch builds would run with production bindings"`,
+       so nothing is uploaded.
+   - The browser suites are deliberately absent from both — Workers Builds cannot launch Chromium, so
      `.github/workflows/browser-suites.yml` runs them instead. See AGENTS.md › Gotchas.
-   - **Deploy command**: `bun run deploy:ci`. This applies pending D1 migrations to
-     production, then deploys. If a migration fails, the deploy doesn't run and production
-     stays on the previous build.
    - **API token**: the token Workers Builds generates has no D1 permission. Under **My
      Profile → API Tokens**, edit that token and add **Account → D1 → Edit**. Without it,
      every production deploy fails at the migrate step.
-   - **Preview deploy command**: `bunx wrangler --cwd .output versions upload`
 4. Under **Build Variables and Secrets**, add `NUXT_SESSION_PASSWORD` (mark it secret).
-5. Enable **non-production branch builds** (Settings → Build → Branch control) to get build checks and preview URLs on every PR.
-6. To point those preview builds at the preview resources rather than production's, add
-   the build variable `CLOUDFLARE_ENV=preview` **on the non-production branch trigger
-   only**, and set up [the preview environment](#preview-environment) below. Until you do,
-   every preview URL runs branch code against your live database.
+5. Enable **non-production branch builds** (Settings → Build → Branch control) so every PR branch gets the `bun run ci` check.
+6. If you re-enable branch uploads for preview URLs, point those builds at the preview
+   resources rather than production's: add the build variable `CLOUDFLARE_ENV=preview`
+   **on the non-production branch trigger only**, and set up
+   [the preview environment](#preview-environment) below. Otherwise every preview URL runs
+   branch code against your live database.
 
-Every push to `main` now lints, typechecks, tests, builds, and deploys. Pushes to other branches run the same checks and post a preview URL as a PR comment.
+Pushes to `main` typecheck, build and deploy. Pushes to other branches run `bun run ci` and deploy nothing. The required checks are `browser-suites` and `Workers Builds: <worker>`, and the ruleset requires branches to be up to date before merging, so nothing re-runs after a merge.
 
 **Node.js version.** The build shells out to the `nuxt` bin, which runs under Node, and
 `@nuxt/content` needs Node ≥ 22.13 for the built-in `node:sqlite` it uses to parse `content/`
@@ -232,7 +237,7 @@ bun run brand:generate # Rebuild favicon, app icon, and og.png from the brand ma
 bun run brand:check   # Fail if those files no longer match the mark (part of ci)
 bun run fleet:check   # Fail if fleet.json no longer matches wrangler.toml (part of ci)
 bun run crons:check   # Fail if [triggers] crons and nitro.scheduledTasks disagree (part of ci)
-bun run ci            # Format (writes) + lint + design/brand/seo/fleet/crons gates + typecheck + test + build — Workers Builds runs this
+bun run ci            # Format (writes) + lint + design/brand/seo/fleet/crons gates + typecheck + test + build — Workers Builds runs this on non-production branches
 bun run ci:fast       # Cheap gates + typecheck + tests touched since origin/main — for iterating
 bun run ci:browser    # playwright:install + test:a11y (a11y + CSP + E2E) — GitHub Actions runs this,
                       # because Workers Builds has no Chromium libraries. See AGENTS.md › Gotchas.
