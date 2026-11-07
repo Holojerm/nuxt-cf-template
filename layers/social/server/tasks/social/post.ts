@@ -4,7 +4,7 @@
 // next to whatever enqueues. With no Buffer key this returns before touching
 // the database, so an app that never configures it pays nothing.
 //
-// Imports are explicit for the reason server/tasks/ops/alert.ts spells out.
+// Imports are explicit for the reason server/tasks/purge-expired-tokens.ts spells out.
 
 import { db } from '@nuxthub/db'
 
@@ -27,7 +27,7 @@ export default defineTask({
       config,
       publisher: createBufferPublisher(config.apiKey),
     })
-    // A failed or maybe-sent post needs a person, so it goes to the ops digest.
+    // A failed or maybe-sent post needs a person, so it goes to the ops spool.
     for (const problem of outcome.problems) {
       await recordOpsEvent(db, {
         kind: `social_${problem.status}`,

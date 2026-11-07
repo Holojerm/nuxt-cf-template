@@ -25,9 +25,6 @@
 // escaping would print `&amp;` into someone's plain-text inbox. So it renders
 // with escaping off.
 //
-// This file is imported by ops-digest.ts as well as the transactional emails.
-// It is deliberately the only piece they share: forks that remove transactional
-// email (TEARDOWN.md) keep their alerts.
 
 import Mustache from 'mustache'
 

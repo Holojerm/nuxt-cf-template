@@ -18,7 +18,7 @@
 //   1. The set of cron expressions in wrangler.toml equals the set of keys in
 //      nitro.scheduledTasks. Both directions.
 //   2. Every task name in that map has a file under server/tasks/ (the app's
-//      or a layer's) — Nitro resolves `ops:alert` to server/tasks/ops/alert.ts.
+//      or a layer's) — Nitro resolves `seo:indexnow` to server/tasks/seo/indexnow.ts.
 //   3. If any task is scheduled, `nitro.experimental.tasks` is on, or the
 //      preset's scheduled() handler never calls runCronTasks().
 //
@@ -76,7 +76,13 @@ const configSource = readFileSync(join(ROOT, 'nuxt.config.ts'), 'utf8')
 
 /** Strip comments so an example in a doc block cannot trip a rule. */
 function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  // One alternation, so a `/*` inside a string ('https://*.host', '/**') is
+  // consumed as part of that string instead of opening a comment that runs on
+  // to the next `*/` — which used to be a cron key like '*/30 * * * *'.
+  return source.replace(
+    /('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`)|\/\*[\s\S]*?\*\/|\/\/.*$/gm,
+    (_match, literal?: string) => literal ?? '',
+  )
 }
 
 /**

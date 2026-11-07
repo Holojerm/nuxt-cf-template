@@ -138,9 +138,8 @@ and the welcome mail.
 
 The same applies to tearing out *all* transactional email: delete the template files you no
 longer send and rebuild. **Keep** `server/utils/render-email.ts`, `emails/components/`,
-`emails/theme.generated.css`, `server/emails/generated.ts` and `emails/templates/ops-digest.*` — the
-ops alert digest ([`server/utils/ops-digest.ts`](server/utils/ops-digest.ts)) renders through
-them, and it imports nothing else from the email stack.
+`emails/theme.generated.css`, `server/emails/generated.ts` and the
+remaining templates you still send.
 
 ---
 

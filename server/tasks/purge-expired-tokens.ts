@@ -49,6 +49,7 @@ import { db } from '@nuxthub/db'
 import { z } from 'zod'
 
 import { getPurgeContributors } from '../utils/extensions'
+import { pruneOpsEvents } from '../utils/ops'
 import { purgeExpiredTokens, PURGE_BATCH_LIMIT, PURGE_GRACE_SECONDS } from '../utils/purge'
 import { logEvent } from '../utils/log'
 
@@ -65,7 +66,7 @@ export default defineTask({
   meta: {
     name: 'purge-expired-tokens',
     description:
-      'Delete spent and expired magic-link tokens, MCP connect codes and applied Paddle event ids',
+      'Delete spent and expired magic-link tokens, MCP connect codes, applied Paddle event ids and week-old ops events',
   },
   async run({ payload }) {
     // Never throw out of here on bad input: a cron task that errors is retried
@@ -89,14 +90,18 @@ export default defineTask({
     const sweeps: Array<readonly [string, { count: number; truncated: boolean }]> = []
     for (const c of getPurgeContributors()) sweeps.push([c.key, await c.run(db, options)])
     const counts = Object.fromEntries(sweeps.map(([key, sweep]) => [key, sweep.count]))
+    // The ops spool is age-pruned here rather than on its own cron: apps only
+    // spool now, and the fleet dashboard reads the last 24 h of it.
+    const opsPruned = await pruneOpsEvents(db)
 
     logEvent('info', 'purge_expired_tokens', {
       ...result,
       ...counts,
+      opsPruned,
       truncated: result.truncated || sweeps.some(([, sweep]) => sweep.truncated),
       durationMs: Date.now() - started,
     })
 
-    return { result: { ...result, ...counts } }
+    return { result: { ...result, ...counts, opsPruned } }
   },
 })
