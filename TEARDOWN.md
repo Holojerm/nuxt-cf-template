@@ -105,7 +105,7 @@ environment are `layers/billing/test/e2e/`; `playwright.config.ts` finds them th
 layer gone the `e2e-billing` project, the webhook secret and price ids on the dev server, and the
 webhook warm-up are gone too, and nothing needs deleting. The a11y and CSP specs follow the layer
 the same way: no `/pricing` scan, and the CSP spec instead asserts that no Paddle host is left in
-the policy, which is what step 9's `nuxt.config.ts` edit is checked against.
+the policy, which the `billing` flag `nuxt.config.ts` passes to `securityHeaders()` guarantees.
 
 **9. Strip the config.** The `runtimeConfig` declarations went with the layer. Remove from
 `.env.example` and `wrangler.toml` (both `[vars]` and `[env.preview.vars]`), and any
@@ -120,8 +120,9 @@ NUXT_PUBLIC_PADDLE_PRICE_MONTHLY
 NUXT_PUBLIC_PADDLE_PRICE_PASS
 ```
 
-Also remove `https://*.paddle.com` from the CSP in `nuxt.config.ts` — `test/csp/csp.spec.ts`
-asserts the header, so a stale entry there is a silently over-permissive policy.
+The CSP needs no edit: `nuxt.config.ts` builds it with `billing` set from whether
+`layers/billing/` exists, so the Paddle origins leave with the layer, and
+`test/security-headers.test.ts` asserts that no Paddle host is left.
 
 **10. Fix the legal copy.** [`app/pages/privacy.vue`](app/pages/privacy.vue) and
 [`app/pages/terms.vue`](app/pages/terms.vue) name Paddle as the merchant of record and
@@ -181,8 +182,8 @@ and does not care who wrote it:
 5. **Re-point the deterministic refs** in `layers/billing/server/utils/paddle-refs.ts`. They are how a
    grant is idempotent without a ledger table; the derivation is yours to change, the
    determinism is not.
-6. **Update the CSP** in `nuxt.config.ts`: `js.stripe.com` in `script-src` and
-   `frame-src`, Paddle out. `test/csp/csp.spec.ts` will tell you if you missed it.
+6. **Update the CSP** in `shared/security-headers.ts`: `js.stripe.com` in `script-src` and
+   `frame-src`, Paddle out. `test/security-headers.test.ts` will tell you if you missed it.
 7. **You are now the merchant of record.** Paddle handled global VAT and sales tax;
    Stripe does not unless you add Stripe Tax, and you take on the registration and
    remittance obligations either way. This is a business decision, not a code one —
