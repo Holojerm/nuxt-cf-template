@@ -218,7 +218,7 @@ Each of these has a full contract in its own doc — this is the one-line versio
 - **`dev`** — integration branch (optional for larger features)
 - **Feature branches**: `feat/workout-builder`, `fix/auth-redirect`, `chore/update-deps`
 - **Commit format**: `feat: add workout builder`, `fix: correct auth redirect`, `chore: update deps`
-- **PRs require**: the `ci`, `forkless` and `browser-suites` jobs in `.github/workflows/browser-suites.yml`, enforced by the "main: merge when green" ruleset. Open the PR, queue it with `gh pr comment <n> --body "@mergifyio queue"`, and stop; Mergify merges it once its checks pass on top of main. Never arm `gh pr merge --auto` or run `gh pr update-branch`: a merge outside the queue resets every speculative check in it
+- **PRs require**: the `ci`, `forkless` and `browser-suites` jobs in `.github/workflows/browser-suites.yml`, enforced by the "main: merge when green" ruleset. Open the PR and stop: Mergify queues it once its own checks pass (again after any push) and merges it once they pass on top of main. Open it as a draft to hold it. Never arm `gh pr merge --auto` or run `gh pr update-branch`: a merge outside the queue resets every speculative check in it
 
 ---
 

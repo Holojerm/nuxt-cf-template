@@ -1,5 +1,6 @@
-# Merge queue. Queue a PR by commenting "@mergifyio queue"; never arm GitHub auto-merge,
-# because a merge outside the queue invalidates every speculative check in it.
+# Merge queue. PRs queue themselves (see merge_protections_settings); "@mergifyio queue"
+# queues one by hand. Never arm GitHub auto-merge, because a merge outside the queue
+# invalidates every speculative check in it.
 #
 # Mergify batches up to three queued PRs into one draft PR (waiting up to 30 seconds to
 # fill a batch) and tests up to three batches at once, each on top of main plus every
@@ -14,6 +15,15 @@
 # bypass actor: Mergify skips that rule, every other merge still has to be up to date.
 merge_queue:
   max_parallel_checks: 3
+
+# Auto-queue: a matching PR enters the queue once it meets queue_conditions, and again
+# after a push, which drops it from the queue. A draft never matches, so open as a draft
+# to hold. Dependabot and ops-triage PRs are left out: their routines queue them by
+# comment only after checks the queue cannot make (minor/patch only, diff fits the row).
+merge_protections_settings:
+  auto_merge_conditions:
+    - author = Holojerm
+    - -title ~= ^ops-triage:
 
 queue_rules:
   - name: default
