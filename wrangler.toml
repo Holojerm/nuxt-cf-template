@@ -149,6 +149,18 @@ dead_letter_queue = "my-app-email-dlq"
 enabled = true
 head_sampling_rate = 1
 
+# Automatic tracing: a span for every fetch, D1, KV, R2 and Queue call, in
+# requests and cron runs alike, with no SDK or code change. Logs say a cron
+# failed; a trace says which call inside it was slow or threw. OTel-shaped, so
+# a dashboard OTLP destination can export it later without touching code.
+# Spans record full URLs, query strings included, as invocation logs already
+# do. From 2026-12-01 stored traces count toward Observability billing: a fork
+# that outgrows "low traffic" lowers this rate and records why in its
+# divergence doc.
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+
 # ─── Scheduled tasks ─────────────────────────────────────────────────────────
 # Every expression here must appear VERBATIM as a key in SCHEDULED_TASKS in
 # nuxt.config.ts. That map is what turns a trigger into a task, and the join
