@@ -17,6 +17,8 @@
 import {
   DAY_MS,
   expect,
+  expectAccess,
+  expectUnlocked,
   expectWebhookAccepted,
   subscriptionEvent,
   test,
@@ -36,19 +38,21 @@ test.describe('buy → access', () => {
     const response = await sendPaddleEvent(transactionCompletedEvent({ userId, transactionId }))
     await expectWebhookAccepted(response)
 
-    await page.goto('/dashboard')
-    await expect(page).toHaveURL(/\/dashboard$/)
-    await expect(page.getByRole('heading', { name: /Welcome back/ })).toBeVisible()
-    // The onboarding checklist (app/components/Onboarding/Checklist.vue) —
-    // proof this is the real dashboard content, not an empty shell that
-    // happened not to redirect.
-    await expect(page.getByText('Get set up')).toBeVisible()
+    // The onboarding checklist ('Get set up', app/components/Onboarding/Checklist.vue)
+    // is proof this is the real dashboard content, not an empty shell that
+    // happened not to redirect. All of it is a no-op in a fork with no gated page
+    // (fork-config.ts).
+    await expectUnlocked(page, { full: true })
 
     const entitlement = await context.request.get('/api/billing/entitlement')
     expect(entitlement.ok()).toBe(true)
-    const body = (await entitlement.json()) as { active: boolean; kind: string | null }
+    const body = (await entitlement.json()) as {
+      active: boolean
+      kind: string | null
+    }
     expect(body.active).toBe(true)
     expect(body.kind).toBe('pass')
+    await expectAccess({ page, request: context.request }, 'granted')
 
     // Also sweeps /account — the other signed-in page a console/CSP
     // regression could hide on (see AGENTS.md's a11y/CSP suites, which only
@@ -79,15 +83,17 @@ test.describe('buy → access', () => {
     )
     await expectWebhookAccepted(response)
 
-    await page.goto('/dashboard')
-    await expect(page).toHaveURL(/\/dashboard$/)
-    await expect(page.getByRole('heading', { name: /Welcome back/ })).toBeVisible()
+    await expectUnlocked(page)
 
     const entitlement = await context.request.get('/api/billing/entitlement')
     expect(entitlement.ok()).toBe(true)
-    const body = (await entitlement.json()) as { active: boolean; kind: string | null }
+    const body = (await entitlement.json()) as {
+      active: boolean
+      kind: string | null
+    }
     expect(body.active).toBe(true)
     expect(body.kind).toBe('subscription')
+    await expectAccess({ page, request: context.request }, 'granted')
 
     await page.goto('/account')
     await expect(page.getByText('Your subscription renews automatically.')).toBeVisible()
