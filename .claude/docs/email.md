@@ -68,7 +68,7 @@ only the HTML needs — a tone flag, a link target — is declared in the `.txt`
 - **Sections** are `{{#list}}…{{/list}}` (loop, or "if truthy") and `{{^x}}…{{/x}}` ("if not").
   A value is truthy when it is non-empty and not `0`/`null`/`false`. A color that depends on
   runtime data cannot be inlined at build time, so the template carries one copy per choice —
-  see the tone bar in `emails/templates/ops-digest.vue`.
+  see `emails/templates/access-ended.vue`.
 - **Don't hand-format `emails/**/*.vue`** — it is excluded from `oxfmt`, which splits
   `</Raw>` across lines and breaks Maizzle's extraction.
 
@@ -78,7 +78,7 @@ Each email has a hand-written `.txt`, not Maizzle's `plaintext` feature. Its out
 from the HTML after CSS inlining and merges adjacent paragraphs onto one line, renders links as
 `label\n\nurl`, and — the deciding case — turns a `{{#rows}}` loop into one run-on line, because
 section tags are text to it and not the standalone lines Mustache needs to remove them. A `.txt`
-is the format the ops digest's bullets and `…and N more` line need, and it is the one thing a
+is the format list bullets need, and it is the one thing a
 reviewer can read without compiling anything.
 
 ### Branding
@@ -99,12 +99,6 @@ fine. Colors come from the theme (`text-ink`, `bg-accent`, `border-rule`); never
   from `emails/samples.ts`, live-reloading as you edit.
 - `bun run email:preview [dir]` — writes every email as the Worker would send it (compiled
   module + Mustache, HTML and text) to `dir` (default `.email-preview/`).
-
-### Ops digest
-
-`server/utils/ops-digest.ts` renders `emails/templates/ops-digest.*` and imports nothing from
-the transactional stack except `render-email.ts` — forks that tore out transactional email
-(TEARDOWN.md) keep their alerts, so keep it that way.
 
 ---
 

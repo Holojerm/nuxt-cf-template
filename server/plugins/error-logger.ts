@@ -2,9 +2,9 @@
 //
 // Three destinations:
 //   1. console.error JSON → Cloudflare Logs (cheap, queryable, always on)
-//   2. the `ops_events` spool → server/tasks/ops/alert.ts emails a digest on
-//      a cron. This is the one that reaches someone who isn't looking at a
-//      dashboard, which is the whole point. Awaited, because Workers cancels
+//   2. the `ops_events` spool → GET /api/fleet reports it and the fleet
+//      dashboard emails the owner. This is the one that reaches someone who
+//      isn't looking at a dashboard, which is the whole point. Awaited, because Workers cancels
 //      in-flight promises once the response is sent and a 5xx is exactly the
 //      path that sends one immediately.
 //   3. PostHog `$exception` event → PostHog Errors UI (grouped, with stack

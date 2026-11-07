@@ -1,9 +1,13 @@
 // GET /api/fleet — business counters for the portfolio dashboard, behind a
 // bearer token.
 //
-// Counts only, never rows: users, entitlements by status, the ops spool's
-// backlog, the feedback queue. See collectFleetCounters() for what each one
-// means and where a fork adds its own.
+// Counters and per-kind aggregates: users, entitlements by status, the feedback
+// queue, and `ops.kinds` — the last 24 h of the ops spool grouped by kind, each
+// with its severity, count and newest one-line summary. The dashboard is the
+// only thing that mails the owner; apps just spool. Never stack traces, never
+// user data: `lastDetail` is the 500-character summary written at spool time.
+// See collectFleetCounters() for what each one means and where a fork adds its
+// own.
 //
 // Responses that are not a 200, and why each one is what it is:
 //   404 — NUXT_FLEET_TOKEN is unset (or too short to be a secret). An app that
@@ -31,7 +35,7 @@ export default defineEventHandler(async (event) => {
   })
 
   return {
-    schema: 1,
+    schema: 2,
     timestamp: new Date().toISOString(),
     ...(await collectFleetCounters(db)),
   }

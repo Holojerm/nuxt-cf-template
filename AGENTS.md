@@ -23,7 +23,7 @@ Read the row that matches what you are about to touch. Do not load them all.
 | [`.claude/docs/images.md`](.claude/docs/images.md) | `<NuxtImg>` at the edge vs. transforming a private R2 object in the Worker | Rendering any image, adding a thumbnail, or debugging a `/cdn-cgi/image/` 404 |
 | [`.claude/docs/brand.md`](.claude/docs/brand.md) | How every icon is generated from one `Logo.vue` | Redesigning the mark or fixing `brand:check` |
 | [`.claude/docs/agent-setup.md`](.claude/docs/agent-setup.md) | MCP servers, skills, slash commands, cloud routines | Configuring tooling, or setting up a fork |
-| [`.claude/docs/fleet.md`](.claude/docs/fleet.md) | `fleet.json`, `/api/status`, `/api/fleet`, the `ops_events` spool and its digest cron | Touching the manifest, the status/fleet endpoints, or ops alerting |
+| [`.claude/docs/fleet.md`](.claude/docs/fleet.md) | `fleet.json`, `/api/status`, `/api/fleet`, the `ops_events` spool and fleet alerts | Touching the manifest, the status/fleet endpoints, or ops alerting |
 | [`TEARDOWN.md`](TEARDOWN.md) | How to **remove** billing, referrals, the MCP worker, or swap Paddle for Stripe | You do not need one of the shipped subsystems |
 | [`DESIGN.md`](DESIGN.md) | The visual design system — source of truth | Writing any UI |
 
@@ -206,7 +206,8 @@ Each of these has a full contract in its own doc — this is the one-line versio
   heavy components, uploads to R2 via `blob`. → [`patterns.md`](.claude/docs/patterns.md)
 - **Fleet contract** — `fleet.json` describes this app, `GET /api/status` reports build,
   migrations and crons, `GET /api/fleet` reports counters behind a token, and every 5xx
-  spools an `ops_events` row that a cron emails as a digest.
+  spools an `ops_events` row; fleet reads them from `/api/fleet` and is the only thing that
+  emails alerts.
   → [`fleet.md`](.claude/docs/fleet.md)
 
 ---

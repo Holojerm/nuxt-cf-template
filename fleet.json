@@ -10,7 +10,7 @@
     "kv": ["YOUR_KV_NAMESPACE_ID"],
     "r2": ["my-app-blob"]
   },
-  "crons": ["0 4 * * *", "*/30 * * * *"],
+  "crons": ["0 4 * * *"],
   "deploy": "workers-builds",
   "template": { "repo": "Holojerm/nuxt-cf-template", "syncedSha": null },
   "features": { "auth": true, "billing": true, "posthog": null, "opsEvents": true },

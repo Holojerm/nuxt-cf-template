@@ -3,7 +3,7 @@
 // `href` is usually a Mustache tag, passed through as a literal string.
 defineProps<{
   href: string
-  /** `ink` is the quiet one — the ops digest's buttons. */
+  /** `ink` is the quiet one. */
   tone?: 'accent' | 'ink'
   /** Smaller, with no space beneath: for buttons laid out side by side. */
   compact?: boolean

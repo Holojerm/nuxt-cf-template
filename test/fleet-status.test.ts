@@ -13,10 +13,16 @@ import * as schema from '../server/db/schema'
 import { clearExtensionsForTest, registerFleetExtraContributor } from '../server/utils/extensions'
 import {
   collectFleetCounters,
+  FLEET_OPS_KIND_LIMIT,
   compareMigrations,
   readAppliedMigrations,
   repoMigrations,
 } from '../server/utils/fleet-status'
+import {
+  registerOpsSeverity,
+  resetOpsSeverityForTest,
+  SERVER_ERROR_CRITICAL_COUNT,
+} from '../server/utils/ops-severity'
 
 const db = drizzle(env.DB, { schema })
 
@@ -109,7 +115,7 @@ describe('collectFleetCounters', () => {
 
       const counters = await collectFleetCounters(db, NOW)
       expect(counters.extra).toEqual({ athletes: 3, plans: 5, sessionsLogged: 7 })
-      expect(Object.keys(counters).sort()).toEqual(['extra', 'funnel', 'opsEvents', 'users'].sort())
+      expect(Object.keys(counters).sort()).toEqual(['extra', 'funnel', 'ops', 'users'].sort())
     })
 
     it('replaces rather than duplicates a contributor registered twice', async () => {
@@ -122,39 +128,103 @@ describe('collectFleetCounters', () => {
   it('is all zeros on an empty database', async () => {
     expect(await collectFleetCounters(db, NOW)).toEqual({
       users: { total: 0, last7d: 0 },
-      opsEvents: { pending: 0, last24h: 0 },
+      ops: { kinds: [] },
       funnel: { cohortDays: 28, signups: 0, activated: 0, paid: 0, sources: {} },
       extra: {},
     })
   })
 
-  it('counts, and only counts — no rows, no ids, no addresses leave', async () => {
+  it('leaks no rows, ids or addresses beyond the per-kind ops summary', async () => {
     const recent = new Date(NOW.getTime() - 2 * DAY_MS)
     const old = new Date(NOW.getTime() - 30 * DAY_MS)
     await db.insert(schema.users).values([
       { id: 'u-new', email: 'new@example.com', name: 'New', createdAt: recent, updatedAt: recent },
       { id: 'u-old', email: 'old@example.com', name: 'Old', createdAt: old, updatedAt: old },
     ])
-    const hourAgo = new Date(NOW.getTime() - 60 * 60 * 1000)
-    const twoDaysAgo = new Date(NOW.getTime() - 2 * DAY_MS)
-    await db.insert(schema.opsEvents).values([
-      { kind: 'server_error', createdAt: hourAgo, updatedAt: hourAgo },
-      { kind: 'server_error', createdAt: hourAgo, updatedAt: hourAgo, notifiedAt: hourAgo },
-      {
-        kind: 'server_error',
-        createdAt: twoDaysAgo,
-        updatedAt: twoDaysAgo,
-        notifiedAt: twoDaysAgo,
-      },
-    ])
-
     const counters = await collectFleetCounters(db, NOW)
     expect(counters.users).toEqual({ total: 2, last7d: 1 })
-    expect(counters.opsEvents).toEqual({ pending: 1, last24h: 2 })
 
     // The payload is stored for months in someone else's database: it must be
-    // numbers all the way down.
+    // numbers all the way down (ops summaries are covered below).
     const leaves = JSON.stringify(counters).match(/"[^"]*":\s*"[^"]*"/g) ?? []
     expect(leaves).toEqual([])
+  })
+})
+
+describe('collectFleetCounters › ops.kinds', () => {
+  const HOUR_MS = 60 * 60 * 1000
+  const at = (hoursAgo: number) => new Date(NOW.getTime() - hoursAgo * HOUR_MS)
+
+  async function spool(
+    kind: string,
+    createdAt: Date,
+    extra: { detail?: string; path?: string } = {},
+  ) {
+    await db.insert(schema.opsEvents).values({ kind, createdAt, updatedAt: createdAt, ...extra })
+  }
+
+  beforeEach(async () => {
+    await db.delete(schema.opsEvents)
+    resetOpsSeverityForTest()
+  })
+  afterEach(() => resetOpsSeverityForTest())
+
+  it('groups the last 24 h by kind with the newest row summary, and ignores older rows', async () => {
+    await spool('server_error', at(3), { detail: 'older', path: '/api/a' })
+    await spool('server_error', at(1), { detail: 'newest', path: '/api/b' })
+    await spool('server_error', at(30), { detail: 'outside the window' })
+    await spool('source_failed', at(25))
+
+    const { kinds } = (await collectFleetCounters(db, NOW)).ops
+    expect(kinds).toEqual([
+      {
+        kind: 'server_error',
+        severity: 'warning',
+        count: 2,
+        lastAt: at(1).toISOString(),
+        lastDetail: 'newest',
+        lastPath: '/api/b',
+      },
+    ])
+  })
+
+  it('reports null detail and path when the newest row has none', async () => {
+    await spool('quiet', at(1))
+    expect((await collectFleetCounters(db, NOW)).ops.kinds[0]).toMatchObject({
+      lastDetail: null,
+      lastPath: null,
+    })
+  })
+
+  it('ranks critical, then warning, then info, then by count', async () => {
+    registerOpsSeverity({
+      payments_dropped: { severity: 'critical' },
+      export_noted: { severity: 'info' },
+    })
+    for (let i = 0; i < 5; i++) await spool('export_noted', at(1))
+    for (let i = 0; i < 2; i++) await spool('few_warn', at(1))
+    for (let i = 0; i < 4; i++) await spool('many_warn', at(1))
+    await spool('payments_dropped', at(1))
+
+    const { kinds } = (await collectFleetCounters(db, NOW)).ops
+    expect(kinds.map((k) => [k.kind, k.severity, k.count])).toEqual([
+      ['payments_dropped', 'critical', 1],
+      ['many_warn', 'warning', 4],
+      ['few_warn', 'warning', 2],
+      ['export_noted', 'info', 5],
+    ])
+  })
+
+  it('escalates a server_error burst to critical', async () => {
+    for (let i = 0; i < SERVER_ERROR_CRITICAL_COUNT; i++) await spool('server_error', at(1))
+    expect((await collectFleetCounters(db, NOW)).ops.kinds[0]).toMatchObject({
+      kind: 'server_error',
+      severity: 'critical',
+    })
+  })
+
+  it('caps the list at FLEET_OPS_KIND_LIMIT kinds', async () => {
+    for (let i = 0; i < FLEET_OPS_KIND_LIMIT + 5; i++) await spool(`kind_${i}`, at(1))
+    expect((await collectFleetCounters(db, NOW)).ops.kinds).toHaveLength(FLEET_OPS_KIND_LIMIT)
   })
 })

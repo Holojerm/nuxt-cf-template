@@ -10,8 +10,8 @@ enabled: false
 
 ## Purpose
 
-The Worker spools every failure worth the owner's attention into `ops_events` and mails it in
-the 30-minute digest. Before this routine, nothing else read that spool. Every six hours, this
+The Worker spools every failure worth the owner's attention into `ops_events`; the fleet dashboard
+mails the owner from `GET /api/fleet`. Nothing else triages that spool. Every six hours, this
 routine reads it and handles each failure in one of three ways:
 
 - it fixes the failures `routines.config.md` › **Mechanical fixes** declares safe to fix end

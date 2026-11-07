@@ -3,7 +3,7 @@
 // imports the generated module rather than reading templates; a template edited
 // without `bun run email:build` is caught by `bun run email:check`, not here.
 //
-// Per-email wording lives in test/email-templates.test.ts and test/ops.test.ts.
+// Per-email wording lives in test/email-templates.test.ts.
 // This file is what must hold for ALL of them, including the ones added later.
 
 import { describe, expect, it } from 'vitest'
@@ -21,7 +21,6 @@ const ACTION_URL: Record<EmailName, (data: Record<string, unknown>) => string> =
   'activation-nudge': (d) => `${d.appUrl}/dashboard`,
   'feedback-reply': (d) => `${d.appUrl}`,
   'magic-link': (d) => String(d.url),
-  'ops-digest': (d) => String(d.logsUrl),
   'pass-expiring': (d) => `${d.appUrl}/account`,
   'payment-failed': (d) => `${d.appUrl}/account`,
   purchase: (d) => `${d.appUrl}/account`,

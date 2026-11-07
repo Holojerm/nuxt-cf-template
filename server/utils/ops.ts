@@ -1,55 +1,29 @@
-// Ops alerting — the "you find out from an alert, not from a user" path.
+// Ops spool — the "you find out from an alert, not from a user" path.
 //
-// Why this exists at all: Cloudflare cannot alert on Worker logs. Workers Logs
-// is queryable but has no notification hook, Log Explorer carries HTTP
-// requests and not `workers_trace_events`, and the Notifications catalogue has
-// no usable Workers entry. So the only component that both knows a request
-// failed and can do something about it is the Worker itself. It writes a row
-// here; a cron (server/tasks/ops/alert.ts) drains the rows and emails a
-// digest.
-//
-// Back-ported from a fork that ran it in production for a while; the one
-// change is that the digest no longer hardcodes the product's name.
+// Cloudflare cannot alert on Worker logs, so the only component that both knows
+// a request failed and can do something about it is the Worker itself. It
+// writes a row here and does nothing else: apps spool, the fleet dashboard
+// alerts. The dashboard reads the per-kind summary from GET /api/fleet
+// (server/utils/fleet-status.ts) and is the only thing that mails the owner.
+// This file holds the writers, the 7-day retention sweep, and the raw read the
+// ops-triage routine uses (GET /api/ops/events).
 //
 // Like server/utils/purge.ts, every function takes the Drizzle client
 // explicitly so the workerd suite can drive it against a real D1 binding.
 
-import { and, asc, desc, eq, gte, inArray, isNull, lt } from 'drizzle-orm'
+import { and, desc, eq, gte, lt } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
 
 import * as tables from '../db/schema'
-import type { OpsEvent } from '../db/schema'
 
-import {
-  groupOpsRows,
-  opsDigestSeverity,
-  opsDigestSubject,
-  rankOpsKinds,
-  renderOpsDigest,
-  type OpsClassifier,
-} from './ops-digest'
 import { logEvent } from './log'
 
 export type OpsDb = ReturnType<typeof drizzle<typeof tables>>
 
-/** How long drained rows stick around before the cron prunes them. */
+/** How long rows stick around before the daily purge prunes them. */
 export const OPS_EVENT_RETENTION_DAYS = 7
 
-/**
- * Most rows one digest will carry. A single bad deploy can produce thousands of
- * identical errors; the email needs to say "your app is broken", not transcribe
- * every instance. Counts still reflect everything drained.
- */
-export const OPS_DIGEST_SAMPLE_LIMIT = 200
-
 const DAY_MS = 24 * 60 * 60 * 1000
-
-/**
- * How long a spool holding only `info` rows waits before it is mailed on its
- * own. Info rows ride along with any louder digest sooner; alone they make at
- * most one email a day, so the inbox keeps its volume for things that matter.
- */
-export const OPS_INFO_HOLD_MS = DAY_MS
 
 export interface OpsEventInput {
   kind: string
@@ -58,8 +32,9 @@ export interface OpsEventInput {
 }
 
 /**
- * Spool an event for the next digest. Best-effort by design: this runs inside
- * error handling, and an alerting failure must never become the user's problem.
+ * Spool an event for the fleet dashboard to pick up. Best-effort by design:
+ * this runs inside error handling, and an alerting failure must never become
+ * the user's problem.
  * A swallowed insert costs one alert; a thrown one costs the request.
  *
  * Callers must `await` this. Workers cancels promises still in flight once the
@@ -87,7 +62,7 @@ export const UNAUTHENTICATED_OPS_INTERVAL_MS = 60_000
 /**
  * `recordOpsEvent` for a path anyone can hit without credentials, such as a
  * webhook rejecting a bad signature. Unthrottled, a script could write a D1 row
- * per request and wake the owner's digest and the ops-triage routine at will.
+ * per request and wake the owner's alerts and the ops-triage routine at will.
  */
 export async function recordUnauthenticatedOpsEvent(
   db: OpsDb,
@@ -107,138 +82,10 @@ export function resetUnauthenticatedOpsThrottleForTest(): void {
   lastUnauthenticatedRecord.clear()
 }
 
-export interface OpsDigestOptions {
-  /** Leads the subject line — the product's display name. */
-  appName: string
-  /** The app's public origin; turns each event's path into a link. */
-  appUrl?: string
-  /** The app Worker's name, for the Observability deep link. Omit to skip the link. */
-  workerName?: string
-  now?: Date
-  /**
-   * Ranks kinds by severity, tags the subject, and lets an info-only spool wait
-   * (OPS_INFO_HOLD_MS). Omit it for the unranked digest.
-   */
-  classify?: OpsClassifier
-}
-
-export interface OpsDigest {
-  subject: string
-  html: string
-  text: string
-  /** Rows this digest accounts for — the ones to mark notified. */
-  ids: string[]
-}
-
 /**
- * Turn spooled rows into an email. Pure — no db, no network — so the wording
- * and the grouping are testable without a transport. The wording itself lives
- * in server/utils/ops-digest.ts.
- */
-export function buildOpsDigest(rows: OpsEvent[], options: OpsDigestOptions): OpsDigest | null {
-  if (rows.length === 0) return null
-  const render = { ...options, now: options.now ?? new Date() }
-  const grouped = groupOpsRows(rows)
-  const kinds = options.classify ? rankOpsKinds(grouped, options.classify) : grouped
-  const oldest = rows.reduce((a, b) => (a.createdAt < b.createdAt ? a : b)).createdAt
-
-  return {
-    subject: opsDigestSubject(options.appName, kinds, options.classify),
-    ...renderOpsDigest(kinds, rows.length, oldest, render),
-    ids: rows.map((r) => r.id),
-  }
-}
-
-/** Transport for the digest. Injected so tests never touch the mail binding. */
-export type OpsMailer = (digest: OpsDigest) => Promise<void>
-
-export interface DrainResult {
-  /** Rows found waiting (capped at OPS_DIGEST_SAMPLE_LIMIT). */
-  pending: number
-  /** True when a digest was handed to the mailer and accepted. */
-  sent: boolean
-  /** Rows deleted by the retention sweep. */
-  pruned: number
-  /** True when only info rows were waiting and they are being held (OPS_INFO_HOLD_MS). */
-  held?: boolean
-  error?: string
-}
-
-/**
- * One cron tick: drain, notify, prune.
- *
- * Rows are marked notified only after the mailer resolves. If sending fails the
- * rows stay pending and the next tick retries — an alerting system that loses
- * the alert when the mail hiccups is worse than no alerting system, because it
- * lies about coverage.
- */
-export async function drainOpsEvents(
-  db: OpsDb,
-  mail: OpsMailer,
-  options: OpsDigestOptions,
-): Promise<DrainResult> {
-  const now = options.now ?? new Date()
-
-  const pending = await db
-    .select()
-    .from(tables.opsEvents)
-    .where(isNull(tables.opsEvents.notifiedAt))
-    .orderBy(asc(tables.opsEvents.createdAt))
-    .limit(OPS_DIGEST_SAMPLE_LIMIT)
-
-  let sent = false
-  let error: string | undefined
-
-  if (holdInfoOnly(pending, options.classify, now)) {
-    const pruned = await pruneOpsEvents(db, now)
-    return { pending: pending.length, sent, pruned, held: true }
-  }
-
-  const digest = buildOpsDigest(pending, { ...options, now })
-  if (digest) {
-    try {
-      await mail(digest)
-      sent = true
-      // Chunked so a large drain can't build a SQL statement D1 will reject.
-      for (let i = 0; i < digest.ids.length; i += 50) {
-        const chunk = digest.ids.slice(i, i + 50)
-        await db
-          .update(tables.opsEvents)
-          .set({ notifiedAt: now })
-          .where(and(isNull(tables.opsEvents.notifiedAt), inArray(tables.opsEvents.id, chunk)))
-      }
-    } catch (err) {
-      error = String(err)
-      logEvent('error', 'ops_alert_send_failed', { error })
-    }
-  }
-
-  const pruned = await pruneOpsEvents(db, now)
-
-  return { pending: pending.length, sent, pruned, error }
-}
-
-/**
- * True when every waiting row is `info` and the oldest is younger than
- * OPS_INFO_HOLD_MS. The rows stay pending, so the first louder event (or the
- * hold running out) mails them; nothing is dropped.
- */
-export function holdInfoOnly(
-  pending: OpsEvent[],
-  classify: OpsClassifier | undefined,
-  now: Date,
-): boolean {
-  if (!classify || pending.length === 0) return false
-  if (opsDigestSeverity(groupOpsRows(pending), classify) !== 'info') return false
-  const oldest = Math.min(...pending.map((r) => r.createdAt.getTime()))
-  return now.getTime() - oldest < OPS_INFO_HOLD_MS
-}
-
-/**
- * Retention sweep, separate from the drain so the cron can run it when alerting
- * is unconfigured. Without that, a fork with no `ALERT_EMAIL` binding spooled
- * rows forever: the drain was the only thing that deleted them. Returns the
- * number of rows removed.
+ * Retention sweep, run by the daily purge task. Age-based, not delivery-based:
+ * the dashboard reads the spool but never marks rows. Returns the number of
+ * rows removed.
  */
 export async function pruneOpsEvents(db: OpsDb, now: Date = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - OPS_EVENT_RETENTION_DAYS * DAY_MS)
@@ -258,13 +105,10 @@ export interface RecentOpsEvent {
   detail: string | null
   path: string | null
   created_at: string
-  notified_at: string | null
 }
 
 /**
- * The spool as the digest saw it, newest first, for the ops-triage routine
- * (GET /api/ops/events). Notified rows are included: the digest marks rows
- * when it mails them, and the routine reads after that.
+ * The spool, newest first, for the ops-triage routine (GET /api/ops/events).
  */
 export async function recentOpsEvents(
   db: OpsDb,
@@ -289,6 +133,5 @@ export async function recentOpsEvents(
     detail: r.detail,
     path: r.path,
     created_at: r.createdAt.toISOString(),
-    notified_at: r.notifiedAt?.toISOString() ?? null,
   }))
 }

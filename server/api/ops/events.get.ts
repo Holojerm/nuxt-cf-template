@@ -12,7 +12,7 @@
 // ahead of its migrations is an outage, and retriggering it would repeat one).
 //
 // Rows, unlike /api/fleet's counts: `detail` is the one-line summary the
-// digest email already carries, truncated to 500 characters at write time,
+// fleet's alert email carries, truncated to 500 characters at write time,
 // never a stack trace or a user's data.
 
 import { db } from '@nuxthub/db'
