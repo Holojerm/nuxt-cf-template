@@ -9,7 +9,7 @@
 //   test/a11y/  axe. The rules that matter most — color-contrast above all —
 //               are computed from resolved styles and actual layout, and jsdom
 //               reports them as "incomplete" rather than pass or fail.
-//   test/csp/   the Content-Security-Policy in nuxt.config.ts. A CSP only
+//   test/csp/   the Content-Security-Policy (shared/security-headers.ts). A CSP only
 //               exists as browser behaviour; nothing short of a real engine can
 //               tell you whether the policy you shipped blocks your own app.
 //
@@ -113,6 +113,10 @@ export default defineConfig({
     // The dev server rather than the built Worker: `wrangler dev` on .output
     // would need bindings and migrations wired up just to render static
     // marketing pages, and the markup axe sees is the same either way.
+    // Measured (2026-11, one worker): axe against `nuxt build` + `wrangler dev`
+    // took 22 s build + 17 s run for the a11y project alone, on top of the dev
+    // server csp and e2e need anyway; against this server it adds 16 s. The
+    // built server saves ~1 s a route and costs a second server and a build.
     command: 'bun run dev:app',
     url: HOST,
     // Never reuse: this suite only produces valid results against a server

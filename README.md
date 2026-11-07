@@ -354,7 +354,7 @@ connection"), so these specs sign in via
 `POST /api/auth/dev` — the same dev-only shortcut described under [Auth](#auth) — and then create or
 end entitlements by POSTing **signed Paddle webhooks** to `/paddle/webhook`, exactly as a real
 purchase or cancellation would arrive. `layers/billing/test/e2e/fixtures.ts` signs each one with the same HMAC
-construction `layers/billing/server/utils/paddle.ts` verifies; [`webhook-signing.spec.ts`](./layers/billing/test/e2e/webhook-signing.spec.ts)
+construction `layers/billing/server/utils/paddle.ts` verifies; [`webhook-signing.test.ts`](./layers/billing/test/webhook-signing.test.ts) (vitest)
 checks that mirror against the real verifier rather than trusting it by inspection. Every user is
 fresh and unique per run (`e2e-<run>-<case>@example.com`) — nothing here reads the rows `bun seed`
 writes, on purpose, since the whole point is proving the flow works starting from nothing.
@@ -665,7 +665,7 @@ through; a bot check that did the same would hand an attacker a bypass they coul
 by making `siteverify` slow.
 
 `https://challenges.cloudflare.com` is in `script-src` and `frame-src` already, before anyone
-configures a key — `test/csp/csp.spec.ts` asserts both. A CSP that only permits what today's config
+configures a key — `test/security-headers.test.ts` asserts both. A CSP that only permits what today's config
 happens to load breaks on the day someone pastes a key in, and it breaks as an empty box on a form.
 
 **Limits keyed by something other than the caller need a different shape.** The magic-link

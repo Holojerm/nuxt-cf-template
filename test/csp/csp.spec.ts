@@ -25,11 +25,13 @@
 //     cannot turn into a red build.
 //
 // Everything beyond that (which Paddle host serves the overlay iframe, which
-// host the checkout fetches) is asserted against the policy string, having been
-// read out of Paddle's shipped bundle. See nuxt.config.ts for that derivation.
+// host the checkout fetches) is asserted against the policy string in
+// test/security-headers.test.ts, having been read out of Paddle's shipped
+// bundle. See shared/security-headers.ts for that derivation.
 
 import { expect, test } from '@playwright/test'
 
+import { contentSecurityPolicy } from '../../shared/security-headers'
 import { recordConsole } from '../lib/console'
 import { hasLayer } from '../lib/layers'
 
@@ -54,14 +56,6 @@ const DUMMY_TOKEN = 'A'.repeat(43)
 // only where the layer does. Without it the same assertions invert (below): a
 // fork that dropped billing must also have dropped Paddle from the policy.
 const HAS_BILLING = hasLayer('billing')
-const PADDLE_HOSTS = [
-  'https://cdn.paddle.com',
-  'https://sandbox-cdn.paddle.com',
-  'https://buy.paddle.com',
-  'https://sandbox-buy.paddle.com',
-  'https://api.paddle.com',
-  'https://sandbox-api.paddle.com',
-]
 
 const ROUTES = [
   '/',
@@ -181,12 +175,6 @@ test.describe('the web app manifest (Finding 14)', () => {
 })
 
 test.describe('the policy still permits what the vendors need', () => {
-  /** The whole policy string, read off a live response. */
-  async function policy(page: import('@playwright/test').Page): Promise<string> {
-    const response = await page.goto('/')
-    return response!.headers()['content-security-policy'] ?? ''
-  }
-
   test('a Blob web worker is allowed — PostHog session replay depends on it', async ({ page }) => {
     await page.goto('/')
 
@@ -250,153 +238,15 @@ test.describe('the policy still permits what the vendors need', () => {
       })
     }
   })
-
-  test('the Paddle checkout hosts are allowlisted in both environments', async ({ page }) => {
-    test.skip(!HAS_BILLING, 'no billing layer, no Paddle hosts')
-    // The overlay iframe and its API calls cannot be exercised without a client
-    // token, so these are asserted against the policy text. The hosts come from
-    // the env table inside Paddle's own bundle (checkoutFrontEndBase / apiBase),
-    // not from documentation prose — see nuxt.config.ts.
-    const csp = await policy(page)
-
-    const frameSrc = /frame-src ([^;]+)/.exec(csp)?.[1] ?? ''
-    expect(frameSrc).toContain('https://buy.paddle.com')
-    expect(frameSrc, 'sandbox is the template default — breaking it breaks first-run').toContain(
-      'https://sandbox-buy.paddle.com',
-    )
-
-    const connectSrc = /connect-src ([^;]+)/.exec(csp)?.[1] ?? ''
-    expect(connectSrc).toContain('https://api.paddle.com')
-    expect(connectSrc).toContain('https://sandbox-api.paddle.com')
-  })
-
-  test('without the billing layer the policy names no Paddle host', async ({ page }) => {
-    test.skip(HAS_BILLING, 'billing is present: the Paddle hosts are asserted above')
-    // TEARDOWN.md ("Remove billing entirely", step 9): a stale entry is a
-    // silently over-permissive policy, so the suite refuses it.
-    const csp = await policy(page)
-    expect(PADDLE_HOSTS.filter((host) => csp.includes(host))).toEqual([])
-  })
-
-  test('Turnstile has both directives it needs, before anyone configures it', async ({ page }) => {
-    // Asserted against the policy text rather than by loading a widget, and the
-    // reason is the thing worth guarding: this template ships with an empty
-    // `turnstile.siteKey`, so <NuxtTurnstile> never renders here and no browser
-    // check could exercise these hosts. The day someone pastes a real key in,
-    // the CSP has to already be right — a missing host shows up as an empty box
-    // on a signup form in production, which is precisely the failure this whole
-    // suite exists to make impossible.
-    //
-    // Two directives, one host, both required: script-src for the api.js loader,
-    // frame-src for the challenge iframe it mounts. Getting only the first is
-    // the common mistake, and it fails *after* the script loads — so it looks
-    // like a Turnstile bug rather than a policy one.
-    const csp = await policy(page)
-
-    const scriptSrc = /script-src ([^;]+)/.exec(csp)?.[1] ?? ''
-    expect(scriptSrc, 'the Turnstile loader would be refused').toContain(
-      'https://challenges.cloudflare.com',
-    )
-
-    const frameSrc = /frame-src ([^;]+)/.exec(csp)?.[1] ?? ''
-    expect(frameSrc, 'the challenge iframe would be refused').toContain(
-      'https://challenges.cloudflare.com',
-    )
-  })
-
-  test('the edge-injected Web Analytics beacon is allowed', async ({ page }) => {
-    // Cloudflare injects this at the edge, so dev never loads it and only the
-    // policy text can be checked. Without both hosts every production page logs
-    // a violation and the analytics dashboard reads zero.
-    const csp = await policy(page)
-
-    const scriptSrc = /script-src ([^;]+)/.exec(csp)?.[1] ?? ''
-    expect(scriptSrc, 'beacon.min.js would be refused').toContain(
-      'https://static.cloudflareinsights.com',
-    )
-
-    const connectSrc = /connect-src ([^;]+)/.exec(csp)?.[1] ?? ''
-    expect(connectSrc, 'the /cdn-cgi/rum reports would be refused').toContain(
-      'https://cloudflareinsights.com',
-    )
-  })
-
-  test('PostHog stays on the first-party proxy', async ({ page }) => {
-    const csp = await policy(page)
-
-    // The SDK is pinned to `api_host: '/ingest'` and server/routes/ingest
-    // reverse-proxies everything, which is what survives ad blockers. A
-    // posthog.com origin appearing here means someone "fixed" a violation by
-    // punching through the proxy instead of repairing it — the analytics would
-    // work in dev and be dropped for a third of real users.
-    expect(csp, 'a *.posthog.com origin in the CSP defeats the /ingest proxy').not.toContain(
-      'posthog.com',
-    )
-
-    const connectSrc = /connect-src ([^;]+)/.exec(csp)?.[1] ?? ''
-    expect(connectSrc).toContain("'self'")
-  })
 })
 
-test.describe('the directives that make the policy worth having', () => {
-  test('the anti-bypass directives are locked down', async ({ page }) => {
-    const response = await page.goto('/')
-    const csp = response!.headers()['content-security-policy'] ?? ''
-
-    // script-src carries 'unsafe-inline' (nuxt.config.ts explains why it has to),
-    // and these three are what keep that from being a blank cheque: object-src
-    // and base-uri are the two classic ways to bypass a script-src, and
-    // form-action stops an injected form from posting credentials off-origin.
-    expect(csp).toContain("object-src 'none'")
-    expect(csp).toContain("base-uri 'self'")
-    expect(csp).toContain("form-action 'self'")
-    expect(csp).toContain("frame-ancestors 'none'")
-    expect(csp).toContain("default-src 'self'")
-  })
-
-  test("eval stays blocked — 'unsafe-eval' must never be added", async ({ page }) => {
-    const response = await page.goto('/')
-    const csp = response!.headers()['content-security-policy'] ?? ''
-
-    // The counterweight to isEvalProbe at the top of this file. That predicate
-    // tolerates zod's *reported* eval refusal; this one proves the refusal is
-    // still happening. The tempting "fix" for a noisy console is to add
-    // 'unsafe-eval' here — which converts a harmless report into a genuine
-    // capability for anything that achieves script injection. If both this
-    // assertion and that predicate are ever relaxed together, the suite would
-    // go green having verified nothing.
-    expect(
-      csp,
-      "'unsafe-eval' re-enables the exact class of attack this policy exists to stop",
-    ).not.toContain('unsafe-eval')
-  })
-
-  test('no external origin has crept into script-src beyond the ones we chose', async ({
-    page,
-  }) => {
-    const response = await page.goto('/')
-    const csp = response!.headers()['content-security-policy'] ?? ''
-    const scriptSrc = /script-src ([^;]+)/.exec(csp)?.[1] ?? ''
-
-    // The guard that makes this suite worth running after everyone has left:
-    // adding a tag manager, a chat widget or a font CDN means adding a host
-    // here, and that should be a decision someone makes on purpose.
-    //
-    // challenges.cloudflare.com joined the list when Turnstile did, and that is
-    // this assertion working rather than being worked around: the list is short
-    // enough to read, and every entry on it had to be argued for in
-    // nuxt.config.ts. static.cloudflareinsights.com is the Web Analytics beacon
-    // the zone injects at the edge. Do not append to it to make a build go green.
-    const externalHosts = scriptSrc
-      .split(/\s+/)
-      .filter((source) => source.startsWith('http') || source.startsWith('//'))
-
-    expect(externalHosts.sort()).toEqual(
-      [
-        ...(HAS_BILLING ? ['https://cdn.paddle.com', 'https://sandbox-cdn.paddle.com'] : []),
-        'https://challenges.cloudflare.com',
-        'https://static.cloudflareinsights.com',
-      ].sort(),
-    )
-  })
+// The policy-text assertions (Paddle, Turnstile and beacon hosts, anti-bypass
+// directives, no 'unsafe-eval', the script-src host list) are in
+// test/security-headers.test.ts. This pins the one thing they cannot see: that
+// the server really sends that policy.
+test('the policy on the wire is the one the config defines', async ({ page }) => {
+  const response = await page.goto('/')
+  expect(response!.headers()['content-security-policy']).toBe(
+    contentSecurityPolicy(true, { billing: HAS_BILLING }),
+  )
 })
