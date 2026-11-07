@@ -12,7 +12,7 @@ How an email is written (Maizzle templates, compiled at build time, filled in wi
 Markup lives in [`emails/`](../../emails), written in [Maizzle 6](https://maizzle.com/docs)
 (Vue single-file templates, Tailwind 4). **Maizzle runs at build time only** — it needs Node, Vite
 and a CSS toolchain, so it is a devDependency and nothing from it reaches the Worker.
-`bun run email:build` compiles every template to `server/emails/generated.ts`, a committed
+`bun run email:build` compiles every template to `server/emails/generated.ts`, a gitignored
 module of `{ [name]: { html, text } }` strings that still contain `{{mustache}}` tags.
 At send time `renderEmail(name, data)` in
 [`server/utils/render-email.ts`](../../server/utils/render-email.ts) fills them in.
@@ -25,7 +25,7 @@ emails/
   samples.ts                sample data per template — previews and tests
   theme.generated.css       GENERATED from DESIGN.md — see Branding
   maizzle.config.ts
-server/emails/generated.ts  GENERATED — commit it
+server/emails/generated.ts  GENERATED at install — never commit it
 ```
 
 **To add an email:**
@@ -44,8 +44,9 @@ server/emails/generated.ts  GENERATED — commit it
    anything specific to it. `test/emails.test.ts` already proves it renders, leaves no `{{`
    behind, escapes hostile data, and that the text carries the action URL.
 
-`bun run email:check` (in `bun run ci`) rebuilds in memory and fails if the committed module
-differs; it needs no browser, so it runs in the Workers Builds image. It also fails the build when:
+`postinstall` and `bun run ci` both run `email:build`, so the module is always rebuilt from the
+templates on the machine that builds the Worker — there is no committed copy to go stale (one
+used to fail every Maizzle or Tailwind Dependabot bump). The build fails when:
 a `.vue` has no `.txt` (or the reverse); the HTML and the text read different fields (a field
 only the HTML needs — a tone flag, a link target — is declared in the `.txt` as
 `{{! html-only: a, b }}`); or Vue warned while rendering.

@@ -7,6 +7,8 @@
 
 import { env } from 'cloudflare:test'
 import { afterEach, describe, expect, it } from 'vitest'
+
+import WRANGLER_TOML from '../wrangler.toml?raw'
 import {
   chooseBackendAmong,
   clearNativeLimitersForTest,
@@ -267,35 +269,33 @@ describe('the deployed binding', () => {
     expect(typeof (binding as NativeRateLimiter | undefined)?.limit).toBe('function')
   })
 
-  // Whether the binding lets one call past `limit` through. Its windows are
-  // aligned to the wall clock, and under CI load the run can straddle a
-  // boundary, which resets the count and lets the extra call through (this
-  // failed a fork's Workers Build). A run that crosses one is repeated.
-  async function allowsOneMore(limiter: NativeRateLimiter, limit: number): Promise<boolean> {
-    const window = () => Math.floor(Date.now() / (NATIVE_LIMITER.windowSeconds * 1000))
-    for (let attempt = 1; ; attempt++) {
-      const started = window()
-      // Unique per run: the binding's counters are keyed globally within the
-      // miniflare instance and outlive an individual `it`.
-      const key = `drift-check:${crypto.randomUUID()}`
-      for (let i = 0; i < limit; i++) {
-        expect(
-          (await limiter.limit({ key })).success,
-          `request ${i + 1} was refused, so wrangler.toml permits fewer than ${limit}`,
-        ).toBe(true)
-      }
-      const allowed = (await limiter.limit({ key })).success
-      if (window() === started || attempt === 3) return allowed
-    }
-  }
+  // The limit itself is read from wrangler.toml rather than by exhausting the binding: its
+  // windows are aligned to the wall clock, so a run that straddled a boundary let the extra
+  // call through and failed a fork's Workers Build, and a retry loop only made that rarer.
+  // miniflare builds the binding from this same file, so the text is the deployed number.
+  it('enforces exactly the limit NATIVE_LIMITER claims it does, in every environment', () => {
+    const blocks = [
+      ...WRANGLER_TOML.matchAll(/^\[\[(?:env\.(\w+)\.)?ratelimits\]\]\n((?:(?!\[).*\n?)*)/gm),
+    ]
+      .map(([, envName, body]) => ({
+        env: envName ?? 'production',
+        name: /^name\s*=\s*"([^"]+)"/m.exec(body!)?.[1],
+        limit: Number(/limit\s*=\s*(\d+)/.exec(body!)?.[1]),
+        period: Number(/period\s*=\s*(\d+)/.exec(body!)?.[1]),
+      }))
+      .filter((block) => block.name === NATIVE_LIMITER.binding)
 
-  it('enforces exactly the limit NATIVE_LIMITER claims it does', async () => {
-    const limiter = (env as unknown as Record<string, NativeRateLimiter>)[NATIVE_LIMITER.binding]
     expect(
-      await allowsOneMore(limiter, NATIVE_LIMITER.limit),
-      `request ${NATIVE_LIMITER.limit + 1} was allowed — wrangler.toml's simple.limit is higher ` +
-        'than NATIVE_LIMITER.limit, so the auth surface is enforcing a number nobody wrote down',
-    ).toBe(false)
+      blocks.map((b) => b.env),
+      `no [[ratelimits]] block named ${NATIVE_LIMITER.binding}`,
+    ).toContain('production')
+    for (const block of blocks) {
+      expect(
+        { limit: block.limit, period: block.period },
+        `wrangler.toml (${block.env}) enforces a number NATIVE_LIMITER does not claim, so the ` +
+          'auth surface would quietly fall back to KV',
+      ).toEqual({ limit: NATIVE_LIMITER.limit, period: NATIVE_LIMITER.windowSeconds })
+    }
   })
 })
 

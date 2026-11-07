@@ -9,7 +9,6 @@
     "app/pages/index.vue",
     "scripts/seed.ts",
     "server/db/schema.ts",
-    "server/emails/generated.ts",
     "server/utils/lifecycle-app-steps.ts",
     "shared/utils/app-events.ts",
     "shared/utils/brand-colors.generated.ts"

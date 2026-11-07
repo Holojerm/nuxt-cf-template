@@ -1,7 +1,9 @@
 // Compiles emails/templates/*.vue (Maizzle) and their .txt siblings into the one
-// TypeScript module the Worker imports. Shared by `bun run email:build`, which
-// writes it, and `bun run email:check`, which diffs it — same function, so the
-// gate cannot disagree with the build.
+// TypeScript module the Worker imports, run by `bun run email:build` — from
+// postinstall and from `bun run ci`. The output is gitignored: a committed copy
+// drifted from its sources on every Maizzle or Tailwind bump, so Dependabot PRs
+// could never pass a byte-for-byte check. Whatever builds the Worker compiles
+// the emails it ships.
 //
 // Maizzle runs here, in Bun, and nowhere near the Worker: it needs Node APIs,
 // Vite and a CSS toolchain, none of which belong in a 3 MB bundle. The Worker
