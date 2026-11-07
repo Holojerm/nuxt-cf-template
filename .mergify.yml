@@ -1,0 +1,21 @@
+# Merge queue. Queue a PR by commenting "@mergifyio queue"; never arm GitHub auto-merge,
+# because a merge outside the queue invalidates every speculative check in it.
+#
+# Mergify tests up to three queued PRs at once, each on a draft PR holding main plus
+# every PR ahead of it, then squash-merges the originals in order. It reads the
+# ruleset's required checks and applies them to both the PR and the drafts, so this
+# file names no checks and is identical in every repo. The PR's own checks must pass
+# before it enters the queue, so a PR broken on its own never invalidates the drafts
+# behind it.
+#
+# The ruleset keeps "require branches to be up to date" on, with Mergify as an exempt
+# bypass actor: Mergify skips that rule, every other merge still has to be up to date.
+merge_queue:
+  max_parallel_checks: 3
+
+queue_rules:
+  - name: default
+    merge_method: squash
+    queue_conditions:
+      - base = main
+      - -draft
