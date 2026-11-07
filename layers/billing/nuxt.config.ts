@@ -10,7 +10,7 @@
 //   - price ids and the Paddle product id (below), as NUXT_* env vars;
 //   - plan copy and amounts: shadow layers/billing/app/utils/plans.ts, or layers/billing/app/pages/pricing.vue
 //     for a bespoke page. Both are client files, so an app copy wins over this one;
-//   - the Paddle hosts in its Content-Security-Policy (nuxt.config.ts › CSP);
+//   - the Paddle hosts in its Content-Security-Policy (shared/security-headers.ts);
 //   - entitlement-grant rules beyond the shipped ones, through
 //     registerBillingOutcomeHandler() (core's server/utils/billing-outcome.ts).
 // A layer's server/utils export always wins over an app file at the same path
