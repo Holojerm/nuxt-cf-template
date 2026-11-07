@@ -49,7 +49,7 @@ restart. The rest are in [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).
 | File Storage | **Cloudflare R2**          | For uploads (images, videos, docs)                               |
 | Auth         | **nuxt-auth-utils**        | Sealed cookie sessions, OAuth                                    |
 | Deployment   | **Wrangler**               | `bun run deploy` → `wrangler deploy` (NuxtHub Admin sunset Feb 2026) |
-| CI/CD        | **Workers Builds**         | Cloudflare-native CI: `bun run ci` + deploy on push (see README) |
+| CI/CD        | **Workers Builds**         | Cloudflare-native CI: `bun run ci` on PR branches, typecheck + build + deploy on `main` (see README) |
 | Linting      | **oxlint**                 | Fast Rust-based linter, config in `.oxlintrc.json`               |
 | Formatting   | **oxfmt**                  | Fast Rust-based formatter, config in `.oxfmtrc.json`             |
 | Validation   | **Zod**                    | All user input + API I/O                                         |
@@ -256,7 +256,8 @@ bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db
 bun run rename <name> # Rewrite the `my-app` placeholder across wrangler.toml, package.json,
                       # .mcp.json.example, fleet.json and mcp/ — every occurrence, in one go
 bun run ci            # Every gate, concurrently (scripts/ci.ts): format (writes), lint, design/brand/seo/fleet/crons/methods,
-                      # typecheck, test, build. Workers Builds runs this. NO browser suites: that image cannot
+                      # typecheck, test, build. Workers Builds runs this on non-production branches (the PR
+                      # gate; production builds run typecheck + build only). NO browser suites: that image cannot
                       # launch Chromium (see Gotchas). CI_SERIAL=1 runs the gates one at a time.
 bun run ci:fast       # While iterating: format (writes), the cheap gates + typecheck + tests touched since origin/main, no build
 bun run ci:browser    # playwright:install + test:a11y — what GitHub Actions runs

@@ -1,4 +1,5 @@
-// The merge gate — `bun run ci` (Workers Builds' build command) and `bun run ci:fast`.
+// The PR gate — `bun run ci`, run by Workers Builds on non-production branches (production
+// builds run typecheck + build only) — and `bun run ci:fast`.
 //
 // Runs the gates concurrently instead of as one `&&` chain, and runs every gate even after
 // one fails: an agent that sees all failures at once fixes them in one pass instead of one
