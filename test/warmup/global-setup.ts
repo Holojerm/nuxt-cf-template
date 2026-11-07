@@ -37,10 +37,20 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
   try {
     const page = await browser.newPage({ baseURL })
     for (const path of WARM_PATHS) {
-      // Failures are not fatal here. This is a performance measure, not a
-      // check: if the server is genuinely broken, the suites themselves should
-      // be the ones to say so, with a route name and a proper diff.
-      await page.goto(path, { timeout: 240_000, waitUntil: 'networkidle' }).catch(() => {})
+      // A slow or non-2xx page is not fatal: this is a performance measure, and
+      // the suites report a broken route with its name and a proper diff. A page
+      // that never loads in 240s is: every test behind it would burn its own 30s
+      // timeout and report the server's failure as dozens of unrelated ones.
+      const response = await page
+        .goto(path, { timeout: 240_000, waitUntil: 'networkidle' })
+        .catch((error: unknown) => {
+          throw new Error(`warm-up: ${path} did not load in 240s — is the dev server up?`, {
+            cause: error,
+          })
+        })
+      if (!response?.ok()) {
+        console.warn(`warm-up: ${path} answered ${response?.status()} — drop it from WARM_PATHS`)
+      }
     }
   } finally {
     await browser.close()

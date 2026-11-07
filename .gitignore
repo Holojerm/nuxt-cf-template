@@ -50,3 +50,6 @@ test-results/
 
 # Local MCP config; nuxt-mcp rewrites it on every dev boot. Copied from .mcp.json.example.
 .mcp.json
+
+# Compiled at install by `bun run email:build` (postinstall) — never commit it.
+server/emails/generated.ts
