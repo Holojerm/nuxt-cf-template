@@ -163,6 +163,8 @@ with it. Add a case to that function, not an ad-hoc send in a handler.
 
 
 
+<!-- forkless:lifecycle:start -->
+
 ## Lifecycle email
 
 `server/utils/lifecycle.ts` sends "did X, not Y within N days" email once a day
@@ -182,3 +184,5 @@ cap, the `lifecycle_email_sent` event, and once-only delivery through a
   whole user table the day Resend is first configured.
 - **Never rename a step id.** The id is the dedup key; a rename re-sends to everyone.
 - With Resend unconfigured the task logs `lifecycle_skipped` and does nothing.
+
+<!-- forkless:lifecycle:end -->
