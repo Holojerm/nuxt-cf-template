@@ -138,7 +138,7 @@ and the welcome mail.
 
 The same applies to tearing out *all* transactional email: delete the template files you no
 longer send and rebuild. **Keep** `server/utils/render-email.ts`, `emails/components/`,
-`emails/theme.generated.css`, `server/emails/generated.ts` and the
+`emails/theme.generated.css`, `email:build` in `postinstall` and the
 remaining templates you still send.
 
 ---

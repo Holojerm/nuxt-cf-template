@@ -52,9 +52,12 @@ if (process.env.TEST_WORKER_INDEX === undefined) console.info(`browser suites â†
 export default defineConfig({
   testDir: './test',
   testMatch: '**/*.spec.ts',
-  // A failing contrast ratio is deterministic â€” a retry only hides flake in the
-  // harness, and there is nothing here worth retrying.
-  retries: 0,
+  // A failing contrast ratio is deterministic, so a real failure fails twice. One
+  // CI retry is for the harness: the suite runs on a merge-queue batch of up to
+  // three PRs, and one cold-compile timeout on `nuxt dev` used to eject all
+  // three. A test that passes on retry is reported as flaky in the list output,
+  // with its first-attempt trace kept, so flake stays visible.
+  retries: process.env.CI ? 1 : 0,
   // Deliberately NOT raising the 30s default. The first navigation of a run
   // does blow through it on a cold Vite cache, but paying for that with a
   // bigger budget everywhere makes a genuine hang cost three times as long in
