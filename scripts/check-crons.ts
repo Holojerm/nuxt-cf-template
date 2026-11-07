@@ -76,7 +76,13 @@ const configSource = readFileSync(join(ROOT, 'nuxt.config.ts'), 'utf8')
 
 /** Strip comments so an example in a doc block cannot trip a rule. */
 function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  // One alternation, so a `/*` inside a string ('https://*.host', '/**') is
+  // consumed as part of that string instead of opening a comment that runs on
+  // to the next `*/` — which used to be a cron key like '*/30 * * * *'.
+  return source.replace(
+    /('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`)|\/\*[\s\S]*?\*\/|\/\/.*$/gm,
+    (_match, literal?: string) => literal ?? '',
+  )
 }
 
 /**

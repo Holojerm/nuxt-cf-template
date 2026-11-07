@@ -298,18 +298,15 @@ export const instanceSecrets = sqliteTable('instance_secrets', {
 // GET /api/fleet (`ops.kinds`) and does the mailing. Distinct from `feedback`
 // (what a person said): different retention (pruned after OPS_EVENT_RETENTION_DAYS
 // by the daily purge), audience and triage.
-export const opsEvents = sqliteTable(
-  'ops_events',
-  {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    kind: text('kind').notNull(), // a `kind` from the log taxonomy, e.g. server_error
-    detail: text('detail'), // one-line human summary — the fleet alert quotes it
-    path: text('path'), // request path, when there was one (query already stripped)
-    ...timestamps,
-  },
-)
+export const opsEvents = sqliteTable('ops_events', {
+  id: text('id')
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  kind: text('kind').notNull(), // a `kind` from the log taxonomy, e.g. server_error
+  detail: text('detail'), // one-line human summary — the fleet alert quotes it
+  path: text('path'), // request path, when there was one (query already stripped)
+  ...timestamps,
+})
 
 // Type exports
 export type User = typeof users.$inferSelect
