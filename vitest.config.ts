@@ -1,4 +1,4 @@
-// Vitest config — uses @cloudflare/vitest-pool-workers so tests run inside the
+// Vitest config — uses @cloudflare/vitest-plugin so tests run inside the
 // same `workerd` runtime that Cloudflare runs in production. Server-side code
 // gets real D1, KV, and R2 bindings via the `cloudflare:test` import, with
 // each test file getting its own isolated storage.
@@ -10,7 +10,7 @@
 
 import { fileURLToPath } from 'node:url'
 
-import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-pool-workers'
+import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-plugin'
 import { defineConfig } from 'vitest/config'
 
 const migrationsPath = fileURLToPath(new URL('./server/db/migrations', import.meta.url))
