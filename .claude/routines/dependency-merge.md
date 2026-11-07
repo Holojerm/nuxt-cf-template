@@ -29,18 +29,18 @@ anything red go to the owner.
    - Every check on its head commit is `success`. Use `gh pr checks <n>`; a check still
      pending means come back next run.
    - It has no merge conflict, and its base is the default branch.
-3. Merge with `gh pr merge <n> --squash`, at tier 2 only (`_shared.md` › Autonomy tiers).
-   Without the grant, comment `ready to merge: all checks green, minor/patch only` and leave it.
+3. Queue it with `gh pr comment <n> --body "@mergifyio queue"`, at tier 2 only (`_shared.md` ›
+   Autonomy tiers); Mergify merges it once its checks pass on top of main. Without the grant, comment `ready to merge: all checks green, minor/patch only` and leave it.
 4. **A red check.** Read the failing log. If the cause is unrelated to the update, re-run the
    check once with `gh run rerun --failed`. If it fails again, or the failure is caused by the
    update, comment the failing check's name and its first error line, label the PR
    `needs-owner`, and move on. Never push to a Dependabot branch: it rebases over pushes.
 5. **A major update.** Leave it open for the owner. On its first sighting, comment one line
    naming the package's changelog or release-notes URL.
-6. Journal every PR: merged, waiting on checks, escalated (and why), or left for the owner.
+6. Journal every PR: queued, waiting on checks, escalated (and why), or left for the owner.
 
 ## Hard limits for this routine
 
-- Merge only Dependabot-authored PRs that meet step 2. Never use `--admin`, never enable
-  auto-merge, and never approve or merge anything else.
+- Queue only Dependabot-authored PRs that meet step 2. Never merge directly, never use
+  `--admin`, never enable GitHub auto-merge, and never approve or queue anything else.
 - No code changes, no pushes, no closing PRs.
