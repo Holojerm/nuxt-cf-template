@@ -80,8 +80,9 @@ a configuration gap: journal it and do not retry.
      3. meet that row's done-bar;
      4. run `bun run ci`;
      5. open the PR, titled `ops-triage: <subject> — <cause>`;
-     6. wait with `gh pr checks <n> --watch --fail-fast`, and merge with `gh pr merge <n> --squash`
-        only when every check is green and the diff still meets the row.
+     6. wait with `gh pr checks <n> --watch --fail-fast`, and queue it with
+        `gh pr comment <n> --body "@mergifyio queue"` only when every check is green and the
+        diff still meets the row; Mergify merges it on top of main.
 
      If a check fails, make one fix attempt. If it fails again, leave the PR open, label it
      `needs-owner`, and escalate.
@@ -100,13 +101,14 @@ a configuration gap: journal it and do not retry.
    At most two PRs per run. If more groups qualify, fix the two with the most events, and turn
    the rest into issues.
 
-6. Journal every group with its outcome: `fixed (#PR, merged)`, `PR open`, `issue #n`,
+6. Journal every group with its outcome: `fixed (#PR, queued)`, `PR open`, `issue #n`,
    `recovered`, or `transient`. Also journal the deploy check's result.
 
 ## Hard limits for this routine
 
-- Merge only a PR this run opened, under a Mechanical fixes row, at tier 2, with every check
-  green. Never use `--admin`, never enable auto-merge, and never merge someone else's PR.
+- Queue only a PR this run opened, under a Mechanical fixes row, at tier 2, with every check
+  green. Never merge directly, never use `--admin`, never enable GitHub auto-merge, and never
+  queue someone else's PR.
 - The only outbound call besides GitHub is the deploy hook POST in step 3. Never write to the
   Worker.
 - Never edit `.github/`, `wrangler.toml`, `nuxt.config.ts`, `AGENTS.md` or `.claude/`, and
