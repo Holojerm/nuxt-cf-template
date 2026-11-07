@@ -13,10 +13,10 @@
 //   2. New migrations are expand-only. A migration added on this branch that drops or
 //      renames a table or column breaks the Worker still serving during the deploy, and
 //      a SQLite table rebuild (drizzle's `__new_` pattern) under foreign keys can cascade.
-//      Write `-- destructive-ok: <why>` on its own line when the break is intended.
+//      Write `-- destructive-ok: <why>` after a statement's `;` when the break is intended.
 //   3. Every migration ends its last statement with `;`. `wrangler d1 migrations apply`
 //      appends its own `INSERT INTO d1_migrations` to the file before sending it, so a
-//      missing terminator (easy to lose when appending a comment to the last line) is a
+//      missing terminator (easy to lose when appending the marker to the last line) is a
 //      syntax error on remote D1 only: the tests split statements and pass. It failed two
 //      production deploys (sinew 0008, pocket-film-school 0007) on 2026-11-07.
 
