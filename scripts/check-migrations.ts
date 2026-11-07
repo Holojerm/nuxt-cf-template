@@ -13,7 +13,12 @@
 //   2. New migrations are expand-only. A migration added on this branch that drops or
 //      renames a table or column breaks the Worker still serving during the deploy, and
 //      a SQLite table rebuild (drizzle's `__new_` pattern) under foreign keys can cascade.
-//      Write `-- destructive-ok: <why>` in the file when the break is intended.
+//      Write `-- destructive-ok: <why>` after a statement's `;` when the break is intended.
+//   3. Every migration ends its last statement with `;`. `wrangler d1 migrations apply`
+//      appends its own `INSERT INTO d1_migrations` to the file before sending it, so a
+//      missing terminator (easy to lose when appending the marker to the last line) is a
+//      syntax error on remote D1 only: the tests split statements and pass. It failed two
+//      production deploys (sinew 0008, pocket-film-school 0007) on 2026-11-07.
 
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -119,7 +124,22 @@ function checkExpandOnly(files: string[]) {
   }
 }
 
+function checkTerminated() {
+  for (const file of readdirSync(join(ROOT, MIGRATIONS)).filter((f) => f.endsWith('.sql'))) {
+    const sql = readFileSync(join(ROOT, MIGRATIONS, file), 'utf8')
+      .replaceAll('--> statement-breakpoint', '')
+      .replace(/--.*$/gm, '')
+      .trim()
+    if (sql && !sql.endsWith(';')) {
+      failures.push(
+        `${MIGRATIONS}/${file} does not end its last statement with \`;\` — wrangler appends an INSERT, and remote D1 rejects the file.`,
+      )
+    }
+  }
+}
+
 await checkDrift()
+checkTerminated()
 const added = addedMigrations()
 if (added) checkExpandOnly(added)
 
