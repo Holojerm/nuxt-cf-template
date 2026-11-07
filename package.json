@@ -13,7 +13,7 @@
     "dev:app": "nuxt dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "postinstall": "bun run email:build && nuxt prepare",
+    "postinstall": "nuxt prepare && bun run email:build",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt",

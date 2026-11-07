@@ -1,4 +1,4 @@
-// Shared by `bun run email:build` (also run by postinstall) and `email:dev` — one config, so
+// Shared by `bun run email:build` (also run by postinstall, after `nuxt prepare`) and `email:dev` — one config, so
 // what you preview is what gets compiled.
 
 import { defineConfig } from '@maizzle/framework'
