@@ -18,8 +18,12 @@
 // put it there in this file, through the same buy step Spec 2 proves works.
 
 import {
+  billingE2e,
   DAY_MS,
   expect,
+  expectAccess,
+  expectBounced,
+  expectUnlocked,
   expectWebhookAccepted,
   subscriptionEvent,
   test,
@@ -53,8 +57,7 @@ test.describe('cancel → lose access', () => {
     // Access really was granted before it's taken away — otherwise a
     // passing redirect assertion below could just mean the buy step silently
     // failed rather than that the cancellation worked.
-    await page.goto('/dashboard')
-    await expect(page).toHaveURL(/\/dashboard$/)
+    await expectUnlocked(page)
 
     await expectWebhookAccepted(
       await sendPaddleEvent(
@@ -68,19 +71,19 @@ test.describe('cancel → lose access', () => {
       ),
     )
 
-    await page.goto('/dashboard')
-    await page.waitForURL(/\/pricing/)
-    const url = new URL(page.url())
-    expect(url.pathname).toBe('/pricing')
-    expect(url.searchParams.get('from')).toBe('/dashboard')
+    if (billingE2e.gatedPath) await expectBounced(page, billingE2e.upsellPathPrefix)
 
     await page.goto('/account')
     await expect(page.getByText("You don't have an active plan.")).toBeVisible()
 
     const entitlement = await context.request.get('/api/billing/entitlement')
-    const body = (await entitlement.json()) as { active: boolean; state: string }
+    const body = (await entitlement.json()) as {
+      active: boolean
+      state: string
+    }
     expect(body.active).toBe(false)
     expect(body.state).toBe('inactive')
+    await expectAccess({ page, request: context.request }, 'denied')
 
     await violations.assertClean()
   })
@@ -118,14 +121,11 @@ test.describe('cancel → lose access', () => {
       ),
     )
 
-    await page.goto('/dashboard')
     // Not /pricing: layers/billing/app/middleware/subscription.ts sends a past_due account
     // to /account specifically, because /pricing would read as "buy the
     // thing you're already paying for" to someone mid-dunning.
-    await page.waitForURL(/\/account/)
-    const url = new URL(page.url())
-    expect(url.pathname).toBe('/account')
-    expect(url.searchParams.get('from')).toBe('/dashboard')
+    if (billingE2e.gatedPath) await expectBounced(page, '/account')
+    else await page.goto('/account')
 
     // layers/billing/app/components/Billing/PastDueAlert.vue — shared between the layout
     // banner and this page specifically so the two can't tell two different
@@ -133,9 +133,13 @@ test.describe('cancel → lose access', () => {
     await expect(page.getByText("Your last payment didn't go through")).toBeVisible()
 
     const entitlement = await context.request.get('/api/billing/entitlement')
-    const body = (await entitlement.json()) as { active: boolean; state: string }
+    const body = (await entitlement.json()) as {
+      active: boolean
+      state: string
+    }
     expect(body.active).toBe(false)
     expect(body.state).toBe('past_due')
+    await expectAccess({ page, request: context.request }, 'denied')
 
     await violations.assertClean()
   })
