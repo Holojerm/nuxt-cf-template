@@ -228,10 +228,10 @@ const securityHeaders = {
 // map, so the dashboard compares the schedule Nitro will honour against the
 // triggers Cloudflare says it registered.
 //
-//   04:00 UTC  — retention sweep, server/tasks/purge-expired-tokens.ts; then
-//                lifecycle email, server/tasks/lifecycle-email.ts; then the
-//                IndexNow ping, server/tasks/seo/indexnow.ts. The purge also
-//                prunes the ops_events spool (7 days).
+//   04:00 UTC  — retention sweep, server/tasks/purge-expired-tokens.ts, which also
+//                prunes the ops_events spool (7 days); then
+//                lifecycle email, server/tasks/lifecycle-email.ts; (forkless:lifecycle)
+//                then the IndexNow ping, server/tasks/seo/indexnow.ts.
 const SCHEDULED_TASKS: Record<string, string[]> = {
   '0 4 * * *': ['purge-expired-tokens', 'lifecycle-email', 'seo:indexnow'],
 }
