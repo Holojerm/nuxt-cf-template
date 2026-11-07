@@ -3,6 +3,7 @@ schedule: "15 15 * * 1"
 model: claude-sonnet-5
 connectors: [github]
 tier: 2
+scope: fleet
 enabled: false
 ---
 

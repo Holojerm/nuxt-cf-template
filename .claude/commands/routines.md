@@ -13,13 +13,19 @@ Supported: `sync`, `status`, `enable <name>`, `disable <name>`, `run <name>`.
    If there's no remote, stop and tell the user — cloud routines need a pushed GitHub repo.
 3. Read the definition files in `.claude/routines/`, skipping `README.md`, `_shared.md`, and
    `routines.config.md`. Parse each file's YAML frontmatter: `schedule` (5-field cron, UTC),
-   `model`, `connectors`, `enabled`.
+   `model`, `connectors`, `enabled`, `scope`.
+   `scope: fleet` means the owner runs that definition from one routine across every repo,
+   named `all-repos-<file-stem>`, not one routine per repo.
 4. Fetch existing routines with `RemoteTrigger {action: "list"}`. A definition file matches an
    existing routine by exact name `<repo>-<file-stem>` (e.g. `sysdesign-prep-issue-triage`).
 
 ## sync
 
-For each definition file, create or update the routine in the user's account:
+Skip every definition with `scope: fleet`: never create or update `<repo>-<file-stem>` for it.
+If a `<repo>-<file-stem>` routine for one exists anyway, report it as a duplicate of the
+fleet-wide routine for the user to delete. In the final table, list these as "fleet-wide".
+
+For each other definition file, create or update the routine in the user's account:
 
 - **Name**: `<repo>-<file-stem>`.
 - **Cron**: frontmatter `schedule`.
@@ -59,7 +65,8 @@ connector warnings, and each routine's link `https://claude.ai/code/routines/<id
 
 List account routines matching the `<repo>-` prefix alongside the definition files: enabled
 state, schedule, last/next run, and any drift (definition file changed since last sync, missing
-routine, orphaned routine). Suggest `sync` if drifted.
+routine, orphaned routine). Suggest `sync` if drifted. Show `scope: fleet` definitions as
+fleet-wide, with the `all-repos-<file-stem>` routine's state when it is listed.
 
 ## enable <name> / disable <name>
 
