@@ -19,7 +19,7 @@ const props = defineProps<{
   heading: string
   /** The <title>, when it should differ from the heading. */
   title?: string
-  /** Small caps line above the heading — the ops digest uses it. */
+  /** Small caps line above the heading. */
   kicker?: string
   /** Widens the card from 560px to 600px, for emails that carry tables of rows. */
   wide?: boolean

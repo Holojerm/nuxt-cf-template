@@ -738,8 +738,7 @@ task name has no file under `server/tasks/`. The map lives once, as `SCHEDULED_T
 of `nuxt.config.ts`, and is handed to both `nitro.scheduledTasks` and `runtimeConfig.scheduledTasks`
 so [`/api/status`](#fleet-contract-status-manifest-and-the-portfolio-dashboard) can report it.
 
-The second task that ships is [`ops:alert`](./server/tasks/ops/alert.ts), every 30 minutes —
-see [Ops alerting](#ops-alerting) below.
+The purge task also prunes the `ops_events` spool (see [Ops alerting](#ops-alerting) below).
 
 ---
 
@@ -748,31 +747,25 @@ see [Ops alerting](#ops-alerting) below.
 Cloudflare cannot alert on Worker logs. Workers Logs has no notification hook, Log Explorer does
 not carry `workers_trace_events`, and the Notifications catalogue has no usable Workers entry. So
 the only component that both knows a request failed and can do something about it is the Worker
-itself — and this template makes it do so.
+itself. It spools; the dashboard alerts.
 
 - **The spool.** [`recordOpsEvent(db, { kind, detail, path })`](./server/utils/ops.ts) writes a
   row to `ops_events`. The error plugin calls it for every unhandled 5xx; call it yourself for
   anything else worth waking up for (a webhook whose signature failed, a money event that
   matched no account). It never throws and truncates `detail` to 500 characters — an alerting
   failure must not become the user's problem, and a stack trace is not an email.
-- **The digest.** [`server/tasks/ops/alert.ts`](./server/tasks/ops/alert.ts) runs every 30
-  minutes, groups what is pending by `kind` (loudest first, five examples each), emails one
-  HTML + plain-text message (rendered from `emails/templates/ops-digest.*`) through the `[[send_email]] ALERT_EMAIL` binding, marks the rows notified, and prunes
-  anything older than 7 days. Rows are marked **only after the send resolves**: a failed send
-  leaves them pending and the next tick retries. Silence is the healthy state — an empty spool
-  costs one indexed `SELECT` and one `DELETE` per tick.
-- **Turning it on** is three steps in [`wrangler.toml`](./wrangler.toml): verify your address
-  under Email → Email Routing → Destination addresses, uncomment the `[[send_email]]` block with
-  that address, and set `NUXT_ALERT_EMAIL_TO` (the same address) and `NUXT_ALERT_EMAIL_FROM`
-  (any address on a zone in your account with Email Routing enabled) in `[vars]`. Sends to a
-  verified destination are free. Until then every tick logs `ops_alert_unconfigured` and sends
-  nothing — a setup state, not an error.
+- **The alert.** The app sends nothing. [`GET /api/fleet`](./server/api/fleet.get.ts) reports the
+  last 24 h of the spool as `ops.kinds` (per kind: severity, count, newest row's `detail` and
+  `path`), and the fleet dashboard, which already polls it every 15 minutes, is the only thing
+  that mails you. The daily purge task prunes rows older than 7 days.
+- **Severity.** [`server/utils/ops-severity.ts`](./server/utils/ops-severity.ts) tiers each kind
+  `critical`, `warning` or `info`; unregistered kinds are warnings.
 - **What it cannot catch** is the Worker failing to run at all: a broken deploy alerts nobody,
   because the thing that would alert you is the thing that is broken. That is what the portfolio
   dashboard's external poll of `/api/status` is for.
 
-[`test/ops.test.ts`](./test/ops.test.ts) drives the spool against a real D1 — including the
-case where the mailer throws and the rows must survive.
+[`test/ops.test.ts`](./test/ops.test.ts) drives the spool against a real D1; the per-kind summary
+is tested in [`test/fleet-status.test.ts`](./test/fleet-status.test.ts).
 
 ---
 
@@ -810,7 +803,7 @@ fingerprint the deployment. It carries no secrets:
   "build": { "sha": "d0b2f48…", "date": "2026-08-22" },
   "versions": { "nuxt": "^4.5.2", "wrangler": "^4.125.0", "templateSyncedSha": null },
   "migrations": { "repo": { "head": "0013_…", "count": 14 }, "applied": { "table": "d1_migrations", "head": "0013_…", "count": 14 }, "pending": [], "unknown": [] },
-  "crons": { "0 4 * * *": ["purge-expired-tokens"], "*/30 * * * *": ["ops:alert"] }
+  "crons": { "0 4 * * *": ["purge-expired-tokens"] }
 }
 ```
 
@@ -833,8 +826,8 @@ guard must not 401 them before they answer.
 
 ### Ops alerting
 
-The [spool and digest above](#ops-alerting) is the third piece: the dashboard reads the pending
-count, and the email is how you hear about it when you are not looking at the dashboard.
+The [spool above](#ops-alerting) is the third piece: the dashboard reads `ops.kinds` from
+`/api/fleet`, and its email is how you hear about it when you are not looking at the dashboard.
 
 ---
 

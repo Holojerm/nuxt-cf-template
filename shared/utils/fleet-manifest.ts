@@ -165,7 +165,7 @@ export const FleetManifestSchema = z.strictObject({
     billing: z.boolean(),
     /** PostHog project, or null when analytics is not wired up. */
     posthog: z.strictObject({ projectId: z.number().int().positive() }).nullable(),
-    /** The `ops_events` spool and its digest cron. */
+    /** The `ops_events` spool the fleet dashboard alerts on. */
     opsEvents: z.boolean(),
   }),
 

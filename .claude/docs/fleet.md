@@ -1,7 +1,7 @@
 # Fleet contract — status, manifest, ops alerts
 
 **Load this when:** you are touching `fleet.json`, `/api/status`, `/api/fleet`, the
-`ops_events` spool or its digest cron, or wiring this app into the portfolio dashboard.
+`ops_events` spool and the fleet alerts built on it, or wiring this app into the portfolio dashboard.
 
 Every fork of this template can be watched by one portfolio dashboard (`fleet`,
 itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
@@ -33,7 +33,7 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   (feedback's, and billing's `entitlements: { byStatus }`). The funnel's `paid` stage is the one
   number core cannot count itself: billing registers it with `registerFunnelStageContributor({ key: 'paid', count })`,
   and with no contributor `funnel.paid` reads 0, so the funnel keeps its shape. With nothing
-  registered the response carries only `users`, `opsEvents`, `funnel` and `extra` (`{}`).
+  registered the response carries only `users`, `ops`, `funnel` and `extra` (`{}`).
 - **`app-owned.json`** (template root) lists the template paths every app owns by
   design: brand, home page and layout, generated email and colour output, the
   schema composition root, the seed and the fork's own event and lifecycle
@@ -49,24 +49,22 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   fork's own, shipped empty) — `fleet:check` fails otherwise, and
   `captureServerEvent` only accepts registered names. `null` for an app with no
   users to grow.
-- **Ops alerting.** Anything worth waking the owner up for calls
-  `recordOpsEvent(db, { kind, detail, path })` — the error plugin already does
-  for every 5xx — and `server/tasks/ops/alert.ts` drains the spool into one
-  digest email every 30 minutes via the `[[send_email]] ALERT_EMAIL` binding.
-  Unconfigured = one `ops_alert_unconfigured` log line per tick and nothing
-  sent, but the retention sweep (`pruneOpsEvents()`) still runs, so the spool
-  cannot grow without bound. Rows are marked notified only after the send resolves, so a mail
-  hiccup retries instead of losing the alert. Always `await` the record call:
-  a 5xx is exactly the path that ends the request before a floated promise runs.
+- **Ops alerting: apps spool, the fleet dashboard alerts.** Anything worth waking the owner up
+  for calls `recordOpsEvent(db, { kind, detail, path })` — the error plugin already does for
+  every 5xx. The app never mails anyone. `GET /api/fleet` (`schema: 2`) reports the last 24 h
+  of the spool as `ops.kinds`, one entry per kind:
+  `{ kind, severity, count, lastAt, lastDetail, lastPath }`, sorted critical, warning, info,
+  then by count, at most 50. `lastDetail` is the newest row's one-line summary (500 characters
+  at write time), never a stack trace or user data. The dashboard polls it and is the only
+  thing that sends the alert email. The daily `purge-expired-tokens` task prunes rows older
+  than 7 days (`pruneOpsEvents()`), so the spool cannot grow without bound. Always `await` the
+  record call: a 5xx is exactly the path that ends the request before a floated promise runs.
 - **Severity.** Every kind has a tier, from `server/utils/ops-severity.ts`: `critical` (the app
   stopped doing its job), `warning` (one part degraded, and the default for any kind nobody
   registered), or `info` (the system handled it). Core knows `server_error` only, escalated to
-  critical at `SERVER_ERROR_CRITICAL_COUNT` in one digest. A layer or the app registers its own
-  kinds with `registerOpsSeverity({ kind: { severity, action? } })` from a Nitro plugin, next to
-  the `recordOpsEvent` call (billing registers `paddle_webhook_unconfigured`). The digest leads
-  with the most severe kind, the subject starts `[Critical]`, `[Warning]` or `[Info]` so a mail
-  filter can split them, critical kinds carry their "What to do" line, and a spool of only info
-  rows waits up to `OPS_INFO_HOLD_MS` (a day) unless something louder goes out first.
+  critical at `SERVER_ERROR_CRITICAL_COUNT` rows in the 24 h window. A layer or the app registers
+  its own kinds with `registerOpsSeverity({ kind: { severity, action? } })` from a Nitro plugin,
+  next to the `recordOpsEvent` call (billing registers `paddle_webhook_unconfigured`).
   The `ops-triage` routine reads the same spool through `GET /api/ops/events`
   (bearer `NUXT_OPS_TOKEN`, 404 when unset). That route also reports the build sha
   and pending migrations, so the routine can tell when a merge never deployed.

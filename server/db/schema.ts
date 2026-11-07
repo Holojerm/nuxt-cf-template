@@ -294,11 +294,10 @@ export const instanceSecrets = sqliteTable('instance_secrets', {
 })
 
 // Ops events — the alerting spool. Workers Logs cannot be alerted on, so the
-// Worker writes what it noticed here and server/tasks/ops/alert.ts drains it on
-// a cron into an emailed digest. Distinct from `feedback` (what a person said):
-// different retention (pruned after OPS_EVENT_RETENTION_DAYS), audience and
-// triage. `notified_at` is the drain marker, NULL = still owed an email, and
-// indexed because the cron filters on it every tick.
+// Worker writes what it noticed here; the fleet dashboard reads it through
+// GET /api/fleet (`ops.kinds`) and does the mailing. Distinct from `feedback`
+// (what a person said): different retention (pruned after OPS_EVENT_RETENTION_DAYS
+// by the daily purge), audience and triage.
 export const opsEvents = sqliteTable(
   'ops_events',
   {
@@ -306,12 +305,10 @@ export const opsEvents = sqliteTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
     kind: text('kind').notNull(), // a `kind` from the log taxonomy, e.g. server_error
-    detail: text('detail'), // one-line human summary — goes in the email body
+    detail: text('detail'), // one-line human summary — the fleet alert quotes it
     path: text('path'), // request path, when there was one (query already stripped)
-    notifiedAt: integer('notified_at', { mode: 'timestamp' }),
     ...timestamps,
   },
-  (t) => [index('ops_events_notified_at_idx').on(t.notifiedAt)],
 )
 
 // Type exports

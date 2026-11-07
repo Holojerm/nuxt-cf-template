@@ -137,7 +137,7 @@ PR must leave the fork with all of them working — see AGENTS.md › Fleet cont
    that is what deploys it). Run both before opening the PR; `crons:check` in particular has
    found a fork whose nightly backup had never once run.
 
-`/api/status`, `/api/fleet`, the ops spool (`ops_events` + `server/tasks/ops/alert.ts`) and the
+`/api/status`, `/api/fleet`, the ops spool (`ops_events`) and the
 `[observability]` block come across with the rest of the sync. `NUXT_FLEET_TOKEN` is a secret
 the owner sets per fork — say in the PR that it is needed, never generate one.
 

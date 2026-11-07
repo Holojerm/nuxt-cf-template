@@ -85,7 +85,7 @@ chargebacks) carry no product, so an app cannot tell the other's refunds from it
 `paddle_adjustment_unmatched` alert stays a log line. The default (`true`) is right for an app with
 its own account.
 
-**What raises an ops alert** (`recordOpsEvent`, so a digest email; the same events are also logged):
+**What raises an ops alert** (`recordOpsEvent`, so a fleet alert; the same events are also logged):
 
 | Kind | When |
 | --- | --- |

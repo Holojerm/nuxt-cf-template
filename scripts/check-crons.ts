@@ -18,7 +18,7 @@
 //   1. The set of cron expressions in wrangler.toml equals the set of keys in
 //      nitro.scheduledTasks. Both directions.
 //   2. Every task name in that map has a file under server/tasks/ (the app's
-//      or a layer's) — Nitro resolves `ops:alert` to server/tasks/ops/alert.ts.
+//      or a layer's) — Nitro resolves `seo:indexnow` to server/tasks/seo/indexnow.ts.
 //   3. If any task is scheduled, `nitro.experimental.tasks` is on, or the
 //      preset's scheduled() handler never calls runCronTasks().
 //

@@ -230,12 +230,10 @@ const securityHeaders = {
 //
 //   04:00 UTC  — retention sweep, server/tasks/purge-expired-tokens.ts; then
 //                lifecycle email, server/tasks/lifecycle-email.ts; then the
-//                IndexNow ping, server/tasks/seo/indexnow.ts
-//   */30       — ops digest, server/tasks/ops/alert.ts. Silence is the healthy
-//                state: an empty spool costs one indexed SELECT per tick.
+//                IndexNow ping, server/tasks/seo/indexnow.ts. The purge also
+//                prunes the ops_events spool (7 days).
 const SCHEDULED_TASKS: Record<string, string[]> = {
   '0 4 * * *': ['purge-expired-tokens', 'lifecycle-email', 'seo:indexnow'],
-  '*/30 * * * *': ['ops:alert'],
 }
 
 /**
@@ -638,15 +636,6 @@ export default defineNuxtConfig({
     // NUXT_INDEXNOW_KEY in wrangler.toml [vars]. Empty = the daily seo:indexnow
     // task and the key route both no-op. See server/utils/indexnow.ts.
     indexnowKey: '',
-    // Ops alerting — where the cron digest goes (server/tasks/ops/alert.ts).
-    // `from` must be on a domain in the Cloudflare account with Email Routing
-    // enabled; `to` must be a verified destination address. That combination
-    // is free and needs no sending-domain onboarding. Both empty = the cron
-    // logs `ops_alert_unconfigured` and sends nothing. Set in wrangler.toml
-    // [vars] as NUXT_ALERT_EMAIL_TO / NUXT_ALERT_EMAIL_FROM — neither is a
-    // secret, and the [[send_email]] binding pins the destination anyway.
-    alertEmailTo: '',
-    alertEmailFrom: '',
     // OAuth providers, read by nuxt-auth-utils' defineOAuth*EventHandler.
     // Declared here (rather than left implicit) so /api/auth/providers can tell
     // the login page which buttons to render — an unconfigured provider dead-ends

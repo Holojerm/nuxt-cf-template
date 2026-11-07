@@ -75,7 +75,7 @@ describe('core without feature contributors', () => {
   it('reports no entitlements group and a paid funnel stage of 0', async () => {
     const counters = await collectFleetCounters(db)
     expect(counters).not.toHaveProperty('entitlements')
-    expect(Object.keys(counters).sort()).toEqual(['extra', 'funnel', 'opsEvents', 'users'])
+    expect(Object.keys(counters).sort()).toEqual(['extra', 'funnel', 'ops', 'users'])
     expect(counters.funnel).toMatchObject({ paid: 0 })
     expect((await collectFleetFunnel(db)).paid).toBe(0)
   })
