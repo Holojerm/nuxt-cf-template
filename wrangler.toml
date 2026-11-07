@@ -149,6 +149,12 @@ dead_letter_queue = "my-app-email-dlq"
 enabled = true
 head_sampling_rate = 1
 
+# Workers Issues: groups exceptions, failed invocations, 5xx responses and hangs.
+# The account notification posts each one to the fleet dashboard. Must stay in
+# this file: a deploy without it turns Issues off. Needs wrangler 4.134+.
+[observability.issues]
+enabled = true
+
 # Automatic tracing: a span for every fetch, D1, KV, R2 and Queue call, in
 # requests and cron runs alike, with no SDK or code change. Logs say a cron
 # failed; a trace says which call inside it was slow or threw. OTel-shaped, so
