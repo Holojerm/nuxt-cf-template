@@ -23,7 +23,7 @@ after reading a routine's drafts for a few weeks; delete it to take the grant ba
 
 | Routine | Tier | Granted on |
 | --- | --- | --- |
-| _(none yet)_ | | |
+| dependency-merge | 2 | 2026-11-07 |
 
 ## Mechanical fixes
 
