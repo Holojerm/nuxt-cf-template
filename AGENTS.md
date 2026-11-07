@@ -206,7 +206,8 @@ Each of these has a full contract in its own doc — this is the one-line versio
   heavy components, uploads to R2 via `blob`. → [`patterns.md`](.claude/docs/patterns.md)
 - **Fleet contract** — `fleet.json` describes this app, `GET /api/status` reports build,
   migrations and crons, `GET /api/fleet` reports counters behind a token, and every 5xx
-  spools an `ops_events` row that a cron emails as a digest.
+  spools an `ops_events` row; fleet reads them from `/api/fleet` and is the only thing that
+  emails alerts.
   → [`fleet.md`](.claude/docs/fleet.md)
 
 ---

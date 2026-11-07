@@ -34,8 +34,11 @@ export interface OpsKindPolicy {
  */
 export type OpsClassifier = (kind: string, count: number) => OpsKindPolicy
 
-/** A burst of 5xxs inside the 24 h window means the app is broken, not one route. */
-export const SERVER_ERROR_CRITICAL_COUNT = 10
+/**
+ * 5xxs inside the 24 h window that mean the app is broken, not one route. Fleet mails a
+ * critical within minutes, so this sits well above a normal day's handful of errors.
+ */
+export const SERVER_ERROR_CRITICAL_COUNT = 50
 
 const SERVER_ERROR_BURST: OpsKindPolicy = {
   severity: 'critical',
