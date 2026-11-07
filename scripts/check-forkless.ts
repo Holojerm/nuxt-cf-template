@@ -97,13 +97,38 @@ function remove(dir: string, ...paths: string[]) {
   for (const path of paths) rmSync(join(dir, path), { recursive: true, force: true })
 }
 
-function edit(dir: string, path: string, change: (source: string) => string) {
+/** `anchor` names what the edit looks for, so a failure says what moved. */
+function edit(dir: string, path: string, change: (source: string) => string, anchor?: string) {
   const file = join(dir, path)
   const before = readFileSync(file, 'utf8')
   const after = change(before)
   if (after === before)
-    throw new Error(`forkless: edit to ${path} changed nothing — update the scenario`)
+    throw new Error(
+      `forkless: edit to ${path} changed nothing${anchor ? ` — ${anchor} is gone or moved` : ''}; update the scenario`,
+    )
   writeFileSync(file, after)
+}
+
+/**
+ * Prose is never string-patched. A doc that describes a removable feature
+ * brackets the description with markers instead, so rewording a sentence cannot
+ * break this gate: `<!-- forkless:<name>:start -->` … `<!-- forkless:<name>:end -->`
+ * drops a block, and a line containing `forkless:<name>` drops that line.
+ */
+function dropMarked(dir: string, path: string, name: string) {
+  const mark = `forkless:${name}`
+  const block = new RegExp(`[^\\n]*${mark}:start[^\\n]*\\n[\\s\\S]*?${mark}:end[^\\n]*\\n?`)
+  edit(
+    dir,
+    path,
+    (source) =>
+      source
+        .replace(block, '')
+        .split('\n')
+        .filter((line) => !line.includes(mark))
+        .join('\n'),
+    `the \`${mark}\` marker`,
+  )
 }
 
 function dropSchemaExport(dir: string, layer: string) {
@@ -203,20 +228,18 @@ const scenarios: Scenario[] = [
       withoutBilling(dir)
       withoutLifecycle(dir)
       // The documented edits (TEARDOWN.md, "Lifecycle email").
-      edit(dir, 'nuxt.config.ts', (source) =>
-        source
-          .replace("'purge-expired-tokens', 'lifecycle-email'", "'purge-expired-tokens'")
-          .replace(/;\s*then\n\/\/\s+lifecycle email, server\/tasks\/lifecycle-email\.ts/, ''),
+      edit(
+        dir,
+        'nuxt.config.ts',
+        (source) => source.replace(/'lifecycle-email',?\s*/, ''),
+        "the 'lifecycle-email' entry of SCHEDULED_TASKS",
       )
-      edit(dir, '.claude/docs/email.md', (source) =>
-        source.replace(/\n## Lifecycle email\n[\s\S]*$/, '\n'),
-      )
+      dropMarked(dir, 'nuxt.config.ts', 'lifecycle')
+      dropMarked(dir, '.claude/docs/email.md', 'lifecycle')
       // TEARDOWN.md is the checklist a fork finishes and deletes; its rows name the
       // files of every subsystem a fork might have removed.
       remove(dir, 'TEARDOWN.md')
-      edit(dir, '.claude/docs/patterns.md', (source) =>
-        source.replace(/^\| Lifecycle step \|.*\n/m, ''),
-      )
+      dropMarked(dir, '.claude/docs/patterns.md', 'lifecycle')
     },
     checks: [...gates, cronsCheck, typecheck(BILLING_UI), unitTests],
   },
@@ -248,11 +271,15 @@ const scenarios: Scenario[] = [
     about: 'with layers/billing present the access-predicate pins are enforced',
     prepare: (dir) => {
       withoutReferral(dir)
-      edit(dir, 'layers/billing/server/utils/entitlements.ts', (source) =>
-        source.replace(
-          "export const ACTIVE_STATUSES = ['active', 'trialing']",
-          "export const ACTIVE_STATUSES = ['active']",
-        ),
+      edit(
+        dir,
+        'layers/billing/server/utils/entitlements.ts',
+        (source) =>
+          source.replace(
+            /export const ACTIVE_STATUSES = \[[^\]]*\]/,
+            "export const ACTIVE_STATUSES = ['active']",
+          ),
+        'the ACTIVE_STATUSES export',
       )
     },
     fork: false,
@@ -315,7 +342,14 @@ function becomeAFork(dir: string, vendored: string[]) {
     join(dir, 'layers.lock.json'),
     `${JSON.stringify({ repo: 'Holojerm/nuxt-cf-template', layers }, null, 2)}\n`,
   )
-  edit(dir, 'fleet.json', (source) => source.replace('"syncedSha": null', '"syncedSha": "0000000"'))
+  const fleetFile = join(dir, 'fleet.json')
+  const fleet = JSON.parse(readFileSync(fleetFile, 'utf8')) as {
+    template?: { syncedSha?: unknown }
+  }
+  if (!fleet.template || !('syncedSha' in fleet.template))
+    throw new Error('forkless: fleet.json has no template.syncedSha — update becomeAFork()')
+  fleet.template.syncedSha = '0000000'
+  writeFileSync(fleetFile, `${JSON.stringify(fleet, null, 2)}\n`)
   // A fork owns its README and AGENTS.md; the template's describe the template.
   // The docs under .claude/docs/ link back to AGENTS.md, so it stays, empty.
   remove(dir, 'README.md')
