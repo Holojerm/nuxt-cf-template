@@ -6,7 +6,7 @@
 //
 // No Nitro auto-imports here on purpose. Route files rely on Nuxt's
 // build-time transform to inject `defineEventHandler`/`useRuntimeConfig`, and
-// that transform never runs under `vitest-pool-workers` — a plain `import`
+// that transform never runs under `@cloudflare/vitest-plugin` — a plain `import`
 // of the route file would throw on the auto-imported names before a single
 // assertion ran. Keeping this file free of them, and taking every value as a
 // parameter, is what lets a test import it directly.

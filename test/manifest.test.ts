@@ -4,7 +4,7 @@
 // here — it's a thin wrapper around buildManifest(), and importing a route
 // file directly would hit `defineEventHandler`/`useRuntimeConfig` before a
 // single assertion ran, since those are Nitro auto-imports that only exist
-// after Nuxt's build-time transform, not under plain `vitest-pool-workers`.
+// after Nuxt's build-time transform, not under plain `@cloudflare/vitest-plugin`.
 // server/utils/manifest.ts takes every value as a parameter for exactly this
 // reason — see its header comment.
 //
