@@ -16,7 +16,7 @@ A production-ready template for full-stack apps on **Nuxt 4 + Cloudflare Workers
 | Content | `@nuxt/content` v3 — markdown blog, parsed at build time into the app's own D1 |
 | Linting | oxlint + oxfmt |
 | Validation | Zod |
-| Testing | Vitest + `@cloudflare/vitest-pool-workers` (real `workerd` runtime, real bindings) |
+| Testing | Vitest + `@cloudflare/vitest-plugin` (real `workerd` runtime, real bindings) |
 | Deployment | Wrangler → Cloudflare Workers |
 | CI/CD | Cloudflare Workers Builds (lint → typecheck → test → build → deploy) |
 
@@ -249,7 +249,7 @@ bun db:migrate:preview # Apply migrations to the preview D1 (nothing does this f
 bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed the local dev DB — one user per entitlement status, see scripts/seed.ts
 bun run rename <name> # Rewrite the my-app placeholder everywhere it appears
-bun run test          # Run Vitest in workerd via @cloudflare/vitest-pool-workers
+bun run test          # Run Vitest in workerd via @cloudflare/vitest-plugin
 bun test:watch        # Same, in watch mode
 bun run test:a11y     # Playwright: a11y + CSP + E2E, sharing one dev server (see below)
 bun run deploy        # Build + deploy to Cloudflare (`bun deploy` is reserved by Bun)
@@ -291,7 +291,7 @@ bun run deploy:preview # Same, then deploy — creates/updates the my-app-previe
 ├── .claude/            # Claude Code config (commands, skills, MCP)
 ├── .github/            # Dependabot config (CI/CD lives in Cloudflare Workers Builds)
 ├── content.config.ts   # Blog collection + frontmatter schema (@nuxt/content)
-├── vitest.config.ts    # Vitest + @cloudflare/vitest-pool-workers config
+├── vitest.config.ts    # Vitest + @cloudflare/vitest-plugin config
 ├── DESIGN.md           # Visual design system — the source of truth, see /design-sync
 ├── brand.lock.json     # Fingerprint of the generated brand assets (see brand:check)
 ├── wrangler.toml       # Cloudflare config (rename project here)
@@ -304,7 +304,7 @@ bun run deploy:preview # Same, then deploy — creates/updates the my-app-previe
 
 ## Testing
 
-Tests run inside the same `workerd` runtime that Cloudflare runs in production, via [`@cloudflare/vitest-pool-workers`](https://developers.cloudflare.com/workers/testing/vitest-integration/). D1, KV, and R2 bindings are real (in-memory, isolated per test file) and reached through the `cloudflare:test` import:
+Tests run inside the same `workerd` runtime that Cloudflare runs in production, via [`@cloudflare/vitest-plugin`](https://developers.cloudflare.com/workers/testing/vitest-integration/). D1, KV, and R2 bindings are real (in-memory, isolated per test file) and reached through the `cloudflare:test` import:
 
 ```ts
 import { env } from 'cloudflare:test'

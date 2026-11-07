@@ -76,7 +76,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
-    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/vitest-plugin": "^1.6.0",
     "@cloudflare/workers-types": "^5.20260821.1",
     "@iconify-json/lucide": "^1.2.124",
     "@libsql/client": "^0.17.4",
@@ -91,7 +91,7 @@
     "oxlint": "^1.79.0",
     "portless": "^0.15.5",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11",
+    "vitest": "~5.0.5",
     "vue-tsc": "^3.3.11",
     "wrangler": "^4.125.0"
   },
