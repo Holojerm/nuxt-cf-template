@@ -23,7 +23,7 @@ merge_queue:
 merge_protections_settings:
   auto_merge_conditions:
     - author = Holojerm
-    - -title ~= ^ops-triage:
+    - "-title ~= ^ops-triage:"
 
 queue_rules:
   - name: default
