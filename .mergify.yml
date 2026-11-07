@@ -22,3 +22,10 @@ queue_rules:
     queue_conditions:
       - base = main
       - -draft
+    # Two-step CI: the browser workflows skip their Playwright steps on a PR and run
+    # them on the queue's drafts. Merge conditions that differ from the queue
+    # conditions are what tell Mergify this queue is two-step, which turns off
+    # "direct merge": otherwise a lone, up-to-date PR would merge on its own CI alone,
+    # without the browser suites ever running. The ruleset's checks still apply on top.
+    merge_conditions:
+      - base = main
