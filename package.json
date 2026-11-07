@@ -13,7 +13,7 @@
     "dev:app": "nuxt dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "postinstall": "nuxt prepare",
+    "postinstall": "nuxt prepare && bun run email:build",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt",
@@ -29,7 +29,6 @@
     "brand:generate": "bun run scripts/generate-brand-assets.ts",
     "brand:check": "bun run scripts/check-brand.ts",
     "email:build": "bun run scripts/email-build.ts",
-    "email:check": "bun run scripts/email-check.ts",
     "email:dev": "bun run scripts/email-dev.ts",
     "email:preview": "bun run scripts/email-preview.ts",
     "mirror:check": "bun run scripts/check-mirrors.ts",
@@ -51,12 +50,14 @@
     "ci": "bun run scripts/ci.ts",
     "ci:fast": "bun run scripts/ci.ts --fast",
     "deploy": "nuxt build && wrangler --cwd .output deploy",
-    "deploy:ci": "bun run db:migrate:remote && wrangler --cwd .output deploy",
+    "deploy:ci": "bun run db:migrate:remote && wrangler --cwd .output deploy && bun run deploy:smoke",
     "build:preview": "CLOUDFLARE_ENV=preview nuxt build",
     "deploy:preview": "CLOUDFLARE_ENV=preview nuxt build && wrangler --cwd .output deploy",
     "mcp:dev": "bun run --cwd mcp dev",
     "mcp:typecheck": "bun run --cwd mcp typecheck",
-    "mcp:deploy": "bun run --cwd mcp deploy"
+    "mcp:deploy": "bun run --cwd mcp deploy",
+    "migrations:check": "bun run scripts/check-migrations.ts",
+    "deploy:smoke": "bun run scripts/deploy-smoke.ts"
   },
   "dependencies": {
     "@nuxt/content": "^3.15.2",

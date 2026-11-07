@@ -59,7 +59,7 @@ export function emailModuleSource(emails: Record<string, CompiledEmail>): string
 
   return `// GENERATED — edit emails/*.vue, then bun run email:build
 // Plain text is the .txt beside each template. Compiled by scripts/lib/email-compile.ts;
-// \`bun run email:check\` (part of \`bun run ci\`) fails when this file drifts from them.
+// Not committed: postinstall and \`bun run ci\` rebuild it, so it cannot drift from them.
 // Mustache tags are still in here — server/utils/render-email.ts fills them at send time.
 
 export interface CompiledEmail {

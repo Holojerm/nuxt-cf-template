@@ -1,7 +1,7 @@
 // Every compiled email, filled in from its sample — the contract the Maizzle
 // build and renderEmail() share. Runs in workerd, which has no filesystem, so it
 // imports the generated module rather than reading templates; a template edited
-// without `bun run email:build` is caught by `bun run email:check`, not here.
+// without `bun run email:build` cannot happen in CI: postinstall and `bun run ci` rebuild it.
 //
 // Per-email wording lives in test/email-templates.test.ts.
 // This file is what must hold for ALL of them, including the ones added later.

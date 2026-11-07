@@ -5,10 +5,12 @@
 // one fails: an agent that sees all failures at once fixes them in one pass instead of one
 // rerun per failure. Only a failing gate's output is printed.
 //
-// Formatting is written, not checked: the format-on-edit hook only sees Edit and Write, so files
-// changed through Bash (sed, python3) reach the gate unformatted, and a formatter failure there
-// only costs a rerun. It runs alone, before anything reads the files it rewrites. GitHub Actions
-// still runs `format:check` before this script, so an unformatted commit still fails the PR.
+// Locally, formatting is written, not checked: the format-on-edit hook only sees Edit and Write,
+// so files changed through Bash (sed, python3) reach the gate unformatted, and a formatter failure
+// there only costs a rerun. In CI (`CI` is set by Workers Builds and GitHub Actions) it is
+// `format:check` instead, so the required Workers Builds check is the format gate in every repo.
+// It runs before anything reads the files it rewrites, beside `email:build`, which compiles the
+// gitignored server/emails/generated.ts that the tests and the build import.
 //
 // The phases run in order because `nuxt typecheck` and `nuxt build` both regenerate `.nuxt/`
 // and `node_modules/@nuxthub`. They must not overlap each other, and they must not overlap
@@ -21,6 +23,7 @@
 
 const fast = process.argv.includes('--fast')
 const serial = process.env.CI_SERIAL === '1'
+const inCi = Boolean(process.env.CI)
 
 type Gate = { name: string; cmd: string[] }
 const run = (script: string, ...args: string[]): Gate => ({
@@ -32,7 +35,7 @@ const cheap = [
   'lint',
   'design:check',
   'brand:check',
-  'email:check',
+  'migrations:check',
   'mirror:check',
   'seo:check',
   'fleet:check',
@@ -72,7 +75,7 @@ async function runPhase(gates: Gate[]): Promise<Result[]> {
 const TAIL = 80
 const started = performance.now()
 const results: Result[] = []
-results.push(await exec(run('format')))
+results.push(...(await runPhase([run(inCi ? 'format:check' : 'format'), run('email:build')])))
 const tests = serial ? null : exec(background)
 for (const phase of phases) results.push(...(await runPhase(phase)))
 results.push(await (tests ?? exec(background)))

@@ -94,7 +94,7 @@ regenerated rather than committed.
 ### 5. Verify — do not skip
 
 ```bash
-bun run brand:check && bun run email:check && bun run design:check && bun run typecheck
+bun run brand:check && bun run email:build && bun run design:check && bun run typecheck
 ```
 
 Then look at it, in a browser, at real size:

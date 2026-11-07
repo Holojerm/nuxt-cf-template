@@ -256,7 +256,8 @@ bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db)
 bun run rename <name> # Rewrite the `my-app` placeholder across wrangler.toml, package.json,
                       # .mcp.json.example, fleet.json and mcp/ — every occurrence, in one go
-bun run ci            # Every gate, concurrently (scripts/ci.ts): format (writes), lint, design/brand/seo/fleet/crons/methods,
+bun run ci            # Every gate, concurrently (scripts/ci.ts): format (writes; checks in CI), email:build, lint,
+                      # design/brand/seo/fleet/crons/methods, migrations:check (schema.ts vs migrations, expand-only),
                       # typecheck, test, build. Workers Builds runs this on non-production branches (the PR
                       # gate; production builds run typecheck + build only). NO browser suites: that image cannot
                       # launch Chromium (see Gotchas). CI_SERIAL=1 runs the gates one at a time.
@@ -277,7 +278,8 @@ starting: iterate with `bun run ci:fast`, then run `bun run ci` once when you ha
 merge, and again after any change you think is trivial. It runs every gate even after one fails
 and prints only the failures, so fix them all in one pass. If it fails, fix the failure; do not
 work around it. Both modes run the formatter in write mode, so formatting never fails a local
-run; commit what it rewrote. GitHub Actions still runs `format:check`.
+run; commit what it rewrote. In CI (`CI` set) it runs `format:check` instead, so an unformatted
+commit fails the Workers Builds check.
 
 ---
 

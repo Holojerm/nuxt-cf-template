@@ -81,12 +81,7 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # `bun run ci` formats in place, so this is the only check that the commit itself is formatted.
-      - run: bun run format:check
-
-      # Includes email:check, which matters here: the committed emails are
-      # compiled on whatever machine ran email:build, and this is where a PR
-      # proves Linux agrees before a fork's deploy finds out.
+      # `bun run ci` checks formatting here (CI is set) and writes it locally.
       - run: bun run ci
 
   forkless:
