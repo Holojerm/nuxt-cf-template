@@ -35,7 +35,14 @@ const items = computed(() => [
 <template>
   <UDropdownMenu v-if="loggedIn" :items="items" :ui="{ content: 'w-56' }">
     <UButton color="neutral" variant="ghost" class="min-touch gap-2">
-      <UAvatar :src="user?.avatarUrl ?? undefined" :alt="user?.name" size="2xs" />
+      <!-- The initials fallback defaults to text-muted, 4.38:1 on the avatar's background —
+           under AA's 4.5:1 (found by fleet's signed-in axe scan). -->
+      <UAvatar
+        :src="user?.avatarUrl ?? undefined"
+        :alt="user?.name"
+        size="2xs"
+        :ui="{ fallback: 'text-default' }"
+      />
       <span class="hidden max-w-32 truncate sm:inline">{{ user?.name }}</span>
     </UButton>
 
