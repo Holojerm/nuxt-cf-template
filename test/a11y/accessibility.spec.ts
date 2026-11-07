@@ -13,6 +13,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Result } from 'axe-core'
 import { expect, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
 
 import { hasLayer } from '../lib/layers'
 
@@ -64,8 +65,6 @@ const ROUTES = [
  */
 const BLOG_POST_PREFIX = '/blog/'
 
-const COLOR_MODES = ['light', 'dark'] as const
-
 const WCAG_TAGS = [
   'wcag2a',
   'wcag2aa',
@@ -104,42 +103,61 @@ function format(violations: Result[]): string[] {
   )
 }
 
-for (const route of ROUTES) {
-  for (const mode of COLOR_MODES) {
-    test(`${route} passes axe in ${mode} mode`, async ({ page }) => {
-      // NuxtUI's color mode defaults to `system`, so emulating the media query
-      // is enough — no cookie or class juggling.
-      await page.emulateMedia({ colorScheme: mode })
-      const response = await page.goto(route)
-
-      // The 404 page is accessible. That is not what this suite is for, and a
-      // route that quietly stopped existing — a renamed post, a moved page —
-      // would otherwise be scanned green forever while nobody could reach it.
-      expect(response?.status(), `${route} did not return 200`).toBe(200)
-
-      // Contrast is measured against rendered pixels, so the webfonts have to
-      // have landed before axe runs or it can sample a fallback face.
-      await page.waitForLoadState('networkidle')
-      await page.evaluate(() => document.fonts.ready)
-
-      const { violations } = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze()
-
-      expect(format(violations)).toEqual([])
-    })
-  }
+// One navigation per route, three checks on it. A page load plus `networkidle`
+// is most of what a route costs (axe itself is under a second), so the checks
+// that used to be separate tests, each with their own load, share one:
+//
+//   light  axe on the page as first rendered.
+//   dark   the same page after flipping `prefers-color-scheme` live. NuxtUI's
+//          color mode (`system`) follows the media query's change event, so this
+//          is the path a visitor with an OS-level switch takes, and it resolves
+//          the same dark tokens as a fresh load.
+//   375px  DESIGN.md › Viewport and touch › Width: a page never scrolls
+//          sideways. Wide tables scroll in their own box, so the page itself
+//          must be exactly the viewport's width. The usual way this breaks is
+//          invisible: an absolutely positioned sr-only element inside a table's
+//          scroll box, with no positioned ancestor inside the box, escapes the
+//          box's clipping and stretches the page.
+//
+// Each check is a `test.step`, so a failure still names the route and the check.
+async function scanWithAxe(page: Page): Promise<string[]> {
+  // Contrast is measured against rendered pixels, so the webfonts have to have
+  // landed before axe runs or it can sample a fallback face.
+  await page.evaluate(() => document.fonts.ready)
+  const { violations } = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze()
+  return format(violations)
 }
 
-// DESIGN.md › Viewport and touch › Width: a page never scrolls sideways. Wide
-// tables scroll in their own box, so the page itself must be exactly the
-// viewport's width. The usual way this breaks is invisible: an absolutely
-// positioned sr-only element inside a table's scroll box, with no positioned
-// ancestor inside the box, escapes the box's clipping and stretches the page.
-test.describe('phone width', () => {
-  test.use({ viewport: { width: 375, height: 812 } })
-  for (const route of ROUTES) {
-    test(`${route} does not scroll sideways at 375px`, async ({ page }) => {
-      await page.goto(route)
-      await page.waitForLoadState('networkidle')
+for (const route of ROUTES) {
+  test(`${route}: axe in light and dark mode, no sideways scroll at 375px`, async ({ page }) => {
+    // NuxtUI's color mode defaults to `system`, so emulating the media query
+    // is enough — no cookie or class juggling.
+    await page.emulateMedia({ colorScheme: 'light' })
+    const response = await page.goto(route)
+
+    // The 404 page is accessible. That is not what this suite is for, and a
+    // route that quietly stopped existing — a renamed post, a moved page —
+    // would otherwise be scanned green forever while nobody could reach it.
+    expect(response?.status(), `${route} did not return 200`).toBe(200)
+    await page.waitForLoadState('networkidle')
+
+    await test.step('light mode', async () => {
+      expect(await scanWithAxe(page)).toEqual([])
+    })
+
+    await test.step('dark mode', async () => {
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await page.waitForFunction(() => document.documentElement.classList.contains('dark'))
+      // Let the repaint land: axe reads computed colors, and a frame caught
+      // between the two palettes would report a ratio nobody sees.
+      await page.evaluate(
+        () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+      )
+      expect(await scanWithAxe(page)).toEqual([])
+    })
+
+    await test.step('375px wide', async () => {
+      await page.setViewportSize({ width: 375, height: 812 })
       const { scrollWidth, clientWidth } = await page.evaluate(() => ({
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,
@@ -148,8 +166,8 @@ test.describe('phone width', () => {
         clientWidth,
       )
     })
-  }
-})
+  })
+}
 
 // The keyboard path can only be checked in a real browser — `:focus` needs a
 // focused document, which jsdom and a background tab both lack. These two are

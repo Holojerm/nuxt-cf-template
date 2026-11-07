@@ -18,12 +18,12 @@
 
 import type { APIResponse } from '@playwright/test'
 
-import { toHex } from '../../../../server/utils/hash'
 import { test as base } from '../../../../test/e2e/fixtures'
 import { E2E_PADDLE_PRICES } from './paddle-prices'
-import { PADDLE_TEST_WEBHOOK_SECRET } from './webhook-secret'
+import { signPaddleWebhook } from './sign'
 
 export { expect, uniqueEmail, watchForViolations } from '../../../../test/e2e/fixtures'
+export { signPaddleWebhook }
 
 export const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -34,50 +34,6 @@ const REF_TOKEN = `${Date.now().toString(36)}${Math.random().toString(36).slice(
 /** A realistic-shaped, unique Paddle ref for one scenario. */
 export function uniquePaddleRef(prefix: 'sub_' | 'txn_', caseName: string): string {
   return `${prefix}e2e_${REF_TOKEN}_${caseName}`
-}
-
-// ─── Signing — mirrors layers/billing/server/utils/paddle.ts's verifier exactly ────────────
-// `hmacSha256Hex` in that file is a local, unexported helper, so it can't be
-// imported directly; `toHex` is exported and IS imported, which is what keeps
-// the hex-encoding step from becoming a second copy that could quietly stop
-// matching. The HMAC construction itself (`${ts}:${rawBody}`, `ts=…;h1=…`) is
-// mirrored here the same way layers/billing/test/paddle.test.ts's own `sign` helper mirrors
-// it for the vitest suite — see webhook-signing.spec.ts, which checks this
-// copy against the real `verifyPaddleSignature` rather than trusting it by
-// inspection.
-
-async function hmacSha256Hex(secret: string, message: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  )
-  return toHex(await crypto.subtle.sign('HMAC', key, encoder.encode(message)))
-}
-
-/**
- * The `Paddle-Signature` header value, built the way layers/billing/server/utils/paddle.ts
- * verifies it.
- *
- * ── Timing contract ─────────────────────────────────────────────────────────
- * `ts` is stamped from `Date.now()` the instant this is called, and the
- * server checks it against a 5-SECOND window (`toleranceSeconds` in
- * layers/billing/server/utils/paddle.ts — production's value; not touched here). Call this
- * as the LAST step before `apiRequest.post(...)`, with the request body
- * already fully built — never earlier, never cached and reused. `sendPaddleEvent`
- * below is the only real caller and does exactly that; see globalSetup.ts for
- * the other half of keeping this window from being eaten by a cold compile.
- */
-export async function signPaddleWebhook(
-  rawBody: string,
-  secret: string = PADDLE_TEST_WEBHOOK_SECRET,
-): Promise<string> {
-  const ts = Math.floor(Date.now() / 1000)
-  const h1 = await hmacSha256Hex(secret, `${ts}:${rawBody}`)
-  return `ts=${ts};h1=${h1}`
 }
 
 // ─── Paddle event builders ───────────────────────────────────────────────────

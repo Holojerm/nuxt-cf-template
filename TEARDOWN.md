@@ -120,7 +120,7 @@ NUXT_PUBLIC_PADDLE_PRICE_MONTHLY
 NUXT_PUBLIC_PADDLE_PRICE_PASS
 ```
 
-Also remove `https://*.paddle.com` from the CSP in `nuxt.config.ts` — `test/csp/csp.spec.ts`
+Also remove `https://*.paddle.com` from the CSP in `shared/security-headers.ts` — `test/security-headers.test.ts`
 asserts the header, so a stale entry there is a silently over-permissive policy.
 
 **10. Fix the legal copy.** [`app/pages/privacy.vue`](app/pages/privacy.vue) and
@@ -181,8 +181,8 @@ and does not care who wrote it:
 5. **Re-point the deterministic refs** in `layers/billing/server/utils/paddle-refs.ts`. They are how a
    grant is idempotent without a ledger table; the derivation is yours to change, the
    determinism is not.
-6. **Update the CSP** in `nuxt.config.ts`: `js.stripe.com` in `script-src` and
-   `frame-src`, Paddle out. `test/csp/csp.spec.ts` will tell you if you missed it.
+6. **Update the CSP** in `shared/security-headers.ts`: `js.stripe.com` in `script-src` and
+   `frame-src`, Paddle out. `test/security-headers.test.ts` will tell you if you missed it.
 7. **You are now the merchant of record.** Paddle handled global VAT and sales tax;
    Stripe does not unless you add Stripe Tax, and you take on the registration and
    remittance obligations either way. This is a business decision, not a code one —
