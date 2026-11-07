@@ -6,7 +6,15 @@
 // specific alert /pricing shows for exactly that case. The signed-out half of
 // this flow is test/e2e/sign-in-gated-page.spec.ts.
 
-import { expect, test, uniqueEmail, watchForViolations } from './fixtures'
+import {
+  billingE2e,
+  expect,
+  expectAccess,
+  expectBounced,
+  test,
+  uniqueEmail,
+  watchForViolations,
+} from './fixtures'
 
 test('a signed-in user with no entitlement is turned away from /dashboard, and the reason is on screen', async ({
   signInAs,
@@ -15,17 +23,23 @@ test('a signed-in user with no entitlement is turned away from /dashboard, and t
   const { page, context } = await signInAs(email, 'Gated Visitor')
   const violations = watchForViolations(page)
 
-  await page.goto('/dashboard')
-  await page.waitForURL(/\/pricing/)
+  // Page-level half: skipped when the fork has no gated page (fork-config.ts).
+  if (billingE2e.gatedPath) {
+    await expectBounced(page, billingE2e.upsellPathPrefix)
 
-  const url = new URL(page.url())
-  expect(url.pathname).toBe('/pricing')
-  expect(url.searchParams.get('from')).toBe('/dashboard')
+    // layers/billing/app/pages/pricing.vue's `gatedFrom` branch — the alert that exists so
+    // "why am I here?" has an answer instead of a plans page appearing out of
+    // nowhere.
+    await expect(page.getByText(billingE2e.gatedCopy)).toBeVisible()
+  } else {
+    await page.goto('/')
+  }
 
-  // layers/billing/app/pages/pricing.vue's `gatedFrom` branch — the alert that exists so
-  // "why am I here?" has an answer instead of a plans page appearing out of
-  // nowhere.
-  await expect(page.getByText('That page needs an active plan')).toBeVisible()
+  // Entitlement half, always: no plan means inactive.
+  const entitlement = await context.request.get('/api/billing/entitlement')
+  expect(entitlement.ok()).toBe(true)
+  expect(((await entitlement.json()) as { active: boolean }).active).toBe(false)
+  await expectAccess({ page, request: context.request }, 'denied')
 
   // The session guard (server/middleware/auth.ts) actually accepted the
   // cookie the dev endpoint set — not just that the client THINKS it's

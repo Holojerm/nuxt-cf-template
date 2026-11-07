@@ -121,6 +121,51 @@ deletion steps for it (cancel then delete, a refused cancel, an already-cancelle
 webhook); its dump gains `paddleApi`, the calls the stub saw. Without the flag the dump is that of
 a build without the option.
 
+**Running the layer's e2e in a fork.** `layers/billing/test/e2e/` (project `e2e-billing`) is vendored
+byte for byte, so it cannot be edited per product. It reads one optional fork-owned file,
+`test/e2e/billing.e2e.ts`, whose default export is a `Partial<BillingE2e>` (type and defaults in <!-- refs-check-ignore: fork-owned file, absent in the template -->
+`layers/billing/test/e2e/fork-config.ts`). With no file the specs are exactly the template's.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `gatedPath` | `'/dashboard'` | The plan-gated page. `null` = the product gates an action, not a page: redirect, upsell-copy and unlocked-content assertions are skipped; the signed webhook → `/api/billing/entitlement` active/inactive/past_due assertions still run. |
+| `gatedCopy` | `'That page needs an active plan'` | Text the upsell page shows after a bounce. |
+| `upsellPathPrefix` | `'/pricing'` | Where a plan-less account lands. (past_due always lands on `/account`.) |
+| `unlockedHeading`, `unlockedText` | `/Welcome back/`, `'Get set up'` | What proves `gatedPath` rendered for an entitled user; `null` skips. `unlockedText` is checked in the one-time-pass case only. |
+| `signIn(request, user)` | `null` = `POST /api/auth/dev` | Signs `user` in on a fresh request context (its cookie jar becomes the session) and returns `{ userId }`. A request context, not a page, because sign-in is cached per worker to stay under the auth rate limit. |
+| `accessProbe({ request, page }, 'granted' \| 'denied')` | `null` | Extra product-level check run wherever a spec asserts access, in addition to the entitlement endpoint. |
+
+No gated page, paid access enforced at an API route (woolholm: `POST /api/games`):
+
+```ts
+import { expect } from '@playwright/test'
+import type { BillingE2e } from '../../layers/billing/test/e2e/fork-config'
+export default {
+  gatedPath: null,
+  async accessProbe({ request }, expected) {
+    const res = await request.post('/api/games', { data: {} })
+    expect(res.status() === 402).toBe(expected === 'denied')
+  },
+} satisfies Partial<BillingE2e>
+```
+
+Gated page and its own sign-in (drawthesystem-cloud: `/sessions`, seeded `dev-login`):
+
+```ts
+export default {
+  gatedPath: '/sessions',
+  gatedCopy: 'No pass right now.',
+  unlockedHeading: /Sessions/,
+  unlockedText: null,
+  async signIn(request, { email }) {
+    const res = await request.post('/api/auth/dev-login', { data: { email } })
+    return { userId: ((await res.json()) as { user: { id: string } }).user.id }
+  },
+} satisfies Partial<BillingE2e>
+```
+
+(The values above are the shape, not verified fork routes: read the fork's own sign-in and gated page.)
+
 ## Billing & MCP worker
 
 - **Paddle billing** is pre-wired: webhook at `layers/billing/server/routes/paddle/webhook.post.ts` (HMAC-verified, outside `/api/`), `entitlements` table, `requireSubscription(event, productKey?)` server util (throws 401/402), `usePaddle()` checkout composable, and the UI on top — `/pricing` (plans from `layers/billing/app/utils/plans.ts` + price IDs in runtime config) and `/account` (status, history, self-serve cancel via the Paddle portal). `NUXT_PADDLE_API_KEY` is **required** once billing is on: the cancel button always renders for a paying customer and `POST /api/billing/portal` 503s (`portal_unconfigured`) without the key — the toast names `NUXT_PUBLIC_SUPPORT_EMAIL`; there is no "reply to your receipt email" fallback by design. Gate paid API routes with `await requireAccess(event)` (core's gate, `server/utils/access-gate.ts`; billing registers `requireSubscription` as the real check, and without billing it is just `requireUserSession`) — never trust client state for access control. Billing reaches the rest of core only through registrations (`layers/billing/server/utils/billing-extensions.ts`): the `live_subscription` deletion guard, the data-export `entitlements` section, the admin `billing` and view-as sections, the `entitlements` fleet counter and `paid` funnel stage, the onboarding `entitlementActive` signal, the `paddleEvents` purge sweep and the `pass_expiring` lifecycle step. See `patterns.md › Other seams`.

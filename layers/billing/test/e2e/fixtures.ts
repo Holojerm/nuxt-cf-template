@@ -16,9 +16,11 @@
 // it's the only way to prove the money path works end to end rather than
 // asserting on state nothing real ever produced.
 
-import type { APIResponse } from '@playwright/test'
+import type { APIRequestContext, APIResponse, Page } from '@playwright/test'
 
-import { test as base } from '../../../../test/e2e/fixtures'
+import { playwrightPort } from '../../../../scripts/worktree-port'
+import { expect as baseExpect, test as base } from '../../../../test/e2e/fixtures'
+import { billingE2e } from './fork-config'
 import { E2E_PADDLE_PRICES } from './paddle-prices'
 import { signPaddleWebhook } from './sign'
 
@@ -122,10 +124,90 @@ export async function expectWebhookAccepted(response: APIResponse): Promise<void
   }
 }
 
-export const test = base.extend<{
-  /** POST a signed, schema-valid Paddle event to /paddle/webhook. */
-  sendPaddleEvent: (event: PaddleWebhookEvent) => Promise<APIResponse>
-}>({
+// ─── Fork seam helpers (see fork-config.ts) ──────────────────────────────────
+
+/** True when the product has a plan-gated page; false = page-level assertions are skipped. */
+export const hasGatedPage = billingE2e.gatedPath !== null
+
+/** Assert the entitlement endpoint's answer, then the fork's own probe if it set one. */
+export async function expectAccess(
+  { page, request }: { page: Page; request: APIRequestContext },
+  expected: 'granted' | 'denied',
+): Promise<void> {
+  await billingE2e.accessProbe?.({ page, request }, expected)
+}
+
+/** The gated page rendered for an entitled user. */
+export async function expectUnlocked(page: Page, opts: { full?: boolean } = {}): Promise<void> {
+  if (!billingE2e.gatedPath) return
+  await page.goto(billingE2e.gatedPath)
+  await baseExpect(page).toHaveURL(new RegExp(`${billingE2e.gatedPath}$`))
+  if (billingE2e.unlockedHeading) {
+    await baseExpect(page.getByRole('heading', { name: billingE2e.unlockedHeading })).toBeVisible()
+  }
+  if (opts.full && billingE2e.unlockedText) {
+    await baseExpect(page.getByText(billingE2e.unlockedText)).toBeVisible()
+  }
+}
+
+/** Visit the gated page without a plan and expect to be bounced to `where`, remembering where from. */
+export async function expectBounced(page: Page, where: string): Promise<URL> {
+  const gated = billingE2e.gatedPath
+  if (!gated) throw new Error('expectBounced needs a gated page')
+  await page.goto(gated)
+  await page.waitForURL(new RegExp(where))
+  const url = new URL(page.url())
+  baseExpect(url.pathname).toBe(where)
+  baseExpect(url.searchParams.get('from')).toBe(gated)
+  return url
+}
+
+export { billingE2e }
+
+type StorageState = Awaited<ReturnType<APIRequestContext['storageState']>>
+interface WorkerOverrides {
+  signInCache: (
+    email: string,
+    name?: string,
+  ) => Promise<{ userId: string; storageState: StorageState }>
+}
+
+export const test = base.extend<
+  {
+    /** POST a signed, schema-valid Paddle event to /paddle/webhook. */
+    sendPaddleEvent: (event: PaddleWebhookEvent) => Promise<APIResponse>
+  },
+  WorkerOverrides
+>({
+  // A fork's own sign-in replaces core's POST /api/auth/dev. Same worker-scoped
+  // cache by email (see test/e2e/fixtures.ts), but each user signs in on a fresh
+  // request context so sessions never share a cookie jar.
+  ...(billingE2e.signIn
+    ? {
+        signInCache: [
+          async ({ playwright }, use) => {
+            const signIn = billingE2e.signIn!
+            const cache = new Map<string, { userId: string; storageState: StorageState }>()
+            await use(async (email, name) => {
+              const cached = cache.get(email)
+              if (cached) return cached
+              const request = await playwright.request.newContext({
+                baseURL: `http://localhost:${playwrightPort()}`,
+              })
+              const { userId } = await signIn(request, { email, name })
+              const session = {
+                userId,
+                storageState: await request.storageState(),
+              }
+              await request.dispose()
+              cache.set(email, session)
+              return session
+            })
+          },
+          { scope: 'worker' as const },
+        ],
+      }
+    : {}),
   sendPaddleEvent: async ({ apiRequest }, use) => {
     await use(async (event) => {
       // Build the payload, THEN stamp+sign, THEN post — no step in between
@@ -135,7 +217,10 @@ export const test = base.extend<{
       const signature = await signPaddleWebhook(body)
       return apiRequest.post('/paddle/webhook', {
         data: body,
-        headers: { 'content-type': 'application/json', 'paddle-signature': signature },
+        headers: {
+          'content-type': 'application/json',
+          'paddle-signature': signature,
+        },
       })
     })
   },
