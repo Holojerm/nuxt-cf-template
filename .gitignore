@@ -53,3 +53,6 @@ test-results/
 
 # Compiled at install by `bun run email:build` (postinstall) — never commit it.
 server/emails/generated.ts
+
+# Vitest 5 report artifacts
+.vitest
