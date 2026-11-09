@@ -26,4 +26,5 @@ the app.
   (part of `bun run ci`) fails the build when those files stop matching the mark.
 - Redesigning it is `/logo-sync`. Editing the component by hand is fine too — just run
   `bun run brand:generate` after and commit what it writes.
-
+- The per-page cards under `public/og/` are a different pipeline: drawn by `bun run build`, not by
+  `brand:generate`, from the `og-*` colors this one resolves. See [seo.md](seo.md) › Share cards.

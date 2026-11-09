@@ -10,7 +10,8 @@
 //   public/icon-192.png             192x192, maskable-safe, for the web manifest
 //   public/icon-512.png             512x512, maskable-safe, for the web manifest
 //   public/og.png                   1200x630 link preview
-//   shared/utils/brand-colors.generated.ts  theme_color / background_color for
+//   shared/utils/brand-colors.generated.ts  og-* colors for scripts/og-images.ts, and
+//                                    theme_color / background_color for
 //                                    server/routes/manifest.webmanifest.get.ts —
 //                                    a manifest has no color mode either, so
 //                                    these are resolved here, not hand-written.
@@ -276,6 +277,15 @@ function brandColorsTs(palette: Palette): string {
 export const BRAND_MANIFEST_COLORS = {
   themeColor: '${palette['manifest-theme']}',
   backgroundColor: '${palette['manifest-ground']}',
+} as const
+
+// The \`og-*\` roles, for scripts/og-images.ts: it draws a card per page at
+// build time, where there is no browser to resolve a token.
+export const BRAND_OG_COLORS = {
+  mark: '${palette['og-mark']}',
+  ground: '${palette['og-ground']}',
+  ink: '${palette['og-ink']}',
+  muted: '${palette['og-muted']}',
 } as const
 `
 }
