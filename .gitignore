@@ -7,6 +7,9 @@
 !.env.example
 dist
 
+# Per-page share cards, drawn by `bun run build` (scripts/og-images.ts)
+public/og/
+
 # Maizzle dev server (`bun run email:dev`) writes component typings here
 emails/.maizzle
 

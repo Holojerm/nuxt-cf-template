@@ -39,6 +39,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
 import { DESCRIPTION_MAX, DESCRIPTION_MIN, TITLE_MAX } from '../shared/utils/seo-bounds'
+import { readFrontmatter } from './lib/frontmatter'
 import { ownLayerDirs } from './lib/layers'
 import { seoDescription, useSeoArgument } from './lib/seo-source'
 import { walk } from './lib/walk'
@@ -220,24 +221,7 @@ for (const file of PAGES_DIRS.flatMap((dir) => walk(dir, { extensions: ['.vue'] 
 // its refinements against your frontmatter — a 300-character description parses
 // fine and ships. Nothing else would ever notice.
 //
-// A deliberately small YAML reader: these files are written by hand in a fixed
-// shape, and a parser dependency to read four scalar keys would be a strange
-// thing to add to a build gate.
-
-/** Frontmatter scalars, by key. Anything nested or multi-line is ignored. */
-function readFrontmatter(raw: string): Record<string, string> {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-  if (!match) return {}
-
-  const fields: Record<string, string> = {}
-  for (const line of (match[1] ?? '').split('\n')) {
-    const field = line.match(/^([A-Za-z_][\w-]*)\s*:\s*(.*)$/)
-    if (!field) continue
-    const [, key = '', rawValue = ''] = field
-    fields[key] = rawValue.trim().replace(/^(['"])([\s\S]*)\1$/, '$2')
-  }
-  return fields
-}
+// The reader is scripts/lib/frontmatter.ts, shared with the OG card build.
 
 /** Everything after the frontmatter, with fenced code blocks removed. */
 function postBody(raw: string): string {
