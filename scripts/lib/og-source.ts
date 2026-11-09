@@ -18,7 +18,7 @@ export function ogCardFile(path: string): string {
   return `public${ogCardPath(path)}`
 }
 
-/** `app/pages/blog/index.vue` → `/blog`; dynamic segments → null. */
+/** A page file's route (app/pages/foo/index.vue is /foo); dynamic segments give null. */
 export function routeOfPageFile(relative: string): string | null {
   const match = relative.match(/(?:^|\/)app\/pages\/(.+)\.vue$/)
   if (!match) return null
