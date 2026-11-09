@@ -43,9 +43,16 @@ export interface OgRenderer {
 export function createOgRenderer(): OgRenderer {
   const inputs = collectBrandInputs()
   const colors = BRAND_OG_COLORS
-  const fonts = [...new Set([inputs.fonts.display, inputs.fonts.sans, inputs.fonts.mono])].map(
-    loadFont,
-  )
+  // An app with no display face (main.css names no `--font-display`) gets the generic
+  // fallback here; its cards use the sans instead of failing to find a "serif" package.
+  const generic = new Set(['serif', 'sans-serif', 'monospace'])
+  const face = (family: string) => (generic.has(family) ? inputs.fonts.sans : family)
+  const families = {
+    display: face(inputs.fonts.display),
+    sans: inputs.fonts.sans,
+    mono: face(inputs.fonts.mono),
+  }
+  const fonts = [...new Set(Object.values(families))].map(loadFont)
   const markUri = `data:image/svg+xml;base64,${Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${inputs.mark.viewBox}" fill="${colors.mark}">${inputs.mark.inner}</svg>`,
   ).toString('base64')}`
@@ -82,7 +89,7 @@ export function createOgRenderer(): OgRenderer {
           h(
             'div',
             {
-              fontFamily: inputs.fonts.display,
+              fontFamily: families.display,
               fontSize: size,
               lineHeight: 1.08,
               letterSpacing: '-0.02em',
@@ -111,7 +118,7 @@ export function createOgRenderer(): OgRenderer {
           'div',
           {
             display: 'flex',
-            fontFamily: inputs.fonts.mono,
+            fontFamily: families.mono,
             fontSize: 26,
             color: colors.muted,
             borderTop: `1px solid ${colors.muted}55`,
