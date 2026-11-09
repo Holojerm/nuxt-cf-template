@@ -54,6 +54,35 @@ The `useSeo()` one-call-per-page contract, how `publicPage` meta feeds both `sit
   LinkedIn, Wikidata) and becomes `Organization.sameAs`. Set it when another entity shares the
   name; it is the signal that tells them apart.
 
+## Share cards (og:image)
+
+Every public page gets its own 1200x630 card, drawn at **build time** and served as a static
+asset, so the Worker bundle does not grow. `bun run build` runs `scripts/og-images.ts` before
+`nuxt build` and `--check` after it.
+
+- **Where cards come from**: every static page with a literal `publicPage` (its `title` and
+  `summary` become the card's text), every non-draft post in `content/blog/`, and any
+  `layers/*/og-cards.ts` whose default export returns `{ path, title, summary? }[]`. A fork's
+  own layer uses that last hook to card the dynamic routes it enumerates (a record's page, a
+  per-item landing page); the same module may export `ogHost(path)` to name the footer host of pages
+  served somewhere other than the app's own origin. The home page keeps the site card, `public/og.png`.
+- **How a page finds its card**: `useSeo()` links `/og/<route>.png` (`ogCardPath()` in
+  `shared/utils/og.ts`) when the route is static and declares `publicPage`, else the site card. A
+  dynamic route names its own: `useSeo({ image: ogCardPath(route.path) })`, as the blog post does.
+  A card for a route nothing drew is a broken preview, so register the card in the same change.
+- **Drawing**: `satori` (layout to SVG) and `@resvg/resvg-js` (SVG to PNG), both
+  devDependencies. Fonts are the families named in `main.css`, read from `@fontsource/<family>`
+  in `node_modules` (woff, not woff2), so no network is needed; a family without a package fails
+  the build with the `bun add -d` line to run. Colors are the `og-*` roles, resolved to hex by
+  `bun run brand:generate` into `shared/utils/brand-colors.generated.ts` (a build has no
+  browser). The card layout lives in `scripts/lib/og-render.ts`; edit it for a rebrand.
+- **Not here**: anything that changes between builds. A card is a title and one line of
+  context, never a live number. Per-record cards that must be drawn per request would need a
+  runtime renderer, which this template deliberately does not ship (the compressed Worker
+  limit on the free plan is about 3 MB).
+- `public/og/` is gitignored and absent under `bun dev`, so a dev render links to a missing
+  file; run `bun run og:build` to see them locally.
+
 ## Search console verification (once per domain, by hand)
 
 Both consoles want the owner's own login, so an agent cannot finish this. Use DNS, not a
