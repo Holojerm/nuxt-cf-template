@@ -51,6 +51,7 @@ useSeo({
   // that same gate reads straight out of content/blog/*.md.
   description: post.value.description,
   ogType: 'article',
+  image: ogCardPath(route.path),
   breadcrumb: [
     { name: 'Blog', path: '/blog' },
     { name: post.value.title, path: route.path },

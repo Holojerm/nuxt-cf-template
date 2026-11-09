@@ -54,8 +54,11 @@ export const GENERATED_ASSETS = [
  *
  * Bumped to '4' when public/email-logo.png and emails/theme.generated.css
  * joined the pipeline, and the `email-*` color roles with them.
+ *
+ * Bumped to '5' when brand-colors.generated.ts gained the `og-*` hex colors that
+ * scripts/og-images.ts draws per-page share cards with.
  */
-export const GENERATOR_VERSION = '4'
+export const GENERATOR_VERSION = '5'
 
 export interface BrandColor {
   /** The `--color-*` token named in DESIGN.md › Brand mark. */

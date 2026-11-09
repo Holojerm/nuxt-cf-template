@@ -41,7 +41,12 @@ export interface SeoInput {
    */
   titleMode?: 'suffix' | 'exact'
   ogType?: 'website' | 'article'
-  /** Root-relative or absolute. Defaults to the site-wide /og.png. */
+  /**
+   * Root-relative or absolute. Defaults to the page's own card (`/og/<route>.png`,
+   * drawn at build by scripts/og-images.ts) when the page declares `publicPage`,
+   * else the site-wide /og.png. A dynamic route names its card itself, with
+   * `ogCardPath(route.path)` once its layer has registered cards for it.
+   */
   image?: string
   /** Private or duplicate page: noindex, no canonical, no structured data. */
   noindex?: boolean
@@ -77,7 +82,11 @@ export function useSeo(input: SeoInput): void {
     input.titleMode === 'exact' ? toValue(input.title) : `${toValue(input.title)} · ${site.appName}`
   const description = () => toValue(input.description)
   const canonical = absoluteUrl(site.appUrl, route.path)
-  const image = toAbsoluteAsset(site.appUrl, input.image ?? '/og.png')
+  const ownCard = route.meta.publicPage && Object.keys(route.params).length === 0
+  const image = toAbsoluteAsset(
+    site.appUrl,
+    input.image ?? (ownCard ? ogCardPath(route.path) : '/og.png'),
+  )
 
   useSeoMeta({
     title,
@@ -96,7 +105,7 @@ export function useSeo(input: SeoInput): void {
     ogImage: image || undefined,
     ogImageWidth: image ? 1200 : undefined,
     ogImageHeight: image ? 630 : undefined,
-    ogImageAlt: image ? site.appName : undefined,
+    ogImageAlt: image ? toValue(input.title) : undefined,
 
     twitterCard: 'summary_large_image',
     twitterTitle: title,
