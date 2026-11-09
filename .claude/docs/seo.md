@@ -64,7 +64,8 @@ asset, so the Worker bundle does not grow. `bun run build` runs `scripts/og-imag
   `summary` become the card's text), every non-draft post in `content/blog/`, and any
   `layers/*/og-cards.ts` whose default export returns `{ path, title, summary? }[]`. A fork's
   own layer uses that last hook to card the dynamic routes it enumerates (a record's page, a
-  per-item landing page). The home page keeps the site card, `public/og.png`.
+  per-item landing page); the same module may export `ogHost(path)` to name the footer host of pages
+  served somewhere other than the app's own origin. The home page keeps the site card, `public/og.png`.
 - **How a page finds its card**: `useSeo()` links `/og/<route>.png` (`ogCardPath()` in
   `shared/utils/og.ts`) when the route is static and declares `publicPage`, else the site card. A
   dynamic route names its own: `useSeo({ image: ogCardPath(route.path) })`, as the blog post does.

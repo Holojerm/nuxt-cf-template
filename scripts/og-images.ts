@@ -10,7 +10,9 @@
 //     (title and summary are the card's text),
 //   - every non-draft post in content/blog/,
 //   - `layers/*/og-cards.ts`, whose default export returns OgCard[] — how a
-//     fork's own layer cards the dynamic routes it enumerates (see .claude/docs/seo.md).
+//     fork's own layer cards the dynamic routes it enumerates — and whose optional
+//     `ogHost(path)` export names the host a page is served on when it is not the
+//     app's own (see .claude/docs/seo.md).
 //
 //   bun run scripts/og-images.ts           draw
 //   bun run scripts/og-images.ts --check   after `nuxt build`: every card is in .output/public/og
@@ -26,6 +28,7 @@ import { walk } from './lib/walk'
 
 async function collectCards(): Promise<OgCard[]> {
   const cards = new Map<string, OgCard>()
+  const hostOf: ((path: string) => string | undefined)[] = []
   const add = (card: OgCard) => {
     if (card.path !== '/') cards.set(card.path, card)
   }
@@ -54,8 +57,16 @@ async function collectCards(): Promise<OgCard[]> {
   for (const dir of layerDirs) {
     const file = join(dir, 'og-cards.ts')
     if (!existsSync(file)) continue
-    const source = (await import(file)) as { default: () => OgCard[] | Promise<OgCard[]> }
+    const source = (await import(file)) as {
+      default: () => OgCard[] | Promise<OgCard[]>
+      ogHost?: (path: string) => string | undefined
+    }
     for (const card of await source.default()) add(card)
+    if (source.ogHost) hostOf.push(source.ogHost)
+  }
+
+  for (const card of cards.values()) {
+    card.host ??= hostOf.map((fn) => fn(card.path)).find(Boolean)
   }
 
   return [...cards.values()].sort((a, b) => a.path.localeCompare(b.path))

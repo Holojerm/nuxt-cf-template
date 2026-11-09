@@ -117,7 +117,7 @@ export function createOgRenderer(): OgRenderer {
             borderTop: `1px solid ${colors.muted}55`,
             paddingTop: 28,
           },
-          inputs.appHost || inputs.appName,
+          card.host ?? (inputs.appHost || inputs.appName),
         ),
       ],
     )

@@ -9,6 +9,8 @@ export interface OgCard {
   title: string
   /** One line of context under the title. Optional. */
   summary?: string
+  /** Footer text. Defaults to the app's host; a fork serving pages on a second host sets it. */
+  host?: string
 }
 
 /** The output file for a card, relative to the project root. */
