@@ -17,7 +17,7 @@ import { clip, titleSize, type OgCard } from './og-source'
 const WIDTH = 1200
 const HEIGHT = 630
 
-type Font = { name: string; data: Buffer; weight: 400; style: 'normal' }
+type Font = { name: string; data: Buffer; weight: 400 | 600; style: 'normal' }
 type Node = { type: string; props: Record<string, unknown> }
 
 const h = (type: string, style: Record<string, unknown>, children?: unknown, extra = {}): Node => ({
@@ -25,15 +25,21 @@ const h = (type: string, style: Record<string, unknown>, children?: unknown, ext
   props: { style, children, ...extra },
 })
 
-function loadFont(family: string): Font {
+function loadFont(family: string, weight: 400 | 600 = 400): Font {
   const pkg = family.toLowerCase().replace(/\s+/g, '-')
-  const file = join(ROOT, 'node_modules/@fontsource', pkg, 'files', `${pkg}-latin-400-normal.woff`)
+  const file = join(
+    ROOT,
+    'node_modules/@fontsource',
+    pkg,
+    'files',
+    `${pkg}-latin-${weight}-normal.woff`,
+  )
   if (!existsSync(file)) {
     throw new Error(
       `og-images: no local font for "${family}". Add it as a devDependency: bun add -d @fontsource/${pkg}`,
     )
   }
-  return { name: family, data: readFileSync(file), weight: 400, style: 'normal' }
+  return { name: family, data: readFileSync(file), weight, style: 'normal' }
 }
 
 export interface OgRenderer {
@@ -52,7 +58,10 @@ export function createOgRenderer(): OgRenderer {
     sans: inputs.fonts.sans,
     mono: face(inputs.fonts.mono),
   }
-  const fonts = [...new Set(Object.values(families))].map(loadFont)
+  const fonts = [...new Set(Object.values(families))].map((family) => loadFont(family))
+  // With no display face the title is set in the sans at semibold, as the app's headings are.
+  const titleWeight = generic.has(inputs.fonts.display) ? 600 : 400
+  if (titleWeight === 600) fonts.push(loadFont(families.display, 600))
   const markUri = `data:image/svg+xml;base64,${Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${inputs.mark.viewBox}" fill="${colors.mark}">${inputs.mark.inner}</svg>`,
   ).toString('base64')}`
@@ -90,6 +99,7 @@ export function createOgRenderer(): OgRenderer {
             'div',
             {
               fontFamily: families.display,
+              fontWeight: titleWeight,
               fontSize: size,
               lineHeight: 1.08,
               letterSpacing: '-0.02em',
