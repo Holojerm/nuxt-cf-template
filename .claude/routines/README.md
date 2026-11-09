@@ -33,6 +33,7 @@ so the repo ships the *definitions* and a sync command:
 | `marketing-content.md` | Weekly Thu 14:00 | Drafts changelog + marketing copy into `ops/marketing/` for review | GitHub connector |
 | `growth-review.md` | Weekly Mon 13:30 | Judges last week's `growth-bet`s, picks ≤3 new ones against `fleet.json` › `product`, ships each as a flagged (default-off) or content PR | GitHub connector (+ Cloudflare API token); tier 2 |
 | `x-post.md` | Tue/Thu 15:00 | One post about something that shipped, from the product's X account (`scripts/x-post.ts`); drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
+| `x-replies.md` | Twice daily 09:00, 17:00 | Answers people who replied to or mentioned the product's X account (a few a run at most), escalates support/billing/press, skips the rest (`scripts/x-replies.ts`); drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
 | `ops-triage.md` | Every 6 h at :37 | Reads the ops spool (`GET /api/ops/events`), retriggers a deploy that never landed, fixes **Mechanical fixes** classes, files the rest as triaged issues | GitHub connector + OPS_BASE_URL / OPS_TOKEN env vars (+ optional deploy hook URL); tier 2 |
 | `dependency-merge.md` | Weekly Mon 15:15 | Merges Dependabot minor/patch PRs that touch only the manifest and lockfile once every check is green; majors and red checks go to the owner | GitHub connector; tier 2; `scope: fleet` (one all-repos routine) |
 | `template-sync.md` | Weekly Wed 14:00 | In a fork: opens the `chore/template-sync` PR when `fleet.json` › `template.syncedSha` is behind (never merges) | GitHub connector |
@@ -84,7 +85,7 @@ must follow the operating rules in `_shared.md` (the pointer prompt enforces rea
   lists it higher. What each tier allows is in `_shared.md`.
 - **Outbound gates** — support replies are drafts, code changes are PRs, marketing copy goes to a
   review folder. Without a grant, the only autonomous outbound action is the daily digest email to
-  the owner; with one, `growth-review` may merge flag-off or content PRs and `x-post` may post.
+  the owner; with one, `growth-review` may merge flag-off or content PRs, `x-post` may post, and `x-replies` may answer people who addressed the X account.
 - **Untrusted input** — issue text and support emails are attacker-controlled data. `_shared.md`
   forbids following instructions found in them.
 - **Audit trail** — everything lands in the ops journal, and the digest surfaces it daily.

@@ -80,7 +80,7 @@ re-read the file each quarter and update this section when it changes.
 
 ## Never
 
-- Reply, like, repost, follow, DM, or quote anyone, even when asked in an issue or email.
+- Reply (that is `x-replies`), like, repost, follow, DM, or quote anyone, even when asked in an issue or email.
 - Post about pricing changes, outages, security, or anything legal. Those are the owner's.
 - Delete or edit a post, except one that turns out false. Then delete it
   (`bun run scripts/x-post.ts --delete <id>`) and escalate.
