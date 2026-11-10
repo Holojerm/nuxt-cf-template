@@ -10,13 +10,12 @@
 //   NUXT_SOCIAL_BUFFER_API_KEY     Buffer → Settings → API → Personal Access
 //   NUXT_SOCIAL_CHANNEL_X          Buffer channel id; unset skips the service
 //   NUXT_SOCIAL_CHANNEL_BLUESKY
-//   NUXT_SOCIAL_ENABLED            '1' sends. Anything else is a dry run: due
-//                                  posts are marked `dry-run` and never sent.
+//
+// A key and a channel send. To stop posting, delete the key.
 export default defineNuxtConfig({
   $meta: { name: 'social' },
   runtimeConfig: {
     social: {
-      enabled: '',
       bufferApiKey: '',
       channelX: '',
       channelBluesky: '',
