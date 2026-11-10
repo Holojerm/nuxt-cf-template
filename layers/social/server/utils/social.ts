@@ -9,7 +9,7 @@
 // Every function takes the Drizzle client explicitly so the workerd suite can
 // drive it against a real D1 binding.
 
-import { and, asc, eq, inArray, lte } from 'drizzle-orm'
+import { and, asc, eq, lte } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
 
 import * as tables from '../db/schema'
@@ -47,13 +47,10 @@ export type SocialChannels = Partial<Record<SocialService, string>>
 export interface SocialConfig {
   apiKey: string
   channels: SocialChannels
-  /** False is a dry run: due rows become `dry-run` and nothing is sent. */
-  enabled: boolean
 }
 
 /** From `runtimeConfig.social` (layers/social/nuxt.config.ts); null when no key is set. */
 export function readSocialConfig(config: {
-  enabled?: string
   bufferApiKey?: string
   channelX?: string
   channelBluesky?: string
@@ -62,7 +59,7 @@ export function readSocialConfig(config: {
   const channels: SocialChannels = {}
   if (config.channelX) channels.x = config.channelX
   if (config.channelBluesky) channels.bluesky = config.channelBluesky
-  return { apiKey: config.bufferApiKey, channels, enabled: config.enabled === '1' }
+  return { apiKey: config.bufferApiKey, channels }
 }
 
 export interface SocialEnqueue {
@@ -112,7 +109,6 @@ export interface SocialDrainProblem {
 
 export interface SocialDrainResult {
   sent: number
-  dryRun: number
   retried: number
   /** Rows that need a human: give up after retries, or might have posted. */
   problems: SocialDrainProblem[]
@@ -130,27 +126,14 @@ export async function drainSocialPosts(
   db: SocialDb,
   { config, publisher, now = new Date(), limit = SOCIAL_DRAIN_LIMIT }: SocialDrainOptions,
 ): Promise<SocialDrainResult> {
-  const result: SocialDrainResult = { sent: 0, dryRun: 0, retried: 0, problems: [] }
+  const result: SocialDrainResult = { sent: 0, retried: 0, problems: [] }
 
   const due = await db
     .select()
     .from(tables.socialPosts)
     .where(and(eq(tables.socialPosts.status, 'queued'), lte(tables.socialPosts.notBefore, now)))
     .orderBy(asc(tables.socialPosts.notBefore))
-    .limit(config.enabled ? limit : 100)
-
-  if (!config.enabled) {
-    // Recorded, never sent: turning sending on later must not flush a backlog.
-    const ids = due.map((row) => row.id)
-    if (ids.length) {
-      await db
-        .update(tables.socialPosts)
-        .set({ status: 'dry-run' })
-        .where(and(eq(tables.socialPosts.status, 'queued'), inArray(tables.socialPosts.id, ids)))
-    }
-    result.dryRun = ids.length
-    return result
-  }
+    .limit(limit)
 
   for (const row of due) {
     const service = row.service as SocialService

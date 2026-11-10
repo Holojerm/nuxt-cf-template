@@ -1,8 +1,7 @@
 // The social outbox, run against a real D1 inside workerd.
 //
 // The guarantee worth pinning down is "never post twice": enqueueing is
-// idempotent, a send whose outcome is unknown is never retried, and a dry run
-// leaves nothing behind for a later switch-on to flush.
+// idempotent, and a send whose outcome is unknown is never retried.
 
 import { env } from 'cloudflare:test'
 import { drizzle } from 'drizzle-orm/d1'
@@ -23,7 +22,7 @@ const db = drizzle(env.DB, { schema })
 
 const NOW = new Date('2026-11-02T12:00:00.000Z')
 const CHANNELS = { x: 'chan-x', bluesky: 'chan-bsky' }
-const LIVE: SocialConfig = { apiKey: 'k', channels: CHANNELS, enabled: true }
+const LIVE: SocialConfig = { apiKey: 'k', channels: CHANNELS }
 
 function post(ref: string, notBefore = new Date(NOW.getTime() - 1000)) {
   return { kind: 'alert', ref, notBefore, compose: () => ({ posts: [`post ${ref}`] }) }
@@ -49,13 +48,11 @@ beforeEach(async () => {
 })
 
 describe('readSocialConfig', () => {
-  it('is null without a key and only enabled on exactly "1"', () => {
+  it('is null without a key, and a key is enough to send', () => {
     expect(readSocialConfig({ channelX: 'c' })).toBeNull()
-    expect(readSocialConfig({ bufferApiKey: 'k', enabled: 'true' })?.enabled).toBe(false)
-    expect(readSocialConfig({ bufferApiKey: 'k', enabled: '1', channelX: 'c' })).toEqual({
+    expect(readSocialConfig({ bufferApiKey: 'k', channelX: 'c' })).toEqual({
       apiKey: 'k',
       channels: { x: 'c' },
-      enabled: true,
     })
   })
 })
@@ -90,20 +87,6 @@ describe('drainSocialPosts', () => {
     await drainSocialPosts(db, { config: LIVE, publisher, now: NOW })
     expect(sends).toHaveLength(0)
     expect(await statuses()).toEqual(['x:queued'])
-  })
-
-  it('marks due rows dry-run without sending, so switching on flushes nothing', async () => {
-    await enqueueSocialPost(db, CHANNELS, post('a'))
-    const { sends, publisher } = scripted()
-    const out = await drainSocialPosts(db, {
-      config: { ...LIVE, enabled: false },
-      publisher,
-      now: NOW,
-    })
-    expect(out.dryRun).toBe(2)
-    await drainSocialPosts(db, { config: LIVE, publisher, now: NOW })
-    expect(sends).toHaveLength(0)
-    expect(await statuses()).toEqual(['bluesky:dry-run', 'x:dry-run'])
   })
 
   it('never retries an unknown outcome', async () => {
