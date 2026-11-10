@@ -34,7 +34,7 @@ export default defineTask({
         detail: `${problem.service} ${problem.kind}/${problem.ref} (row ${problem.id}): ${problem.error}`,
       })
     }
-    if (outcome.sent || outcome.dryRun || outcome.problems.length) {
+    if (outcome.sent || outcome.problems.length) {
       logEvent('warn', 'social_post_run', { ...outcome })
     }
     return { result: outcome }
