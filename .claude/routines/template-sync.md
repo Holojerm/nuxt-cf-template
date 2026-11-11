@@ -2,6 +2,7 @@
 schedule: "0 14 * * 3"
 model: claude-sonnet-5
 connectors: [github]
+tier: 2
 enabled: false
 ---
 
@@ -11,8 +12,9 @@ enabled: false
 
 Every fork drifts behind `nuxt-cf-template`. The fleet dashboard reports it as
 `template_behind`, but nothing catches it up, and the longer a sync waits, the harder it is.
-Once a week, in a fork, open the sync PR the owner would otherwise have to remember. The owner
-reviews and merges it: a sync touches many template-owned files, so this routine stays at tier 1.
+Once a week, in a fork, open the sync PR the owner would otherwise have to remember. With a
+tier-2 grant the PR merges itself through the merge queue once its checks pass. Without one it
+is a draft the owner readies.
 
 ## Instructions
 
@@ -38,9 +40,18 @@ reviews and merges it: a sync touches many template-owned files, so this routine
 6. If the sync needs a product decision (pricing, gating, legal copy, an auth model that does
    not fit), skip that piece, keep the rest of the sync, and say so in the PR under
    `needs-owner`.
-7. Journal the PR link, the template range synced, and anything left out.
+7. **Ready or draft.** Open the PR ready for review, so the merge queue lands it when green,
+   only when all of these hold. Otherwise open it as a draft, label it `needs-owner`, and say
+   which one failed.
+   - `routines.config.md` › Autonomy grants lists `template-sync` at tier 2.
+   - `bun run ci` passed here.
+   - The sync touches nothing the tier-2 "never" column names (pricing, billing, auth, data
+     deletion) and adds no migration.
+   - Step 6 skipped nothing: a piece left for the owner means the owner reads the PR.
+8. Journal the PR link, the template range synced, and anything left out.
 
 ## Hard limits for this routine
 
-- Never merge. The owner merges sync PRs, even with a tier grant.
+- Never merge directly, never use `--admin`, and never enable GitHub auto-merge. A ready PR
+  is the only way this routine ships: the queue merges it.
 - One PR per run, on `chore/template-sync` only.
