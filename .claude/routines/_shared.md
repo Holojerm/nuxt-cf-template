@@ -16,7 +16,9 @@ improvise — journal the gap and stop that part of the work.
 ## Hard rules (no exceptions)
 
 1. **Never push to `main`.** Code changes go on a `fix/…`, `feat/…`, or `chore/…` branch with a
-   PR. `main` auto-deploys to production via Workers Builds.
+   PR. `main` auto-deploys to production via Workers Builds. A ready PR enters the merge queue
+   by itself and lands when its checks pass, so opening one ready is a tier-2 act: without the
+   grant, open a draft.
 2. **Never send email or post publicly**, except where a tier grant below says so, and the
    `daily-digest` routine, which sends exactly one email per run to the owner email in
    `routines.config.md`. Everything else outbound is a draft.
@@ -45,7 +47,7 @@ tier 1, and say in the journal that you did.
 | --- | --- | --- |
 | 0 — observe | read metrics, logs, feedback, issues, inbox | — |
 | 1 — draft | issues, PRs left open, reply drafts, post drafts, reports | — |
-| 2 — publish on owned surfaces | merge its own PR once CI is green when the change is content (blog post, SEO page, changelog), code behind a feature flag that defaults **off**, a mechanical fix (below), a Dependabot minor/patch PR with every check green (`dependency-merge.md`), or a retry of a failed check and a requeue of a dequeued PR (`pr-shepherd.md`) | turning a flag on, anything touching pricing, billing, auth, or data deletion |
+| 2 — publish on owned surfaces | merge its own PR once CI is green when the change is content (blog post, SEO page, changelog), code behind a feature flag that defaults **off**, a mechanical fix (below), a Dependabot minor/patch PR with every check green (`dependency-merge.md`), a bug fix with a regression test (`bug-fix.md`), a template sync that leaves nothing for the owner (`template-sync.md`), or a retry of a failed check and a requeue of a dequeued PR (`pr-shepherd.md`) | turning a flag on, anything touching pricing, billing, auth, or data deletion |
 | 3 — publish on owned accounts | post from the product's own X account via `scripts/x-post.ts`, and reply there via `scripts/x-replies.ts` to people who replied to or mentioned the account first, within the caps in each routine | DMs, follows, likes, reposts, replies to anyone who did not address the account, mentions of real people |
 | 4 — money & irreversible | nothing — this tier is the owner's | pricing, ad spend, refunds, deleting user data, support, billing and private replies to a user (email, DMs) |
 
