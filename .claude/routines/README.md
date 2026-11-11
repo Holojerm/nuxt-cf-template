@@ -25,7 +25,7 @@ so the repo ships the *definitions* and a sync command:
 
 | File | Cadence (UTC) | What it does | Needs |
 | --- | --- | --- | --- |
-| `issue-triage.md` | Daily 11:00 | Labels, deduplicates, and assesses new GitHub issues | GitHub connector |
+| `issue-triage.md` | Daily 11:00 | Labels, deduplicates, and assesses new GitHub issues; checks the issues other routines escalate against the code and data, and closes the ones the evidence disproves | GitHub connector (+ Cloudflare connector) |
 | `bug-fix.md` | Daily 12:00 | Picks the top triaged bug, opens a fix PR (never pushes to main) | GitHub connector |
 | `feedback-triage.md` | Daily 11:30 | Turns the in-app feedback queue (D1 `feedback` table) into GitHub issues | GitHub connector (+ Cloudflare API token) |
 | `support-inbox.md` | Daily 13:00 | Triages support email, **drafts** replies (never sends), files bugs as issues | Gmail + GitHub connectors |
@@ -36,6 +36,7 @@ so the repo ships the *definitions* and a sync command:
 | `x-replies.md` | Twice daily 09:00, 17:00 | Answers people who replied to or mentioned the product's X account (a few a run at most), escalates support/billing/press, skips the rest (`scripts/x-replies.ts`); drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
 | `ops-triage.md` | Every 6 h at :37 | Reads the ops spool (`GET /api/ops/events`), retriggers a deploy that never landed, fixes **Mechanical fixes** classes, files the rest as triaged issues | GitHub connector + OPS_BASE_URL / OPS_TOKEN env vars (+ optional deploy hook URL); tier 2 |
 | `dependency-merge.md` | Weekly Mon 15:15 | Merges Dependabot minor/patch PRs that touch only the manifest and lockfile once every check is green; majors and red checks go to the owner | GitHub connector; tier 2; `scope: fleet` (one all-repos routine) |
+| `pr-shepherd.md` | Every 2 h at :23 | Gets stuck PRs moving: retries a check that failed on infrastructure once, requeues a PR that fell out of the merge queue, escalates the rest. Never writes code or merges | GitHub connector; tier 2; `scope: fleet` (one all-repos routine) |
 | `template-sync.md` | Weekly Wed 14:00 | In a fork: opens the `chore/template-sync` PR when `fleet.json` › `template.syncedSha` is behind (never merges) | GitHub connector |
 | `daily-digest.md` | Daily 22:00 | Sends **one email per day** to the owner summarizing all actions taken | Gmail connector |
 
@@ -71,7 +72,7 @@ scope: fleet                   # optional: one all-repos routine runs this for e
 ```
 
 `scope: fleet` is for routines that are identical in every repo and light enough to run for all
-of them in one session (`dependency-merge.md`). The owner registers one `all-repos-<name>`
+of them in one session (`dependency-merge.md`, `pr-shepherd.md`). The owner registers one `all-repos-<name>`
 routine that sources every repo and follows each repo's own grants and journal; `/routines sync`
 skips the definition so forks don't grow a duplicate per repo.
 
