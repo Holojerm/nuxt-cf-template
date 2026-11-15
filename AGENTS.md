@@ -18,6 +18,7 @@ Read the row that matches what you are about to touch. Do not load them all.
 | [`.claude/docs/auth.md`](.claude/docs/auth.md) | Magic link, OAuth, session revocation, `rateLimit()`, Turnstile | Anything under `server/api/auth/`, sessions, rate limiting, or bot protection |
 | [`.claude/docs/billing.md`](.claude/docs/billing.md) | Paddle, entitlements, clawbacks, the `mcp/` worker | Anything that grants, revokes, or prices access |
 | [`.claude/docs/referral.md`](.claude/docs/referral.md) | The referral layer: economics, anti-fraud design, its seams with billing and sign-up, vendoring | Anything under `layers/referral/`, the `?ref=` capture, or days nobody paid for |
+| [`.claude/docs/credentials.md`](.claude/docs/credentials.md) | The opt-in credentials layer: browser-derived password sign-in, passkeys and PRF, the `credentials:unlock` hook, reset hooks | Anything under `layers/credentials/`, or building on the unlock key |
 | [`.claude/docs/email.md`](.claude/docs/email.md) | Resend, the `EMAIL_QUEUE`, retry/dead-letter, notification decisions | Adding or changing any outbound email |
 | [`.claude/docs/seo.md`](.claude/docs/seo.md) | `useSeo()`, `publicPage` meta, structured data, the blog | Adding or editing a page, or writing in `content/blog/` |
 | [`.claude/docs/images.md`](.claude/docs/images.md) | `<NuxtImg>` at the edge vs. transforming a private R2 object in the Worker | Rendering any image, adding a thumbnail, or debugging a `/cdn-cgi/image/` 404 |
@@ -90,7 +91,7 @@ restart. The rest are in [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).
 │   └── blog/               # One markdown file per post; the filename is the URL
 ├── scripts/                # One-off scripts (bun seed, etc.)
 ├── layers/                 # Features that stand alone: billing/ (Paddle, entitlements, /pricing),
-│                           # referral/, feedback/, files/, social/. Each registers with core
+│                           # referral/, feedback/, files/, social/, credentials/ (off by default). Each registers with core
 │                           # through server/utils/extensions.ts (and its sibling seams), never
 │                           # imports another layer, and reads like its own small app
 ├── public/                 # Static assets — og.png, favicon.svg, apple-touch-icon.png

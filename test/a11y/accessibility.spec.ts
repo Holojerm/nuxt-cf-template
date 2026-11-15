@@ -15,7 +15,7 @@ import type { Result } from 'axe-core'
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
-import { hasLayer } from '../lib/layers'
+import { hasLayer, hasPage } from '../lib/layers'
 
 // Public routes only. /dashboard and /account redirect to /login when signed
 // out, so scanning them here would just scan /login a second time; they need a
@@ -48,8 +48,12 @@ const ROUTES = [
   // fail contrast in one of the two modes.
   '/blog/how-billing-works',
   '/changelog',
-  '/login',
-  '/auth/verify',
+  ...(hasPage('login') ? ['/login'] : []),
+  ...(hasPage('auth/verify') ? ['/auth/verify'] : []),
+  // Off by default; the browser suites turn the layer on (its e2e.config.ts).
+  ...(hasLayer('credentials')
+    ? ['/auth/sign-in', '/auth/sign-up', '/auth/verify-email', '/auth/reset']
+    : []),
   '/unsubscribe',
   '/terms',
   '/privacy',

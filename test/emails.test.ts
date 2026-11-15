@@ -22,8 +22,10 @@ const ACTION_URL: Record<EmailName, (data: Record<string, unknown>) => string> =
   'feedback-reply': (d) => `${d.appUrl}`,
   'magic-link': (d) => String(d.url),
   'pass-expiring': (d) => `${d.appUrl}/account`,
+  'password-reset': (d) => String(d.url),
   'payment-failed': (d) => `${d.appUrl}/account`,
   purchase: (d) => `${d.appUrl}/account`,
+  'verify-email': (d) => String(d.url),
   welcome: (d) => `${d.appUrl}`,
 }
 

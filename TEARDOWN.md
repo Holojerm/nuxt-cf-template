@@ -230,6 +230,63 @@ billing (billing itself never imports them, but the loop is what pays its reward
 
 ---
 
+## Credentials only (passwords and passkeys, no magic link or OAuth)
+
+The template signs people in with a magic link, with Apple, Google and GitHub beside it.
+The credentials layer (`layers/credentials/`, documented in the credentials page under
+`.claude/docs/`) ships switched off. This makes it the only door. `bun run ci:forkless credentials-only`
+builds exactly this fork and runs the gates on it.
+
+1. **Turn the layer on.** In `nuxt.config.ts` › `runtimeConfig.public` add
+   `credentials: { enabled: true, primary: true }` (and `prf: true` to ask passkeys for the
+   PRF extension). `primary` redirects `/login` to `/auth/sign-in`, so
+   `app/middleware/auth.ts`, the user menu and the home page keep pointing at `/login`
+   and need no edit. A fork vendors the layer first: `bun run layers:pull credentials`,
+   its `export *` line in `server/db/schema.ts`, `bun run db:generate`.
+2. **Delete the magic-link routes and pages:**
+
+   | Delete | Which was |
+   | --- | --- |
+   | `server/api/auth/magic-link.post.ts` | `POST /api/auth/magic-link` |
+   | `server/api/auth/magic-link/` | `GET` and `POST /api/auth/magic-link/verify` |
+   | `app/pages/login.vue` | `/login` (now a redirect) |
+   | `app/pages/auth/verify.vue` | `/auth/verify` |
+
+3. **Delete the OAuth routes:**
+
+   | Delete | Which was |
+   | --- | --- |
+   | `server/api/auth/apple.ts`, `google.get.ts`, `github.get.ts` | `/api/auth/apple`, `/api/auth/google`, `/api/auth/github` |
+   | `server/api/auth/providers.get.ts` | `GET /api/auth/providers`, read only by the deleted `/login` |
+   | `server/utils/auth-providers.ts`, `test/auth-providers.test.ts` | the button list behind it |
+
+   Unset every `NUXT_OAUTH_*` secret on the Worker and drop them from `.env.example`. The
+   empty `oauth` block in `nuxt.config.ts` can stay or go: nothing reads it now.
+4. **Keep these**, each of which looks like part of what you just removed:
+   - `server/utils/magic-link.ts`, `test/magic-link.test.ts` and the **`magic_link_tokens`
+     table**. Core's account deletion (`server/utils/account.ts`) and nightly purge
+     (`server/utils/purge.ts`) query the table, and two template tests import the helper.
+     With no route minting tokens the table stays empty. No table is dropped by this recipe.
+   - `emails/templates/magic-link.*`: `email:build` and `test/emails.test.ts` cover the whole
+     directory.
+   - `server/api/auth/logout.post.ts`, and `server/api/auth/dev.post.ts` (404 in
+     production; the browser suites sign in through it).
+   - `server/utils/auth.ts`: `establishSession()` is what every credentials sign-in ends in.
+5. **Docs.** In `.claude/docs/auth.md` delete the two blocks between the
+   `forkless:magic-link` and `forkless:oauth` markers; they describe the files above.
+6. **Copy.** `app/pages/privacy.vue` says accounts arrive from GitHub or Google. Say what
+   is true now: an email address, and a value derived from the password (never the
+   password). Link `/settings/security` from `app/pages/account.vue`.
+7. **Tests need no edit.** The axe sweep, the CSP spec and the gated-page spec follow
+   whichever sign-in pages exist (`test/lib/layers.ts`), and the Turnstile suite skips its
+   magic-link ordering check when that route is gone.
+
+What changes for people: sign-up is a mailed link that opens a page to choose a password, a forgotten
+password is a mailed reset, and nobody can sign in with a provider account. An existing
+account that only ever used a magic link has no password: "Forgot password" sets one.
+
+---
+
 ## Remove the optional MCP worker
 
 Nothing in the app depends on it — it is a second Worker that reads the same D1.
@@ -267,6 +324,7 @@ Nothing in the app depends on it — it is a second Worker that reads the same D
 | **Social posting (Buffer)** | `layers/social/` | Delete its `export *` line at the end of `server/db/schema.ts` and run `bun run db:generate` to drop the `social_posts` table; remove `social:post` from `SCHEDULED_TASKS` in `nuxt.config.ts` if the app scheduled it, and the `NUXT_SOCIAL_*` secrets |
 | **Image transforms** | `layers/files/server/utils/images.ts`, `layers/files/test/images.test.ts` | Remove the transform branch from `layers/files/server/api/files/[id].get.ts` (leave the `blob.serve()` call), `@nuxt/image` from `package.json` / `modules` / the `image` and `$development` blocks in `nuxt.config.ts`, the `[images]` blocks from `wrangler.toml`, and `.claude/docs/images.md`. Replace every `<NuxtImg>` with `<img>` — a leftover `<NuxtImg>` is a build error, so the typecheck finds them for you |
 | **Lifecycle email** | `server/utils/lifecycle.ts`, `lifecycle-steps.ts`, `lifecycle-emails.ts`, `lifecycle-app-steps.ts`, `server/tasks/lifecycle-email.ts`, `test/lifecycle.test.ts` | Drop `'lifecycle-email'` from the `'0 4 * * *'` entry of `SCHEDULED_TASKS` in `nuxt.config.ts` (`bun run crons:check` verifies the rest) and the "Lifecycle email" section of `.claude/docs/email.md`. Core compiles without them: the `LifecycleStep` type that `registerLifecycleStep()` names lives in `server/types/extension-types.ts`, so no stub `lifecycle.ts` is needed. Billing's `pass_expiring` step needs the runner: remove billing too, or keep these files |
+| **Credentials (passwords and passkeys)** | `layers/credentials/` and its page under `.claude/docs/` | Ships switched off, so leaving it in place changes nothing. To remove it: delete its `export *` line at the end of `server/db/schema.ts` and run `bun run db:generate` to drop its four `credential_*` tables; drop `@simplewebauthn/server` and `@simplewebauthn/browser` from `package.json`; the `verify-email` and `password-reset` templates under `emails/` can stay or go with their `emails/samples.ts` and `test/emails.test.ts` entries. `bun run ci:forkless no-credentials` builds this fork |
 | **Turnstile** | `server/utils/turnstile.ts`, `test/turnstile.test.ts` | Remove `<NuxtTurnstile>` from `login.vue` and the feedback widget, `@nuxtjs/turnstile` from `package.json`, and `challenges.cloudflare.com` from the CSP. **You are removing a bot control from two endpoints a stranger can reach** — rate limiting alone is weaker |
 | **Admin panel** | `app/pages/admin/`, `server/api/admin/`, `server/utils/admin.ts`, `app/utils/admin.ts`, and the layer's comp-grant routes (`layers/billing/server/api/admin/`), `layers/billing/server/utils/admin-grants.ts` and `layers/billing/test/admin-grants.test.ts` | Keep `server/utils/audit.ts` and the `audit_log` table — deletion and grant history are written from non-admin paths too |
 | **PostHog analytics** | `app/plugins/posthog.client.ts`, `server/utils/posthog.ts`, `server/routes/ingest/`, `app/utils/analytics-privacy.ts` | Remove the PostHog CSP entries; the `$exception` branch of `server/plugins/error-logger.ts` (**keep the `console.error` branch** — it is your only error visibility once PostHog is gone) |
@@ -282,8 +340,14 @@ Each one looks optional and is not:
 - **`server/utils/session-guard.ts`** and `users.sessions_invalid_before` — the only
   mechanism that revokes a sealed-cookie session. Without it "delete my account" leaves
   the user signed in on their other devices.
-- **`server/utils/identity.ts`** and the `instance_secrets` row — shared by the
-  magic-link per-address rate limit. See the referrals section.
+- **`server/utils/identity.ts`** and the `instance_secrets` row. It began as the salt
+  behind the referral welcome trial, and removing referrals does not free it. Once
+  magic-link is gone its remaining job is the credentials layer's: the salt-lookup route
+  answers an address with no account using a salt computed from that row, so the answer
+  looks like a real account's and stays the same every time it is asked. Delete or
+  regenerate the row and every such decoy changes at once while real accounts keep their
+  salts, which tells anyone who asked before and after exactly which addresses are
+  registered. It is written once and never rotated; keep it through every teardown.
 - **`server/utils/log.ts` › `pathForLog()`** — keeps live credentials out of logs on the
   two routes that carry a token in the URL.
 - **The `design:check` / `brand:check` / `seo:check` / `mirror:check` gates.** They are

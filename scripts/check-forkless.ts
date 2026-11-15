@@ -162,6 +162,46 @@ const withoutBilling = (dir: string) => {
 const withoutReferral = (dir: string) => remove(dir, 'layers/referral', '.claude/docs/referral.md')
 const withoutLifecycle = (dir: string) => remove(dir, ...LIFECYCLE)
 
+const withoutCredentials = (dir: string) => {
+  remove(dir, 'layers/credentials', '.claude/docs/credentials.md')
+  dropSchemaExport(dir, 'credentials')
+}
+
+/**
+ * TEARDOWN.md, "Credentials only": passwords and passkeys as the only sign-in.
+ * The magic-link and OAuth routes and pages go; the token helper and its table
+ * stay, because core's account deletion, nightly purge and tests name them.
+ */
+const MAGIC_LINK_AND_OAUTH = [
+  'server/api/auth/magic-link.post.ts',
+  'server/api/auth/magic-link',
+  'server/api/auth/apple.ts',
+  'server/api/auth/google.get.ts',
+  'server/api/auth/github.get.ts',
+  'server/api/auth/providers.get.ts',
+  'server/utils/auth-providers.ts',
+  'test/auth-providers.test.ts',
+  'app/pages/login.vue',
+  'app/pages/auth/verify.vue',
+]
+const credentialsOnly = (dir: string) => {
+  remove(dir, ...MAGIC_LINK_AND_OAUTH)
+  edit(
+    dir,
+    'nuxt.config.ts',
+    (source) =>
+      source.replace(
+        /(\n {4}public: \{\n)/,
+        '$1      credentials: { enabled: true, primary: true },\n',
+      ),
+    'the `public: {` block of runtimeConfig',
+  )
+  dropMarked(dir, '.claude/docs/auth.md', 'magic-link')
+  dropMarked(dir, '.claude/docs/auth.md', 'oauth')
+  // The checklist a fork finishes and deletes; its rows name the files just removed.
+  remove(dir, 'TEARDOWN.md')
+}
+
 const layersCheck: Check = { label: 'layers:check', cmd: [bun, 'run', 'scripts/check-layers.ts'] }
 const mirrorCheck: Check = {
   label: 'mirror:check (mirrors + reference resolution)',
@@ -242,6 +282,18 @@ const scenarios: Scenario[] = [
       dropMarked(dir, '.claude/docs/patterns.md', 'lifecycle')
     },
     checks: [...gates, cronsCheck, typecheck(BILLING_UI), unitTests],
+  },
+  {
+    name: 'no-credentials',
+    about: 'the credentials layer left out (magic link only, as the template ships)',
+    prepare: withoutCredentials,
+    checks: [...gates, typecheck(), browserSuites, unitTests],
+  },
+  {
+    name: 'credentials-only',
+    about: 'passwords and passkeys as the only sign-in: magic link and OAuth deleted',
+    prepare: credentialsOnly,
+    checks: [...gates, typecheck(), browserSuites, unitTests],
   },
   // ── The gates still bite ───────────────────────────────────────────────────
   {
