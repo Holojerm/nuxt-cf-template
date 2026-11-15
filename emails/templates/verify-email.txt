@@ -1,0 +1,12 @@
+Finish creating your {{appName}} account
+
+Open this link to choose your password and finish creating your account. It works once and expires in {{expiresMinutes}} minutes.
+
+Or paste this into your browser: {{url}}
+
+Choose your password: {{url}}
+
+—
+If you didn't sign up, you can ignore this email — no account is created until the link is opened.
+
+{{appUrl}}

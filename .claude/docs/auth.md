@@ -9,6 +9,7 @@ Magic-link sign-in, OAuth providers, session revocation, the `rateLimit()` two-b
 
 ## Auth Patterns
 
+<!-- forkless:magic-link:start -->
 Sign-in is **implemented**, not scaffolded. The primary path is a **magic link**
 (`server/api/auth/magic-link.post.ts` → `/auth/verify` → `verify.post.ts`); Apple,
 Google, and GitHub OAuth sit under it at `server/api/auth/<provider>.get.ts`;
@@ -55,6 +56,7 @@ GitHub ships **unconfigured on purpose** — it is a developer credential, and a
 consumer sign-in page that leads with it tells most visitors the product isn't for
 them. Configure it for a devtool fork; it renders last either way
 (`server/api/auth/providers.get.ts`).
+<!-- forkless:magic-link:end -->
 
 ```typescript
 // Protect a page client-side (UX only — see the warning below)
@@ -103,6 +105,7 @@ Never default that flag to `true` when adding a provider. The magic-link path is
 the one place where that flag is our own evidence rather than a third party's: the
 token was mailed to that address and came back.
 
+<!-- forkless:oauth:start -->
 Adding a provider is three steps: add the `oauth.<name>` keys to
 `nuxt.config.ts`, write `server/api/auth/<name>.get.ts` mapping the provider's
 user shape onto `OAuthProfile`, and add a row to `server/api/auth/providers.get.ts`
@@ -110,6 +113,7 @@ so `/login` renders the button. (Apple is the exception to step two twice over:
 its callback is a cross-site form POST, so that route is `apple.ts` with no
 method suffix, and it needs `NUXT_OAUTH_APPLE_REDIRECT_URL` because its handler
 does not fall back to the request origin the way the others do.)
+<!-- forkless:oauth:end -->
 
 **Never put a secret in a URL a browser will keep.** Two flows here have to hand
 someone a credential in a link — the sign-in link and the unsubscribe link — and

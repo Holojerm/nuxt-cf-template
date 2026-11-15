@@ -25,7 +25,17 @@ import {
 // The route's own text, so the ordering assertion below cannot drift away from
 // the file it describes. Vite resolves `?raw` at transform time, which is what
 // makes this readable from inside workerd, where there is no filesystem.
-import MINT_ROUTE_SOURCE from '../server/api/auth/magic-link.post.ts?raw'
+// A glob, not a plain import: a fork that signs in with the credentials layer
+// alone has deleted this route (TEARDOWN.md, "Credentials only"), and the
+// suite that describes it is skipped there instead of failing to load.
+const MINT_ROUTE_SOURCE =
+  Object.values(
+    import.meta.glob<string>('../server/api/auth/magic-link.post.ts', {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    }),
+  )[0] ?? ''
 
 const SECRET = '0x4AAAAAAA-not-a-real-secret'
 const TOKEN = '0.solved-challenge-token'
@@ -182,7 +192,7 @@ async function mintUnderGuard(input: {
   return { minted: true }
 }
 
-describe('the magic-link mint path', () => {
+describe.skipIf(!MINT_ROUTE_SOURCE)('the magic-link mint path', () => {
   beforeEach(async () => {
     await env.DB.exec('DELETE FROM magic_link_tokens')
   })

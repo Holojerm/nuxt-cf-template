@@ -33,7 +33,7 @@ import { expect, test } from '@playwright/test'
 
 import { contentSecurityPolicy } from '../../shared/security-headers'
 import { recordConsole } from '../lib/console'
-import { hasLayer } from '../lib/layers'
+import { hasLayer, hasPage, SIGN_IN_PATH } from '../lib/layers'
 
 /**
  * Landing, the checkout entry point, and the auth surface — both halves of the
@@ -60,8 +60,8 @@ const HAS_BILLING = hasLayer('billing')
 const ROUTES = [
   '/',
   ...(HAS_BILLING ? ['/pricing'] : []),
-  '/login',
-  `/auth/verify#token=${DUMMY_TOKEN}`,
+  SIGN_IN_PATH,
+  ...(hasPage('auth/verify') ? [`/auth/verify#token=${DUMMY_TOKEN}`] : []),
 ]
 
 /**

@@ -30,6 +30,7 @@ export const DEFAULT_REPO = 'Holojerm/nuxt-cf-template'
  */
 export const TEMPLATE_LAYERS: readonly string[] = [
   'billing',
+  'credentials',
   'feedback',
   'files',
   'referral',

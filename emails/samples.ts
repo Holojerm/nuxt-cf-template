@@ -25,7 +25,17 @@ export const SAMPLES: Record<string, EmailSample> = {
     expiresMinutes: 15,
   },
   'pass-expiring': { ...brand, name: 'Ada', date: 'October 7' },
+  'password-reset': {
+    ...brand,
+    url: `${brand.appUrl}/auth/reset#token=8a1b3c`,
+    expiresMinutes: 30,
+  },
   'payment-failed': { ...brand, name: 'Ada' },
   purchase: { ...brand, name: 'Ada', isPass: false, ends: 'November 4, 2026' },
+  'verify-email': {
+    ...brand,
+    url: `${brand.appUrl}/auth/verify-email#token=5d7e9f`,
+    expiresMinutes: 60,
+  },
   welcome: { ...brand, name: 'Ada' },
 }
