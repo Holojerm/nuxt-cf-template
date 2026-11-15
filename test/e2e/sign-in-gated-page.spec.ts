@@ -5,15 +5,16 @@
 // with a way back. The half that needs a plan is billing's own spec,
 // layers/billing/test/e2e/gated-without-plan.spec.ts.
 
+import { SIGN_IN_PATH } from '../lib/layers'
 import { expect, test } from './fixtures'
 
-test('a signed-out visit to the gated page redirects to /login with a way back', async ({
+test('a signed-out visit to the gated page redirects to sign-in with a way back', async ({
   page,
 }) => {
   await page.goto('/dashboard')
-  await page.waitForURL(/\/login/)
+  await page.waitForURL((url) => url.pathname === SIGN_IN_PATH)
 
   const url = new URL(page.url())
-  expect(url.pathname).toBe('/login')
+  expect(url.pathname).toBe(SIGN_IN_PATH)
   expect(url.searchParams.get('redirect')).toBe('/dashboard')
 })
