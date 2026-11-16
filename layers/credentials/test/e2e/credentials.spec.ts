@@ -55,6 +55,25 @@ async function listen(page: Page): Promise<void> {
 const unlocks = (page: Page) =>
   page.evaluate(() => (window as unknown as { unlocks: Unlock[] }).unlocks)
 
+/**
+ * The unlock a step produced, waited for. The hook's listeners run one after
+ * another, and an app may have its own before this spec's (one that makes
+ * keys, say), so the session can exist before ours has recorded anything.
+ */
+async function unlock(page: Page, reason: string): Promise<Unlock> {
+  let found: Unlock | undefined
+  await expect
+    .poll(
+      async () => {
+        found = (await unlocks(page)).find((entry) => entry.reason === reason)
+        return found?.reason
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(reason)
+  return found!
+}
+
 async function open(page: Page, path: string): Promise<void> {
   await page.goto(path, { waitUntil: 'networkidle' })
   await listen(page)
@@ -116,9 +135,9 @@ test('sign up by mail, sign in, passkey with PRF, change and reset the password'
   await page.getByLabel('Password').fill(first)
   await page.getByRole('button', { name: 'Create account' }).click()
   await expect.poll(() => sessionEmail(page), { timeout: 30_000 }).toBe(email)
-  const [signedUp] = await unlocks(page)
+  const signedUp = await unlock(page, 'sign-up')
   expect(signedUp).toMatchObject({ reason: 'sign-up', prfStatus: null })
-  expect(signedUp!.unlockKey).toMatch(/^[0-9a-f]{64}$/)
+  expect(signedUp.unlockKey).toMatch(/^[0-9a-f]{64}$/)
 
   // ── Password sign-in hands over an unlock key; a wrong password does not ───
   await signOut(page)
@@ -132,11 +151,11 @@ test('sign up by mail, sign in, passkey with PRF, change and reset the password'
   await page.getByLabel('Password').fill(first)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect.poll(() => sessionEmail(page), { timeout: 30_000 }).toBe(email)
-  const [signedIn] = await unlocks(page)
+  const signedIn = await unlock(page, 'sign-in')
   expect(signedIn).toMatchObject({ reason: 'sign-in', prfStatus: null })
   // The same password derives the same key on every sign-in: the salt is the account's.
-  expect(signedIn!.unlockKey).toBe(signedUp!.unlockKey)
-  const firstKey = signedIn!.unlockKey
+  expect(signedIn.unlockKey).toBe(signedUp.unlockKey)
+  const firstKey = signedIn.unlockKey
 
   // ── The security page: axe, add a passkey, PRF arrives ─────────────────────
   await open(page, '/settings/security')
@@ -149,13 +168,13 @@ test('sign up by mail, sign in, passkey with PRF, change and reset the password'
   await page.getByLabel('Name for the new passkey').fill('Virtual key')
   await page.getByRole('button', { name: 'Add a passkey' }).click()
   await expect(page.getByText('Virtual key')).toBeVisible({ timeout: 30_000 })
-  const [registered] = await unlocks(page)
+  const registered = await unlock(page, 'passkey-register')
   expect(registered).toMatchObject({
     reason: 'passkey-register',
     prfStatus: 'provided',
     unlockKey: null,
   })
-  expect(registered!.prf).toMatch(/^[0-9a-f]{64}$/)
+  expect(registered.prf).toMatch(/^[0-9a-f]{64}$/)
 
   // ── Changing the password needs the current one, and hands over both keys ──
   await page.getByLabel('Current password').fill('not-the-password')
@@ -166,10 +185,10 @@ test('sign up by mail, sign in, passkey with PRF, change and reset the password'
   await page.getByLabel('Current password').fill(first)
   await page.getByRole('button', { name: 'Change password' }).click()
   await expect(page.getByText('Password changed').first()).toBeVisible({ timeout: 30_000 })
-  const changed = (await unlocks(page)).find((unlock) => unlock.reason === 'password-change')
-  expect(changed?.previousUnlockKey).toBe(firstKey)
-  expect(changed?.unlockKey).toMatch(/^[0-9a-f]{64}$/)
-  expect(changed?.unlockKey).not.toBe(firstKey)
+  const changed = await unlock(page, 'password-change')
+  expect(changed.previousUnlockKey).toBe(firstKey)
+  expect(changed.unlockKey).toMatch(/^[0-9a-f]{64}$/)
+  expect(changed.unlockKey).not.toBe(firstKey)
   // The session that changed it survived its own revocation.
   expect(await sessionEmail(page)).toBe(email)
 
@@ -178,11 +197,11 @@ test('sign up by mail, sign in, passkey with PRF, change and reset the password'
   await open(page, '/auth/sign-in')
   await page.getByRole('button', { name: 'Sign in with a passkey' }).click()
   await expect.poll(() => sessionEmail(page), { timeout: 30_000 }).toBe(email)
-  const [viaPasskey] = await unlocks(page)
+  const viaPasskey = await unlock(page, 'passkey-sign-in')
   expect(viaPasskey).toMatchObject({
     reason: 'passkey-sign-in',
     prfStatus: 'provided',
-    prf: registered!.prf,
+    prf: registered.prf,
     unlockKey: null,
   })
 
@@ -197,9 +216,9 @@ test('sign up by mail, sign in, passkey with PRF, change and reset the password'
   await page.getByLabel('New password').fill(third)
   await page.getByRole('button', { name: 'Set new password' }).click()
   await expect.poll(() => sessionEmail(page), { timeout: 30_000 }).toBe(email)
-  const [reset] = await unlocks(page)
+  const reset = await unlock(page, 'password-reset')
   expect(reset).toMatchObject({ reason: 'password-reset', previousUnlockKey: null })
-  expect(reset!.unlockKey).not.toBe(changed!.unlockKey)
+  expect(reset.unlockKey).not.toBe(changed.unlockKey)
 
   await signOut(page)
   await open(page, '/auth/sign-in')
