@@ -7,12 +7,20 @@
 // they can tell you something is the fastest way to hear nothing.
 
 import { z } from 'zod'
-import type { FormSubmitEvent } from '@nuxt/ui'
+import type { ButtonProps, FormSubmitEvent } from '@nuxt/ui'
 
 interface Props {
   /** `floating` pins a button bottom-right; `inline` renders it in flow. */
   position?: 'floating' | 'inline'
   label?: string
+  /**
+   * The trigger's look. Left out, a floating trigger is an outline neutral
+   * button and an inline one a solid primary button. A fork whose page already
+   * has its one primary action (a footer link, say) passes its own.
+   */
+  color?: ButtonProps['color']
+  variant?: ButtonProps['variant']
+  size?: ButtonProps['size']
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -134,8 +142,9 @@ async function onSubmit(event: FormSubmitEvent<Schema>) {
       class="min-touch"
       :icon="position === 'floating' ? 'i-lucide-message-square' : undefined"
       :label="props.label"
-      :color="position === 'floating' ? 'neutral' : 'primary'"
-      :variant="position === 'floating' ? 'outline' : 'solid'"
+      :color="props.color ?? (position === 'floating' ? 'neutral' : 'primary')"
+      :variant="props.variant ?? (position === 'floating' ? 'outline' : 'solid')"
+      :size="props.size"
       :class="position === 'floating' ? 'fixed bottom-safe right-safe z-50 shadow-sm' : undefined"
     />
 
