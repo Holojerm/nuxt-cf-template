@@ -1320,7 +1320,7 @@ This section is the other half: what users **said**.
 
 ### The widget
 
-`<FeedbackWidget />` is mounted once in [`app/layouts/default.vue`](./app/layouts/default.vue), so every page has a floating trigger. Drop `<FeedbackWidget position="inline" />` into a page instead (end of onboarding, account page, cancellation flow) if a floating button doesn't suit the product.
+`<FeedbackWidget />` is mounted once in [`app/layouts/default.vue`](./app/layouts/default.vue), so every page has a floating trigger. Drop `<FeedbackWidget position="inline" />` into a page instead (end of onboarding, account page, cancellation flow) if a floating button doesn't suit the product. The trigger takes `color`, `variant` and `size` for a page that already has its one primary action: `<FeedbackWidget position="inline" color="neutral" variant="link" />` reads as a footer link.
 
 It's open to **signed-out visitors on purpose** — requiring a login before someone can tell you something is the fastest way to hear nothing. `POST /api/feedback` is allowlisted by the global auth middleware (the full allowlist is in [`.claude/docs/auth.md`](./.claude/docs/auth.md)); reading and triaging stay gated. The PostHog event carries the feedback id, kind, rating, path and replay link — never the message text; the D1 row is the system of record.
 
