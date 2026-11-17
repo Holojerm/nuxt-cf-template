@@ -623,6 +623,10 @@ Caveats, all deliberate:
 - **The window is fixed, not sliding:** `limit` at the end of one window plus `limit` at the start
   of the next.
 
+Two options for the call sites that need them: `cost` makes one call spend several (a batch), and
+`exact: false` lets a matching native limiter decide alone, with no D1 write, for a high-volume
+public read path where a loose limit is acceptable. Never use the second in front of sign-in.
+
 This is front-door abuse control, not metering; anything you bill on belongs in a Durable Object.
 
 To change the auth limit, change `NATIVE_LIMITER` in
