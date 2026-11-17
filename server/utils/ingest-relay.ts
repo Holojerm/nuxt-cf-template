@@ -20,7 +20,6 @@
 // check (see `nativeFor` in rate-limit.ts) and is only ever counted in D1. This
 // traffic arrives from wherever the visitor is, and the native count is kept
 // per location. Keep a retuned window off 10 and 60 for the same reason.
-// Keep a retuned window off 10 and 60 for the same reason.
 //
 // ── Changing it ──────────────────────────────────────────────────────────────
 // A fork that needs other numbers calls `configureIngestRelay()` from a Nitro
