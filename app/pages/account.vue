@@ -122,9 +122,10 @@ async function openBillingPortal(): Promise<void> {
 const connectCode = ref<string | null>(null)
 // The address a client is given. Empty until NUXT_PUBLIC_MCP_URL is set, and
 // then the card says what to paste where instead of assuming the user knows.
-const mcpEndpoint = computed(() =>
-  config.public.mcpUrl ? `${config.public.mcpUrl.replace(/\/+$/, '')}/mcp` : '',
-)
+const mcpEndpoint = computed(() => {
+  const origin = mcpOrigin(config.public.mcpUrl)
+  return origin ? `${origin}/mcp` : ''
+})
 const { pending: connectPending, run: mintConnectCode } = useAsyncAction(
   async () => {
     const result = await $fetch('/api/mcp/connect-code', { method: 'POST' })

@@ -25,6 +25,14 @@ describe('buildAiCatalog', () => {
     })
   })
 
+  it('reads the endpoint spelling as the same server, never …/mcp/mcp', () => {
+    for (const mcpUrl of ['https://mcp.notes.example/mcp', 'https://mcp.notes.example/mcp/']) {
+      expect(
+        buildAiCatalog({ appUrl: 'https://notes.example', mcpUrl, slug: 'notes' })?.entries[0]?.url,
+      ).toBe('https://mcp.notes.example/mcp/server-card')
+    }
+  })
+
   it('is absent, not empty, when no MCP server is configured', () => {
     expect(
       buildAiCatalog({ appUrl: 'https://notes.example', mcpUrl: '', slug: 'notes' }),

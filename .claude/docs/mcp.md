@@ -81,7 +81,7 @@ Three ways a client finds the server without being handed its URL.
 
 The card and the worker's catalog 404 while `registry.name` still carries the template's `YOUR_GITHUB_OWNER`. The app's catalog 404s until `NUXT_PUBLIC_MCP_URL` is set, and on preview deploys.
 
-`NUXT_PUBLIC_MCP_URL` (`wrangler.toml [vars]`) is the app's side of this. Setting it also puts the server address on `/account` beside the connect code, and adds an "MCP server" section to `llms.txt`.
+`NUXT_PUBLIC_MCP_URL` (`wrangler.toml [vars]`) is the app's side of this. It is the worker's origin; the endpoint, the same URL ending in `/mcp`, is read as the same server, so either spelling works. Setting it also puts the server address on `/account` beside the connect code, and adds an "MCP server" section to `llms.txt`.
 
 Server Cards are SEP-2127, accepted in 2026 as an extension. Its repository still labels the `v1` schema pre-release, and the registry calls itself a preview. If the card's shape or path moves, `serverCard()` in `mcp/src/discovery.ts` is the one place to change.
 

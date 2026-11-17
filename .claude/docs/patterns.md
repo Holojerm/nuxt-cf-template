@@ -243,7 +243,8 @@ carries no local patch for it. The checks that make that true:
   anything under `layers/*/test/e2e/`.
 
 - **Updating**: `bun run layers:pull --all` re-pulls every locked layer at its recorded ref
-  (`main` unless you passed `--ref`). The PR diff is exactly what the template changed.
+  (`main` unless you passed `--ref`). `--sha <commit>` takes one exact commit without changing
+  which ref the layer follows. The PR diff is exactly what the template changed.
 - **Customizing**: app files shadow a layer's components, pages and API routes. `server/utils`
   cannot be shadowed (the layer's export wins), so change server behaviour through the
   layer's `runtimeConfig` options (set in the app's `nuxt.config.ts`), an extension point,

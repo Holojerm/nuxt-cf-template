@@ -21,6 +21,7 @@
 
 import { z } from 'zod'
 
+import { mcpOrigin } from '../../shared/utils/site'
 import type { McpTool } from './mcp-tools'
 
 /** The registry's server.json schema this builds against. */
@@ -426,7 +427,7 @@ export function listingProblems(ctx: ListingContext, appMcpUrl: string): Listing
     }
   }
 
-  const advertised = trimSlash(appMcpUrl)
+  const advertised = mcpOrigin(appMcpUrl)
   if (advertised && advertised !== trimSlash(listing.url)) {
     problems.push({
       rule: 'NUXT_PUBLIC_MCP_URL differs from the listing',

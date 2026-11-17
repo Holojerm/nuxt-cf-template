@@ -39,6 +39,36 @@ Facts that will be stale by the time you read this, and must be re-derived:
 - Not every Nuxt app in `~/code` is a fork. Check for a template lineage before including one.
 - The owner has unpushed local commits and dirty working trees. Never build on local `HEAD`.
 
+**In a cloud session there is no `~/code`.** Find the forks by their manifest instead: search
+for `fleet.json` files whose `template.repo` names this template, attach each repository, and
+clone it fresh. A fresh clone has no owner working tree to protect, so branch in place rather
+than in a worktree. Everything else on this page still holds.
+
+**Check the remote for a leftover `chore/template-sync` before you push.** Two forks carried
+one from a sync weeks earlier, with commits no open PR owned. Never overwrite it: push to
+`chore/template-sync-<short template sha>` and say in the PR that the old branch can go.
+
+## Start from a three-way merge, not a file-by-file copy
+
+Forks are plain copies, so git sees no shared history, but the fork's `template.syncedSha` is
+exactly the merge base. Fetch that commit and template `main` into the fork's clone, then let
+git do the mechanical half without touching the working tree:
+
+```bash
+git merge-tree --write-tree --name-only --merge-base=<syncedSha> HEAD <template main>
+git read-tree -m -u HEAD <the tree it printed>
+```
+
+What is left is a list of real conflicts, usually ten to twenty files, instead of a hundred
+files to compare by eye. Then apply the policy below to the result before resolving anything:
+put the fork's own copy back for `README.md`, `bun.lock`, `fleet.json`, every migration, every
+`layers/` path and every `app-owned.json` path, and delete the empty directories the merge
+leaves behind (an empty `layers/<name>/` is registered as a Nuxt layer).
+
+**Read the fork's own history first.** In the last run five of seven forks had already
+hand-ported the rate-limit change and its migration in their own PRs. The sync then needed no
+migration at all, and "this fork is six commits behind" overstated the work several times over.
+
 ## The rule that matters most
 
 **Never modify the owner's working trees.** Do everything in `git worktree`s off the fetched
@@ -55,6 +85,11 @@ what's gated behind a subscription, and legal copy describing a payment relation
 doesn't exist are the owner's calls. Shipping the template's `/terms` and `/privacy` into an app
 with no billing is worse than shipping nothing: a privacy policy naming a payment processor you
 don't use is inaccurate in a legally meaningful way.
+
+Docs follow the layers. `.claude/docs/billing.md`, `referral.md`, `credentials.md` and `mcp.md`
+each describe one optional subsystem and name symbols that only exist with it, so in a fork
+without that subsystem they fail `mirror:check`. Do not bring one over unless the fork has
+what it describes.
 
 Never overwrite a path in the template's `app-owned.json`: the fork owns it by design. A path in
 the fork's `fleet.json` › `template.customized` is a declared divergence: port the template's
@@ -74,6 +109,13 @@ Every fork has its own migration sequence. **Never copy a migration file from th
 
 If the base branch gained a migration while you worked, yours must be **regenerated**, not
 renumbered by hand — the snapshot and `_journal.json` have to agree with the SQL.
+
+## Layers are pulled, never merged
+
+A vendored layer is replaced whole: `bun run layers:pull <name> --sha <template sha>`, with the
+same commit the sync is recording in `template.syncedSha`. Use `--sha`, not `--ref`: `--ref
+<sha>` rewrites what the layer follows, and the next `layers:pull --all` then stays pinned to
+that commit instead of going back to `main`.
 
 ## Adapt, don't paste
 
@@ -165,6 +207,12 @@ and must not be mixed into a change anyone needs to read.
 Write commit messages and PR bodies that lead with **what was broken and what it cost**, not a
 list of files. Quantify (`75 dead classes`, `104/104 tests`). Keep an explicit section for what
 you deliberately left out and why.
+
+**Ready or draft.** Most forks queue a ready PR themselves and merge it when green, so a ready
+PR is a merge. Open it as a draft when the sync adds a migration, changes a variable or
+setting production reads, or leaves a decision for the owner, and say which at the top of the
+PR. A fork whose Mergify config has no auto-queue rule posts a "Queue this pull request"
+checkbox instead; say so, because a ready PR there merges only when someone ticks it.
 
 ## Finally
 
