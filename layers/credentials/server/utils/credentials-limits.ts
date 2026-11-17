@@ -1,6 +1,7 @@
 // Every budget the layer's routes charge, in one place so a test can prove each
 // route names one. None of them equals core's NATIVE_LIMITER (30 per 60s), on
-// purpose: these stay on the KV backend, where a 15-minute window is possible.
+// purpose: they are counted in D1 only, where a 15-minute window is possible
+// and the count is exact.
 
 import { canonicalizeEmailForLimiting } from '#server/utils/users'
 import { sha256Hex } from '#server/utils/hash'

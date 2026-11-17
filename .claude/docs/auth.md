@@ -170,48 +170,40 @@ then its own gate: `requireAccess()` (billing registers `requireSubscription` be
 
 ## Rate Limiting
 
-`rateLimit(event, { name, limit, windowSeconds })` — one call, two backends. It
-prefers Cloudflare's **native Rate Limiting binding** (`[[ratelimits]]` in
-`wrangler.toml`, resolved off `event.context.cloudflare.env`) and otherwise uses
-the original **KV fixed window**. Applied to the whole `/api/auth/` surface in
-`server/middleware/auth.ts` and per-user on connect-code minting. The magic-link
-per-mailbox budget is **not** one of its call sites — it is counted in D1 (above).
+`rateLimit(event, { name, limit, windowSeconds })` counts every call in D1 and, for
+a call site whose numbers match it, asks Cloudflare's **native Rate Limiting
+binding** first. Applied to the whole `/api/auth/` surface in
+`server/middleware/auth.ts` and per-user on connect-code minting.
 
-The binding's `(limit, period)` is fixed at deploy — `limit({ key })` takes only a
-key — so `chooseBackendAmong` delegates to it **only when both numbers match**
-`NATIVE_LIMITER`, and everything else stays on KV. Don't relax that: routing a
-20/60s handler through a 30/60s binding enforces 30 while `X-RateLimit-Limit: 20`
-goes out on the response, and nothing fails. `period` may only be **10 or 60**.
-
-- **A second native budget** (a stricter limit for an expensive create endpoint) is a second
-  `[[ratelimits]]` block (own `name`, own `namespace_id`, in `[env.preview]` too) plus one line
-  in a Nitro plugin, never an edit to `rate-limit.ts`:
+- **The count is exact.** One row per caller, endpoint and window in `rate_limits`,
+  moved by a single `INSERT … ON CONFLICT DO UPDATE … RETURNING count`
+  (`d1RateLimitStore`). Two requests can never read the same count, and it is one
+  count across every Cloudflare location. The key is hashed. Don't replace it with
+  read-then-write on any store: 75 simultaneous requests were once counted as 10.
+- **The native binding only refuses.** It is a first check that saves a D1 write on
+  a flood down one connection. It must never be the only thing between a caller and
+  an endpoint: on production it let through every request that opened its own
+  connection. `nativeFor` gives it to a call site **only when both numbers match**
+  `NATIVE_LIMITER`; `period` may only be **10 or 60**.
+- **A second native budget** (a stricter first check for an expensive create endpoint) is a
+  second `[[ratelimits]]` block (own `name`, own `namespace_id`, in `[env.preview]` too) plus
+  one line in a Nitro plugin, never an edit to `rate-limit.ts`:
   `registerNativeLimiter({ binding: 'GAME_CREATE_LIMITER', limit: 5, windowSeconds: 60 })`.
-  A `rateLimit()` whose numbers equal a registered spec goes native; any other stays on KV.
   Two bindings with the same budget are refused. A fork's named budgets
   (`const INGEST_LIMITER = { name, limit, windowSeconds }`, passed straight to `rateLimit()`
-  like `UNSUBSCRIBE_LIMITER`) belong in a file of the fork's own,
-  not in `rate-limit.ts`.
-- **`/ingest/**`** (the PostHog relay) can be rate-limited: off by default, because the KV
-  backend costs a read and a write per relayed request. `configureIngestRelay({ rateLimit: true })`
-  turns on 300 requests per 120s per address, on KV, keyed by `clientIpHash()` so the counters
-  hold no visitor IPs. 120s is
-  deliberately not a window the binding accepts, so it can never land on the per-colo limiter.
-  An app that needs other numbers calls `configureIngestRelay({ limit, windowSeconds })` from a
-  Nitro plugin (`server/utils/ingest-relay.ts`); don't edit the route. The relay also forwards
-  an explicit header allowlist (`server/utils/ingest-headers.ts`), never `Cookie` or
-  `Authorization`.
+  like `UNSUBSCRIBE_LIMITER`) belong in a file of the fork's own, not in `rate-limit.ts`.
+- **`/ingest/**`** (the PostHog relay) can be rate-limited: off by default, because the count
+  costs a D1 write per relayed request. `configureIngestRelay({ rateLimit: true })` turns on
+  300 requests per 120s per address, keyed by `clientIpHash()`. An app that needs other
+  numbers calls `configureIngestRelay({ limit, windowSeconds })` from a Nitro plugin
+  (`server/utils/ingest-relay.ts`); don't edit the route. The relay also forwards an explicit
+  header allowlist (`server/utils/ingest-headers.ts`), never `Cookie` or `Authorization`.
 - Changing the auth limit means changing `NATIVE_LIMITER` **and** `wrangler.toml`.
-  `test/rate-limit.test.ts` drives the real binding and fails when they drift.
-- Both backends **fail open** (an outage in the abuse-control layer must not take
-  sign-in down). A throwing binding does not cascade to KV — one policy, logged.
-- The binding counts **per colo**; KV is eventually consistent. Either way this is
-  abuse control, not metering. Anything you bill on needs a Durable Object. The
-  residual: the per-IP auth limit is 30/60s *per Cloudflare location*, so a caller
-  spread across colos gets a multiple of it. The per-mailbox budget has no such
-  residual because D1 is single-writer and global.
-- Each call site logs its backend once per isolate (`rate_limit_backend`), with a
-  `reason` when it fell back. Read that before assuming the binding is in play.
+  `test/rate-limit.test.ts` fails when they drift.
+- It **fails open** (an outage in abuse control must not take sign-in down), logged as
+  `rate_limit_unavailable`. A native binding that throws is ignored; the count decides.
+- This is abuse control, not metering. Anything you bill on needs a Durable Object.
+- Finished windows are removed by the daily purge (`pruneRateLimits`).
 
 ## Bot Protection (Turnstile)
 

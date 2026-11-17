@@ -33,11 +33,10 @@ import {
 export default defineEventHandler(async (event) => {
   const { user } = await requireAccess(event)
 
-  // 20/60s does NOT match NATIVE_LIMITER's (30, 60) (server/utils/rate-limit.ts),
-  // so chooseBackendAmong() routes this to the KV fallback rather than Cloudflare's
-  // native binding — expected and fine here: this is routine abuse control on
-  // an authenticated, already-metered surface, not the login-form case the
-  // native binding exists for. Keyed on the user, not the caller's IP: this is
+  // 20/60s does not match NATIVE_LIMITER's (30, 60) (server/utils/rate-limit.ts),
+  // so this has no native first check and is simply counted in D1. Fine here:
+  // routine abuse control on an authenticated, already-metered surface.
+  // Keyed on the user, not the caller's IP: this is
   // a per-SUBSCRIBER budget (the threat is one account looping uploads), and
   // IP-keying would either under-count a shared IP or over-count one behind a
   // NAT/VPN with several unrelated users on it.
