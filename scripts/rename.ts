@@ -7,8 +7,9 @@
 // are non-inheritable and the preview environment repeats every one of them.
 // Outside it: two package.json scripts (wrangler's `d1 migrations` subcommand
 // takes a database NAME, not a binding), portless.name, the Nuxt MCP URL, the
-// MCP worker's own config, the server name it reports to MCP clients, and the
-// fleet manifest (fleet.json) that the portfolio dashboard reads.
+// MCP worker's own config, the server name it reports to MCP clients, its
+// directory listing, and the fleet manifest (fleet.json) that the portfolio
+// dashboard reads.
 //
 // Missing one produces failures that don't look like a rename problem at all.
 // Workers Builds refuses every build when the dashboard Worker name doesn't
@@ -100,6 +101,11 @@ const TARGETS: Target[] = [
   // is what an MCP client displays for the connection, so leaving it behind
   // means every user of a renamed fork sees "my-app-mcp" in their client.
   { file: 'mcp/src/server.ts', optional: true },
+  // The directory listing: the worker's public URL, the server half of its
+  // registry name, and a keyword. scripts/lib/mcp-listing.ts derives the
+  // registry's server.json from it, so a listing left behind publishes the
+  // fork under the template's name.
+  { file: 'mcp/listing.json', optional: true },
 ]
 
 const changes: { file: string; count: number }[] = []

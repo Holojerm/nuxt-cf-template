@@ -1,5 +1,6 @@
 {
   "name": "my-app-mcp",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Remote MCP server worker — OAuth-protected (workers-oauth-provider), sharing the app's D1 database.",

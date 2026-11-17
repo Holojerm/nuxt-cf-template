@@ -1373,6 +1373,16 @@ Deploying it for real: create a KV namespace for `OAUTH_KV`, paste the app's D1 
 
 Local dev caveat: `wrangler dev` uses its own local D1 sandbox (`.wrangler/`), not the Nuxt dev server's NuxtHub DB (`.data/`). Hydrate it with `bun run db:migrate:local` (inside `mcp/`) and seed rows by hand, or develop against remote D1.
 
+### Getting the server found
+
+A deployed MCP server that nobody can discover is a URL in a README. The template wires up the three places a server is found, from one file, [`mcp/listing.json`](./mcp/listing.json):
+
+- **The official MCP Registry**, the feed marketplaces and aggregators pull from. Set `"publish": true` and [`mcp-publish.yml`](./.github/workflows/mcp-publish.yml) publishes on every push to main. An `io.github.<owner>/…` name needs no secret; GitHub's OIDC token proves the owner.
+- **Discovery from your own domain.** The worker serves a Server Card at `/mcp/server-card`, and once `NUXT_PUBLIC_MCP_URL` is set the app serves `/.well-known/ai-catalog.json` pointing at it, shows the address on `/account`, and names it in `llms.txt`.
+- **Claude's and ChatGPT's directories.** Both are submitted by hand, once. `bun run mcp:pack` writes the pack (the Claude form filled in, the ChatGPT plugin ZIP) and prints what each still needs; `/mcp-publish` in Claude Code walks the submission.
+
+`bun run mcp:check`, part of `bun run ci`, fails the build when a tool lacks the title and annotation hints both directories require, or when the listing contradicts the repo. Details: [`.claude/docs/mcp.md`](./.claude/docs/mcp.md).
+
 ---
 
 ## Claude Code setup
@@ -1380,7 +1390,7 @@ Local dev caveat: `wrangler dev` uses its own local D1 sandbox (`.wrangler/`), n
 This template ships with Claude Code configuration out of the box:
 
 - **MCP servers** (`.mcp.json.example`, copied to a local gitignored config by `bun dev`): Cloudflare docs, NuxtUI docs, Drizzle schema introspection, Nuxt live introspection, GitHub
-- **Slash commands** (`.claude/commands/`): `/new-feature`, `/scaffold-component`, `/scaffold-api`, `/db-migrate`
+- **Slash commands** (`.claude/commands/`): `/new-feature`, `/scaffold-component`, `/scaffold-api`, `/db-migrate`, `/mcp-publish` (lists the app's own MCP server in the MCP Registry, Claude's directory and ChatGPT's)
 - **Skills** (`.claude/skills/`): NuxtUI, frontend design, theming, and more
 - **AI guide** (`AGENTS.md`): stack conventions, styling rules, commands, and an index into `.claude/docs/` — kept small on purpose, since it loads into every agent session
 - **Subsystem docs** (`.claude/docs/`): auth, billing, email, SEO, patterns, brand, agent tooling, and the gotchas list — read on demand, not all at once

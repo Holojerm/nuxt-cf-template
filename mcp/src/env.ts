@@ -6,6 +6,12 @@ export interface Env {
   DB: D1Database
   OAUTH_KV: KVNamespace
   OAUTH_PROVIDER: OAuthHelpers
+  /**
+   * The domain-verification token ChatGPT's submission portal issues, served by
+   * discovery.ts at `/.well-known/openai-apps-challenge`. Public by design, so
+   * it is a plain var in wrangler.jsonc rather than a secret. Empty = 404.
+   */
+  OPENAI_APPS_CHALLENGE?: string
 }
 
 // Application props attached to every grant at completeAuthorization() and
