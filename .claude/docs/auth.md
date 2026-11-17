@@ -198,6 +198,12 @@ binding** first. Applied to the whole `/api/auth/` surface in
   numbers calls `configureIngestRelay({ limit, windowSeconds })` from a Nitro plugin
   (`server/utils/ingest-relay.ts`); don't edit the route. The relay also forwards an explicit
   header allowlist (`server/utils/ingest-headers.ts`), never `Cookie` or `Authorization`.
+- **`cost`** makes one call spend several (a JSON-RPC batch passes its message count), so an
+  over-budget batch is refused whole.
+- **`exact: false`** is for a high-volume, low-stakes call site, such as a public read path,
+  that must not pay a D1 write per request. Where its numbers match a native limiter, that
+  limiter decides alone. The limit is then loose: a client opening a connection per request is
+  never refused. Never in front of sign-in, a token, or anything that costs money.
 - Changing the auth limit means changing `NATIVE_LIMITER` **and** `wrangler.toml`.
   `test/rate-limit.test.ts` fails when they drift.
 - It **fails open** (an outage in abuse control must not take sign-in down), logged as
