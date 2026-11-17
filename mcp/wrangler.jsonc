@@ -9,6 +9,13 @@
   // agents' createMcpHandler needs AsyncLocalStorage (getMcpAuthContext)
   "compatibility_flags": ["nodejs_compat"],
 
+  // The token ChatGPT's submission portal asks this hostname to serve at
+  // /.well-known/openai-apps-challenge. Not a secret: the route publishes it.
+  // Leave empty until the portal issues one (see .claude/docs/mcp.md).
+  "vars": {
+    "OPENAI_APPS_CHALLENGE": "",
+  },
+
   // Required by @cloudflare/workers-oauth-provider — stores tokens/grants.
   // Create with: wrangler kv namespace create my-app-mcp-oauth
   "kv_namespaces": [

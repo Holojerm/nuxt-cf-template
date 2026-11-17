@@ -302,11 +302,29 @@ Nothing in the app depends on it — it is a second Worker that reads the same D
    because the worker cannot import the app's TypeScript; with no worker there is no
    second copy to keep honest. Leave the **reference-resolution** half of that script
    in place — it is not MCP-specific.
-6. Remove `mcp:dev`, `mcp:typecheck`, `mcp:deploy` from `package.json`.
+6. Remove every `mcp:*` script from `package.json`, and `'mcp:check'` from the `cheap` list
+   in [`scripts/ci.ts`](scripts/ci.ts).
 7. Remove the MCP step from the onboarding checklist in
    [`shared/utils/onboarding.ts`](shared/utils/onboarding.ts) and the connect-code UI in
    [`app/pages/account.vue`](app/pages/account.vue).
-8. Delete the `OAUTH_KV` namespace in Cloudflare, and the deployed worker if you shipped it.
+8. Discovery and publishing. Delete:
+   - [`server/routes/.well-known/ai-catalog.json.get.ts`](server/routes/.well-known/ai-catalog.json.get.ts),
+     [`server/utils/ai-catalog.ts`](server/utils/ai-catalog.ts) and `test/ai-catalog.test.ts`
+   - [`scripts/check-mcp.ts`](scripts/check-mcp.ts), [`scripts/mcp-pack.ts`](scripts/mcp-pack.ts),
+     [`scripts/mcp-publish.ts`](scripts/mcp-publish.ts), the three `scripts/lib/mcp-*.ts`
+     files, `test/mcp-tools.test.ts` and `test/mcp-listing.test.ts`
+   - [`.github/workflows/mcp-publish.yml`](.github/workflows/mcp-publish.yml),
+     `.claude/docs/mcp.md` and `.claude/commands/mcp-publish.md`
+
+   Remove `NUXT_PUBLIC_MCP_URL` from `wrangler.toml`, and `mcpUrl` from `nuxt.config.ts`
+   along with its three readers: `llms.txt.get.ts`, `buildLlmsTxt()` in
+   [`server/utils/seo.ts`](server/utils/seo.ts), and `mcpEndpoint` in `account.vue`. Then run
+   `bun run mirror:check` and drop whatever it still names.
+
+   If the server was listed, deprecate the registry entry first
+   (`mcp-publisher status --status deprecated --all-versions <name>`) and withdraw the
+   Claude and ChatGPT listings in their portals.
+9. Delete the `OAUTH_KV` namespace in Cloudflare, and the deployed worker if you shipped it.
 
 > **Not the same thing as `.mcp.json.example`.** That file configures the MCP servers *Claude
 > Code* talks to while you develop. It has nothing to do with `mcp/` and you almost

@@ -55,6 +55,7 @@ export default defineEventHandler(async (event) => {
       date: post.date,
     })),
     sections: dynamic.sections,
+    mcpUrl: config.public.mcpUrl,
     // A failed post or source query must not be cached as if it were the truth.
     complete: ok && dynamic.complete,
   })

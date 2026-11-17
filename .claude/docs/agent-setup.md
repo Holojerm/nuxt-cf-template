@@ -42,6 +42,7 @@ Installed via `npx skills add nuxt/ui --agent claude-code`. Provides Claude with
 | `/db-migrate` | `/db-migrate` | Run the full Drizzle migration workflow |
 | `/new-feature` | `/new-feature FeatureName` | Full stack scaffold: component + API routes + schema |
 | `/routines` | `/routines sync\|status\|enable\|disable\|run` | Manage the cloud operations routines defined in `.claude/routines/` |
+| `/mcp-publish` | `/mcp-publish [check\|registry\|claude\|chatgpt]` | List the app's own MCP server (`mcp/`) in the MCP Registry, Claude's directory and ChatGPT's — see [mcp.md](mcp.md) |
 
 ## Operations Routines (`.claude/routines/`)
 

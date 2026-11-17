@@ -17,6 +17,7 @@ Read the row that matches what you are about to touch. Do not load them all.
 | [`.claude/docs/patterns.md`](.claude/docs/patterns.md) | Worked examples: components, API routes, Drizzle queries, forms, error handling, feedback | Writing a new component, route, form, or query — especially your first change here |
 | [`.claude/docs/auth.md`](.claude/docs/auth.md) | Magic link, OAuth, session revocation, `rateLimit()`, Turnstile | Anything under `server/api/auth/`, sessions, rate limiting, or bot protection |
 | [`.claude/docs/billing.md`](.claude/docs/billing.md) | Paddle, entitlements, clawbacks, the `mcp/` worker | Anything that grants, revokes, or prices access |
+| [`.claude/docs/mcp.md`](.claude/docs/mcp.md) | The MCP worker's tool contract, `mcp/listing.json`, the Server Card and AI Catalog, publishing to the MCP Registry, Claude and ChatGPT | Adding or changing a tool in `mcp/src/`, or listing the server anywhere |
 | [`.claude/docs/referral.md`](.claude/docs/referral.md) | The referral layer: economics, anti-fraud design, its seams with billing and sign-up, vendoring | Anything under `layers/referral/`, the `?ref=` capture, or days nobody paid for |
 | [`.claude/docs/credentials.md`](.claude/docs/credentials.md) | The opt-in credentials layer: browser-derived password sign-in, passkeys and PRF, the `credentials:unlock` hook, reset hooks | Anything under `layers/credentials/`, or building on the unlock key |
 | [`.claude/docs/email.md`](.claude/docs/email.md) | Resend, the `EMAIL_QUEUE`, retry/dead-letter, notification decisions | Adding or changing any outbound email |
@@ -96,7 +97,7 @@ restart. The rest are in [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).
 │                           # imports another layer, and reads like its own small app
 ├── public/                 # Static assets — og.png, favicon.svg, apple-touch-icon.png
 ├── .github/                # Dependabot + browser-suites.yml (PR checks: ci, forkless, axe/CSP/E2E — the browser half is the only CI
-│                           # not in Workers Builds; that image can't launch Chromium)
+│                           # not in Workers Builds; that image can't launch Chromium) + mcp-publish.yml (MCP Registry, on main)
 ├── fleet.json              # How this app describes itself to the portfolio dashboard — see bun run fleet:check
 ├── content.config.ts       # Blog collection + frontmatter schema
 ├── drizzle.config.ts       # Drizzle Kit config
@@ -243,6 +244,7 @@ bun run seo:check     # Fail on pages that bypass useSeo() or aren't declared pu
 bun run fleet:check   # Fail when fleet.json stops matching wrangler.toml (names, binding ids, crons)
 bun run crons:check   # Fail when [triggers] crons and nitro.scheduledTasks disagree, or a task has no file
 bun run methods:check # Fail when a get/head/delete server route reads a request body (hangs on Workers)
+bun run mcp:check     # Fail when an MCP tool lacks a title or annotation hint, or mcp/listing.json contradicts the repo
 bun run forkless:check # Build forks without billing / referral / lifecycle email in a temp copy; the layer,
                       # mirror and reference gates must pass there with no patch (ci:forkless adds typecheck + tests)
 bun run test:a11y     # Playwright/Chromium browser suites: axe over every public route
@@ -256,9 +258,9 @@ bun db:migrate:preview # Apply migrations to the preview D1 — nothing does thi
 bun db:studio         # Open Drizzle Studio (visual DB browser)
 bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db)
 bun run rename <name> # Rewrite the `my-app` placeholder across wrangler.toml, package.json,
-                      # .mcp.json.example, fleet.json and mcp/ — every occurrence, in one go
+                      # .mcp.json.example, fleet.json and mcp/ (its listing included) — every occurrence, in one go
 bun run ci            # Every gate, concurrently (scripts/ci.ts): format (writes; checks in CI), email:build, lint,
-                      # design/brand/seo/fleet/crons/methods, migrations:check (schema.ts vs migrations, expand-only),
+                      # design/brand/seo/fleet/crons/methods/mcp, migrations:check (schema.ts vs migrations, expand-only),
                       # typecheck, test, build. Workers Builds runs this on non-production branches (the PR
                       # gate; production builds run typecheck + build only). NO browser suites: that image cannot
                       # launch Chromium (see Gotchas). CI_SERIAL=1 runs the gates one at a time.
@@ -270,6 +272,8 @@ bun run deploy        # Manual deploy to Cloudflare via wrangler (normally unnec
 bun run mcp:dev       # Run the optional MCP worker locally (mcp/ — bun install there first)
 bun run mcp:typecheck # Typecheck the MCP worker
 bun run mcp:deploy    # Deploy the MCP worker
+bun run mcp:pack      # Build the directory submission pack in mcp/.publish/ and print what each directory still needs
+bun run mcp:publish   # Publish the MCP worker to the official MCP Registry (CI does this on main; --dry-run to preview)
 ```
 
 Use `bun run ci:fast` while iterating; run the full `bun run ci` once before pushing.

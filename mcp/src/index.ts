@@ -5,6 +5,7 @@
 import { OAuthProvider } from '@cloudflare/workers-oauth-provider'
 import { createMcpHandler } from 'agents/mcp/server'
 import { defaultHandler } from './authorize'
+import { discoveryResponse, MCP_PATH } from './discovery'
 import type { Env } from './env'
 import { createServer } from './server'
 
@@ -17,11 +18,19 @@ const mcpApiHandler = {
   },
 }
 
-export default new OAuthProvider({
-  apiRoute: '/mcp',
+const provider = new OAuthProvider({
+  apiRoute: MCP_PATH,
   apiHandler: mcpApiHandler,
   defaultHandler,
   authorizeEndpoint: '/authorize',
   tokenEndpoint: '/token',
   clientRegistrationEndpoint: '/register',
 })
+
+export default {
+  // The public discovery routes answer first. One of them, the Server Card,
+  // lives under `apiRoute`, where the provider would demand a bearer token.
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    return (await discoveryResponse(request, env)) ?? provider.fetch(request, env, ctx)
+  },
+}

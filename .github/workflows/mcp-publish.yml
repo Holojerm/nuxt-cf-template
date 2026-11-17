@@ -1,0 +1,109 @@
+# Publishes the MCP worker's entry to the official MCP Registry.
+#
+# The registry is the upstream feed the MCP marketplaces and aggregators pull
+# from, and the only one of the three directories with an API. (Claude's and
+# ChatGPT's are submitted by hand, once; see .claude/docs/mcp.md.) This runs
+# `bun run mcp:publish` (scripts/mcp-publish.ts) on every push to main that
+# touches the listing or anything it is derived from.
+#
+# It is safe to run on every such push, and does nothing most of the time:
+#
+#   - `publish: false` in mcp/listing.json (the template's default, and a fork
+#     that has not deployed the worker): skipped.
+#   - The current version is already in the registry, unchanged: skipped.
+#   - The listing changed but mcp/package.json's version did not: FAILS. A
+#     published version cannot be edited, so the change would reach nobody; the
+#     red run is how you find out.
+#
+# Here and not in Workers Builds for one reason: GitHub Actions can mint the
+# OIDC token that proves this repository's owner to the registry, so an
+# `io.github.<owner>/…` name needs no secret at all. A name under a domain you
+# control (`"auth": "dns"` or `"http"`) signs in with a private key instead: add
+# it as the MCP_REGISTRY_PRIVATE_KEY repository secret.
+#
+# Not a required check, and not part of the merge queue: it runs after the
+# merge, on main.
+
+name: Publish MCP listing
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mcp/listing.json'
+      - 'mcp/package.json'
+      - 'mcp/src/**'
+      - 'fleet.json'
+      - 'wrangler.toml'
+      - 'scripts/mcp-publish.ts'
+      - 'scripts/lib/mcp-*.ts'
+      - '.github/workflows/mcp-publish.yml'
+  workflow_dispatch:
+
+# Two pushes in a row must not race to publish the same version.
+concurrency:
+  group: mcp-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write # the OIDC token `mcp-publisher login github-oidc` exchanges
+      contents: read
+    env:
+      # Pinned on purpose; raise it deliberately. An "invalid audience" error from
+      # the login step means the registry now needs a newer release than this.
+      MCP_PUBLISHER_VERSION: v1.8.1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      # The publish script needs zod and nothing else, so skip the postinstall
+      # (`nuxt prepare` and the email build).
+      - run: bun install --frozen-lockfile --ignore-scripts
+
+      # Decides whether there is anything to publish before installing the
+      # publisher, and fails here on an edited listing with an unbumped version.
+      - name: Is there a new version to publish?
+        id: plan
+        run: bun run mcp:publish --dry-run
+
+      - name: Install cosign
+        if: steps.plan.outputs.publish == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # The registry's own install steps: fetch the pinned release and verify it
+      # was built by the registry's release workflow at that tag.
+      - name: Download and verify mcp-publisher
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          arch="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+          archive="mcp-publisher_${os}_${arch}.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+          echo "MCP_PUBLISHER=$PWD/mcp-publisher" >> "$GITHUB_ENV"
+
+      - name: Publish to the MCP Registry
+        if: steps.plan.outputs.publish == 'true'
+        env:
+          # Read by mcp-publisher itself for "dns" and "http" auth. Empty, and
+          # unused, for an io.github.* name.
+          MCP_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}
+        run: bun run mcp:publish
