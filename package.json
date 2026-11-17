@@ -57,6 +57,9 @@
     "mcp:dev": "bun run --cwd mcp dev",
     "mcp:typecheck": "bun run --cwd mcp typecheck",
     "mcp:deploy": "bun run --cwd mcp deploy",
+    "mcp:check": "bun run scripts/check-mcp.ts",
+    "mcp:pack": "bun run scripts/mcp-pack.ts",
+    "mcp:publish": "bun run scripts/mcp-publish.ts",
     "migrations:check": "bun run scripts/check-migrations.ts",
     "deploy:smoke": "bun run scripts/deploy-smoke.ts"
   },

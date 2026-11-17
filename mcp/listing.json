@@ -1,0 +1,48 @@
+{
+  "publish": false,
+  "url": "https://my-app-mcp.example.workers.dev",
+  "registry": {
+    "name": "io.github.YOUR_GITHUB_OWNER/my-app",
+    "auth": "github-oidc"
+  },
+  "tagline": "Your account in any AI client",
+  "summary": "Account and subscription status for any MCP client.",
+  "description": "Connect an AI client to your account. The server reports which account the connection acts as and whether its subscription is active, so an assistant can check access before it starts paid work. Every tool is read-only, and a connection stops working the moment the account is deleted or signs out everywhere.",
+  "categories": ["Productivity"],
+  "keywords": ["my-app", "account", "subscription"],
+  "useCases": [
+    "Check which account an AI client is connected as",
+    "Confirm a subscription is active before starting paid work"
+  ],
+  "prerequisites": "An account. Generate a single-use connect code on the account page, then paste it into the authorization screen your AI client opens.",
+  "commerce": "",
+  "links": {
+    "docs": "",
+    "support": ""
+  },
+  "prompts": ["Which account am I connected as?", "Is my subscription active?"],
+  "testCases": {
+    "positive": [
+      {
+        "description": "Identify the connected account",
+        "prompt": "Which account am I connected as?",
+        "tools": ["whoami"],
+        "expected": "Names the signed-in account and its email address."
+      },
+      {
+        "description": "Check the subscription",
+        "prompt": "Is my subscription active?",
+        "tools": ["subscription_status"],
+        "expected": "States whether the subscription is active and when the current period ends."
+      }
+    ],
+    "negative": [
+      {
+        "description": "Unrelated request",
+        "prompt": "What is the weather in Paris today?"
+      }
+    ]
+  },
+  "demoRecordingUrl": "",
+  "releaseNotes": "Initial release."
+}

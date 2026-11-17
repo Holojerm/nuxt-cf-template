@@ -4,6 +4,8 @@
 import { McpServer } from '@modelcontextprotocol/server'
 import { getMcpAuthContext } from 'agents/mcp/server'
 import { z } from 'zod'
+import fleet from '../../fleet.json'
+import pkg from '../package.json'
 import type { AuthProps, Env } from './env'
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
@@ -103,11 +105,35 @@ async function loadAuthorizedUser(env: Env): Promise<AuthorizedUser | null> {
 const REFUSED = 'This connection is no longer authorized. Reconnect from the app to continue.'
 
 export function createServer(env: Env): McpServer {
-  const server = new McpServer({ name: 'my-app-mcp', version: '0.1.0' })
+  // `version` is mcp/package.json's, the one number the Server Card
+  // (discovery.ts) and the registry entry (scripts/lib/mcp-listing.ts) also
+  // report. `title` is what a client shows for the connection.
+  const server = new McpServer({
+    name: 'my-app-mcp',
+    title: fleet.name,
+    version: pkg.version,
+    websiteUrl: fleet.urls.prod,
+  })
 
+  // ── What every tool declares ───────────────────────────────────────────────
+  // A `title`, a `description`, and all three hints below, written inline as
+  // literals. The Claude and ChatGPT directories both refuse a listing with a
+  // tool that lacks them, and they read them off the live server, so a missing
+  // hint is found at review time rather than here. `bun run mcp:check` reads
+  // these calls from source and fails the build first.
+  //
+  //   readOnlyHint     true when the tool changes nothing anywhere
+  //   destructiveHint  true when it can delete or overwrite; false for a pure
+  //                    create, and always false on a read-only tool
+  //   openWorldHint    true when it reaches beyond this app's own data (the web,
+  //                    a third-party API); false for the app's own database
   server.registerTool(
     'whoami',
-    { description: 'Show the authenticated user this MCP connection acts as' },
+    {
+      title: 'Who am I',
+      description: 'Show the authenticated user this MCP connection acts as',
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
     async () => {
       // One call does the lookup and the authorization check, so there is no
       // way to read the row without having decided the caller may read it.
@@ -123,8 +149,10 @@ export function createServer(env: Env): McpServer {
   server.registerTool(
     'subscription_status',
     {
+      title: 'Subscription status',
       description: 'Report the subscription entitlement for the authenticated user',
       inputSchema: { productKey: z.string().default('default') },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ productKey }) => {
       // Every tool starts here, not with authProps(). A deleted account keeps

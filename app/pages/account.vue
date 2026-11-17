@@ -120,6 +120,11 @@ async function openBillingPortal(): Promise<void> {
 // Single-use, 10-minute code that bridges this session to the MCP worker's
 // OAuth flow. Shown once — only its hash is stored (server/api/mcp/connect-code).
 const connectCode = ref<string | null>(null)
+// The address a client is given. Empty until NUXT_PUBLIC_MCP_URL is set, and
+// then the card says what to paste where instead of assuming the user knows.
+const mcpEndpoint = computed(() =>
+  config.public.mcpUrl ? `${config.public.mcpUrl.replace(/\/+$/, '')}/mcp` : '',
+)
 const { pending: connectPending, run: mintConnectCode } = useAsyncAction(
   async () => {
     const result = await $fetch('/api/mcp/connect-code', { method: 'POST' })
@@ -503,6 +508,11 @@ useSeo({
         <p class="text-muted">
           Generate a single-use code to link this account to the MCP server from Claude, Cursor, or
           any MCP-capable client. Codes expire after 10 minutes.
+        </p>
+
+        <p v-if="mcpEndpoint" class="text-muted">
+          Add this server address in your client, then paste the code when it asks:
+          <code class="font-mono break-all text-highlighted">{{ mcpEndpoint }}</code>
         </p>
 
         <UAlert
