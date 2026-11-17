@@ -7,6 +7,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
 import { isNotificationEnabled, setNotificationPreference } from '../server/utils/notifications'
+import {
+  OPTIONAL_NOTIFICATION_EVENT_TYPES,
+  SWITCHABLE_NOTIFICATION_EVENT_TYPES,
+} from '../shared/utils/notifications'
 
 const db = drizzle(env.DB, { schema })
 const USER = 'user-1'
@@ -100,5 +104,17 @@ describe('setNotificationPreference — upsert', () => {
       where: (row, { eq }) => eq(row.userId, USER),
     })
     expect(rows).toHaveLength(0)
+  })
+})
+
+describe('SWITCHABLE_NOTIFICATION_EVENT_TYPES', () => {
+  it('leaves out the welcome email, which is sent before /account can be reached', () => {
+    expect(SWITCHABLE_NOTIFICATION_EVENT_TYPES).not.toContain('welcome')
+  })
+
+  it('keeps every other optional type', () => {
+    expect(SWITCHABLE_NOTIFICATION_EVENT_TYPES).toEqual(
+      OPTIONAL_NOTIFICATION_EVENT_TYPES.filter((eventType) => eventType !== 'welcome'),
+    )
   })
 })

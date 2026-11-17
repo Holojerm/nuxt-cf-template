@@ -64,6 +64,18 @@ export function isOptionalNotificationEventType(
   return (OPTIONAL_NOTIFICATION_EVENT_TYPES as readonly string[]).includes(value)
 }
 
+/**
+ * Optional types sent once, at sign-up, before anyone can reach /account.
+ * They keep a preference (the email's own unsubscribe link writes it), but a
+ * switch on /account could never stop the one email it names, so none is shown.
+ */
+const SENT_AT_SIGNUP_ONLY: readonly OptionalNotificationEventType[] = ['welcome']
+
+/** The optional types /account shows a switch for. */
+export const SWITCHABLE_NOTIFICATION_EVENT_TYPES = OPTIONAL_NOTIFICATION_EVENT_TYPES.filter(
+  (eventType) => !SENT_AT_SIGNUP_ONLY.includes(eventType),
+)
+
 export interface OptionalNotificationCopy {
   label: string
   description: string
