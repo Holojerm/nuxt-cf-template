@@ -283,7 +283,8 @@ export interface AccountExportUser {
  * read the table directly; that's a correct query and a misleading "copy of
  * your data" all the same. Computed the same way the /account preferences UI
  * itself does (server/api/account/notifications.get.ts), so the export can
- * never disagree with what the toggle already shows.
+ * never disagree with what a switch shows. The export lists every optional
+ * type, including the ones /account shows no switch for.
  */
 export interface AccountExportNotificationPreference {
   eventType: string
