@@ -13,6 +13,23 @@ Sharp edges that have bitten this template before — read before forking or bef
 
 NuxtHub serves the dev DB from `.data/db/sqlite.db`. Wrangler's own local D1 sandbox lives at `.wrangler/state/v3/d1/`. Migrations applied via `wrangler d1 execute --local` or direct writes via `wrangler d1 execute --local` land in the **wrangler** path, which the dev server does NOT read. Seed via `bun seed` (see `scripts/seed.ts`), which uses `bun:sqlite` against the NuxtHub path directly. The two only converge in production.
 
+## A fresh dev database got its migrations in directory order — patched
+
+NuxtHub (0.10.8, and `main` upstream as of 2026-11) applies dev migrations in whatever order
+the filesystem lists `.data/db/migrations/`, unsorted. A dev database that has been running for
+a while never notices: each new migration arrives alone. A fresh one (a new worktree, a deleted
+`.data`, a new machine, a new fork) applies all of them at once, and on APFS a listing can put a
+migration before the one that creates its table. The first failure stops the run, so the
+database is left with an empty `_hub_migrations` and no tables. Every request then 500s with
+`no such table`, and `bun run test:a11y` dies at dev-login. The only trace is one
+`[nuxt:hub] ERROR Failed to apply migration` line among the dev server's output. First seen in
+Sinew, where `0008` (altering `ops_events`) was listed before `0005` (creating it).
+
+`patches/@nuxthub%2Fcore@0.10.8.patch` (bun's `patchedDependencies`) sorts the list by name,
+the order drizzle-kit numbers them. A NuxtHub upgrade drops the patch with the version: check
+whether upstream sorts by then, and carry the patch forward if not. Production is unaffected:
+`wrangler d1 migrations apply` sorts its own list.
+
 ## Nothing applies migrations to production D1 — you have to
 
 Locally this is invisible: NuxtHub's dev plugin (`applyMigrationsDuringDev`) applies
