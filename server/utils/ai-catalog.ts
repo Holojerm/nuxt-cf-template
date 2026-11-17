@@ -8,7 +8,7 @@
 //
 // Pure, so test/ai-catalog.test.ts can drive it without a request.
 
-import { normalizeOrigin } from '#shared/utils/site'
+import { mcpOrigin } from '#shared/utils/site'
 
 /** The media type of an MCP Server Card, as an AI Catalog entry names it. */
 export const SERVER_CARD_TYPE = 'application/mcp-server-card+json'
@@ -32,7 +32,7 @@ export function buildAiCatalog(input: {
   mcpUrl: string
   slug: string
 }): AiCatalog | null {
-  const mcpUrl = normalizeOrigin(input.mcpUrl)
+  const mcpUrl = mcpOrigin(input.mcpUrl)
   if (!mcpUrl) return null
 
   let publisher: string

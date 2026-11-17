@@ -9,8 +9,9 @@ export default defineEventHandler(async (event) => {
   // Throttled here, not per handler: defineOAuthGitHubEventHandler owns its whole
   // request, so OAuth routes have no hook for a limit. The numbers come from
   // NATIVE_LIMITER because rateLimit() delegates to the native binding only for
-  // numbers matching wrangler.toml; typing `25` would silently move this endpoint
-  // back to KV. To change it, change NATIVE_LIMITER and `[[ratelimits]]` together.
+  // numbers matching wrangler.toml; typing `25` would silently drop that first
+  // check and leave only the D1 count. To change it, change NATIVE_LIMITER and
+  // `[[ratelimits]]` together.
   if (path.startsWith('/api/auth/')) {
     await rateLimit(event, {
       name: 'auth',

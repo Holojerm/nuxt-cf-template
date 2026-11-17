@@ -235,6 +235,7 @@ describe('listingProblems', () => {
       'NUXT_PUBLIC_MCP_URL differs from the listing',
     ])
     expect(listingProblems(CTX, 'https://mcp.notes.example/')).toEqual([])
+    expect(listingProblems(CTX, 'https://mcp.notes.example/mcp')).toEqual([])
   })
 
   it('refuses to publish while anything is still a placeholder', () => {

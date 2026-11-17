@@ -18,8 +18,15 @@ export interface LoadedMcp {
   problems: ListingProblem[]
 }
 
-/** True when this checkout has the optional MCP worker at all. */
-export const hasMcpWorker = (root: string) => existsSync(join(root, 'mcp', 'src'))
+/**
+ * True when this checkout has the optional MCP worker at all.
+ *
+ * Asked of mcp/package.json, not the directory: git does not track empty
+ * directories, so a merge or a half-finished removal can leave `mcp/src/` behind
+ * with nothing in it, and a gate that took that for a worker went on to crash
+ * reading the files a worker would have.
+ */
+export const hasMcpWorker = (root: string) => existsSync(join(root, 'mcp', 'package.json'))
 
 function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, 'utf8'))

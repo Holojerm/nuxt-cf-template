@@ -14,6 +14,19 @@ export function normalizeOrigin(url: string | undefined): string {
 }
 
 /**
+ * The MCP worker's origin, from NUXT_PUBLIC_MCP_URL however it was written.
+ *
+ * The variable means the origin (`https://mcp.example.com`), and every reader
+ * appends `/mcp` itself. But the endpoint is the thing people paste into a
+ * client, so it is also the natural thing to type here, and an app that did
+ * advertised `…/mcp/mcp` in llms.txt and pointed its AI Catalog at a Server
+ * Card that does not exist. Both spellings now mean the same server.
+ */
+export function mcpOrigin(url: string | undefined): string {
+  return normalizeOrigin(url).replace(/\/mcp$/, '')
+}
+
+/**
  * The canonical spelling of a route path: leading slash, no trailing slash, no
  * query string, no hash. `/pricing/?ref=x` and `/pricing` are one page, and
  * only one of them belongs in a canonical tag or a sitemap.
