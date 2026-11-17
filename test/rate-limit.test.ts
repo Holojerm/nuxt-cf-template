@@ -33,9 +33,9 @@ function makeStore(): RateLimitStore & { buckets: () => string[]; hits: () => nu
   const data = new Map<string, number>()
   let hits = 0
   return {
-    async hit(bucket) {
+    async hit(bucket, _expiresAt, cost) {
       hits += 1
-      const count = (data.get(bucket) ?? 0) + 1
+      const count = (data.get(bucket) ?? 0) + cost
       data.set(bucket, count)
       return count
     },
@@ -109,6 +109,18 @@ describe('consumeRateLimit', () => {
     )
   })
 
+  it('spends `cost` in one go, and refuses a batch that does not fit', async () => {
+    const store = makeStore()
+    const batch = { ...OPTS, limit: 10, cost: 4 }
+    expect(await consumeRateLimit(store, batch, now)).toMatchObject({ allowed: true, remaining: 6 })
+    expect(await consumeRateLimit(store, batch, now)).toMatchObject({ allowed: true, remaining: 2 })
+    // Four more would make twelve: the whole batch is refused, not half of it.
+    expect(await consumeRateLimit(store, batch, now)).toMatchObject({
+      allowed: false,
+      remaining: 0,
+    })
+  })
+
   it('never hands the store the address or mailbox in the key', async () => {
     const store = makeStore()
     await consumeRateLimit(store, { ...OPTS, key: 'login:ann@example.com' }, now)
@@ -133,6 +145,14 @@ describe('the counter in D1', () => {
     expect(verdicts.filter((verdict) => verdict.allowed)).toHaveLength(5)
     const [row] = await db.select().from(schema.rateLimits)
     expect(row?.count).toBe(50)
+  })
+
+  it("adds a batch's cost in the same single statement", async () => {
+    const store = d1RateLimitStore(db)
+    const opts = { key: 'mcp:ann', limit: 100, windowSeconds: 60, cost: 7 }
+    await Promise.all(Array.from({ length: 10 }, () => consumeRateLimit(store, opts)))
+    const [row] = await db.select().from(schema.rateLimits)
+    expect(row?.count).toBe(70)
   })
 
   it('keeps a hash, not the key, and one row per caller and window', async () => {
@@ -197,6 +217,34 @@ describe('checkRateLimit', () => {
     expect(verdicts.filter((verdict) => verdict.allowed)).toHaveLength(opts.limit)
     expect(verdicts.at(-1)).toMatchObject({ allowed: false, backend: 'd1', remaining: 0 })
     expect(native.keys).toHaveLength(opts.limit + 5)
+  })
+
+  it('lets the native limiter decide alone for a call site that asked for a loose limit', async () => {
+    const store = makeStore()
+    const native = makeNative([true, false])
+    const backends = { natives: natives(native), store }
+    expect(await checkRateLimit(backends, { ...opts, exact: false })).toEqual({
+      allowed: true,
+      backend: 'native',
+      remaining: null,
+      resetSeconds: opts.windowSeconds,
+    })
+    expect(await checkRateLimit(backends, { ...opts, exact: false })).toMatchObject({
+      allowed: false,
+      backend: 'native',
+    })
+    expect(store.hits()).toBe(0)
+  })
+
+  it('still counts a loose call site that no native limiter matches, or whose binding throws', async () => {
+    const store = makeStore()
+    expect(
+      await checkRateLimit({ natives: natives(makeNative([])), store }, { ...OPTS, exact: false }),
+    ).toMatchObject({ allowed: true, backend: 'd1' })
+    expect(
+      await checkRateLimit({ natives: natives(THROWING_NATIVE), store }, { ...opts, exact: false }),
+    ).toMatchObject({ allowed: true, backend: 'd1' })
+    expect(store.hits()).toBe(2)
   })
 
   it('goes straight to the count for a call site with no native limiter', async () => {

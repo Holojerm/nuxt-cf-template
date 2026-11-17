@@ -41,8 +41,8 @@ import { pathForLog, logEvent } from './log'
 
 /** Where hits are counted. `hit` must be atomic: it is the whole of the guarantee. */
 export interface RateLimitStore {
-  /** Counts one hit in `bucket` and returns the count including it. */
-  hit(bucket: string, expiresAt: Date): Promise<number>
+  /** Adds `cost` to `bucket` and returns the count including it. */
+  hit(bucket: string, expiresAt: Date, cost: number): Promise<number>
 }
 
 export interface RateLimitOptions {
@@ -52,6 +52,12 @@ export interface RateLimitOptions {
   limit: number
   /** Window length in seconds. */
   windowSeconds: number
+  /**
+   * What this one call spends. Defaults to 1. A call that stands for several
+   * (a JSON-RPC batch) passes how many, so an over-budget batch is refused
+   * whole rather than half let through.
+   */
+  cost?: number
 }
 
 export interface RateLimitResult {
@@ -68,7 +74,7 @@ export interface RateLimitResult {
  */
 export async function consumeRateLimit(
   store: RateLimitStore,
-  { key, limit, windowSeconds }: RateLimitOptions,
+  { key, limit, windowSeconds, cost = 1 }: RateLimitOptions,
   now: number = Date.now(),
 ): Promise<RateLimitResult> {
   const window = Math.floor(now / 1000 / windowSeconds)
@@ -76,7 +82,7 @@ export async function consumeRateLimit(
   // Hashed: the key holds an address or a mailbox, and the row outlives the
   // request until the daily purge.
   const bucket = await sha256Hex(`ratelimit:${key}:${window}`)
-  const count = await store.hit(bucket, new Date((window + 1) * windowSeconds * 1000))
+  const count = await store.hit(bucket, new Date((window + 1) * windowSeconds * 1000), cost)
   return { allowed: count <= limit, remaining: Math.max(0, limit - count), resetSeconds }
 }
 
@@ -86,16 +92,16 @@ type RateLimitDb = Pick<typeof db, 'insert' | 'delete'>
 export function d1RateLimitStore(database: RateLimitDb): RateLimitStore {
   const { rateLimits } = tables
   return {
-    async hit(bucket, expiresAt) {
+    async hit(bucket, expiresAt, cost) {
       const [row] = await database
         .insert(rateLimits)
-        .values({ bucket, count: 1, expiresAt })
+        .values({ bucket, count: cost, expiresAt })
         .onConflictDoUpdate({
           target: rateLimits.bucket,
-          set: { count: sql`${rateLimits.count} + 1` },
+          set: { count: sql`${rateLimits.count} + ${cost}` },
         })
         .returning({ count: rateLimits.count })
-      return row?.count ?? 1
+      return row?.count ?? cost
     },
   }
 }
@@ -230,11 +236,12 @@ export function resolveNativeLimiters(event: H3Event): NativeLimiters | undefine
 export interface RateLimitVerdict {
   allowed: boolean
   /**
-   * What decided. `native` only ever refuses; `d1` is the count; `unavailable`
-   * means the count threw and the request was let through.
+   * What decided. `native` refuses, and lets a request through only for a
+   * call site that asked for a loose limit (`exact: false`); `d1` is the
+   * count; `unavailable` means the count threw and the request was let through.
    */
   backend: 'native' | 'd1' | 'unavailable'
-  /** Requests left in this window, or null when the count could not be read. */
+  /** Requests left in this window, or null when no count was read. */
   remaining: number | null
   /** Seconds until the caller may retry. An upper bound when `native` refused. */
   resetSeconds: number
@@ -252,19 +259,24 @@ export interface RateLimitVerdict {
  */
 export async function checkRateLimit(
   backends: { natives?: NativeLimiters; store: RateLimitStore },
-  opts: RateLimitOptions,
+  opts: RateLimitOptions & { exact?: boolean },
   now: number = Date.now(),
 ): Promise<RateLimitVerdict> {
   const native = nativeFor(backends.natives, opts)
   if (native) {
-    const refused = await native
+    // `undefined` when the binding threw: then the count decides, whatever was asked.
+    const success = await native
       .limit({ key: opts.key })
-      .then(({ success }) => !success)
-      .catch(() => false)
+      .then((answer) => answer.success)
+      .catch(() => undefined)
     // No count and no reset clock from the binding; one full period is always
     // enough to wait.
-    if (refused) {
+    if (success === false) {
       return { allowed: false, backend: 'native', remaining: 0, resetSeconds: opts.windowSeconds }
+    }
+    // A call site that asked for a loose limit stops here and costs no write.
+    if (success && opts.exact === false) {
+      return { allowed: true, backend: 'native', remaining: null, resetSeconds: opts.windowSeconds }
     }
   }
   try {
@@ -297,10 +309,25 @@ export function getClientIp(event: H3Event): string {
  * Fails OPEN: the failure is logged as `rate_limit_unavailable`.
  * `X-RateLimit-Limit` and, when blocked, `Retry-After` go out on every path;
  * `X-RateLimit-Remaining` whenever the count was read.
+ *
+ * `exact: false` is for a high-volume, low-stakes call site (a public read
+ * path) that must not pay a D1 write per request. It only has an effect where
+ * the numbers match a native limiter, which then decides alone. That limit is
+ * loose: a client that opens a connection per request is never refused. Never
+ * use it in front of sign-in, a token, or anything that costs money.
  */
 export async function rateLimit(
   event: H3Event,
-  opts: { name: string; limit: number; windowSeconds: number; identifier?: string },
+  opts: {
+    name: string
+    limit: number
+    windowSeconds: number
+    identifier?: string
+    /** What this call spends; defaults to 1. */
+    cost?: number
+    /** `false` accepts the native limiter's loose count and skips D1. Defaults to true. */
+    exact?: boolean
+  },
 ): Promise<void> {
   const identifier = opts.identifier ?? getClientIp(event)
 
@@ -310,6 +337,8 @@ export async function rateLimit(
       key: `${opts.name}:${identifier}`,
       limit: opts.limit,
       windowSeconds: opts.windowSeconds,
+      cost: opts.cost,
+      exact: opts.exact,
     },
   )
 
