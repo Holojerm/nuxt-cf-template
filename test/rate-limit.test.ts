@@ -1,34 +1,46 @@
-// The rate limiter: its window arithmetic, and which of its two backends runs.
+// The rate limiter: its window arithmetic, that its count is exact when
+// requests arrive together, and that the native limiter can refuse a request
+// but can never let one past the count.
 //
-// consumeRateLimit takes its store and its clock as arguments precisely so this
-// suite can test the boundary behaviour that matters — a window rolling over
-// mid-attack — without sleeping through real seconds. consumeRateLimitWithFallback
-// takes the native bindings the same way, for the same reason.
+// consumeRateLimit takes its store and its clock as arguments so this suite
+// can test a window rolling over mid-attack without sleeping through real
+// seconds. checkRateLimit takes the native bindings the same way.
 
 import { env } from 'cloudflare:test'
-import { afterEach, describe, expect, it } from 'vitest'
+import { drizzle } from 'drizzle-orm/d1'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import WRANGLER_TOML from '../wrangler.toml?raw'
+import * as schema from '../server/db/schema'
 import {
-  chooseBackendAmong,
+  checkRateLimit,
   clearNativeLimitersForTest,
   consumeRateLimit,
-  consumeRateLimitWithFallback,
+  d1RateLimitStore,
   getNativeLimiters,
   NATIVE_LIMITER,
+  nativeFor,
+  pruneRateLimits,
   registerNativeLimiter,
   type NativeRateLimiter,
   type RateLimitStore,
 } from '../server/utils/rate-limit'
 
-/** Map-backed stand-in for unstorage. TTL is recorded, not enforced — the keys
- *  are window-scoped, so expiry is housekeeping rather than correctness. */
-function makeStore(): RateLimitStore & { size: () => number } {
-  const data = new Map<string, unknown>()
+const db = drizzle(env.DB, { schema })
+
+/** A counter in memory. One JavaScript statement per hit, so it is atomic too. */
+function makeStore(): RateLimitStore & { buckets: () => string[]; hits: () => number } {
+  const data = new Map<string, number>()
+  let hits = 0
   return {
-    get: async (key) => data.get(key),
-    set: async (key, value) => data.set(key, value),
-    size: () => data.size,
+    async hit(bucket) {
+      hits += 1
+      const count = (data.get(bucket) ?? 0) + 1
+      data.set(bucket, count)
+      return count
+    },
+    buckets: () => [...data.keys()],
+    hits: () => hits,
   }
 }
 
@@ -59,61 +71,36 @@ const THROWING_NATIVE: NativeRateLimiter = {
 }
 
 describe('consumeRateLimit', () => {
-  it('allows up to the limit and then blocks', async () => {
+  const now = Date.UTC(2026, 0, 1, 12, 0, 30)
+
+  it('allows up to the limit, then blocks, counting down what is left', async () => {
     const store = makeStore()
-    const now = 1_000_000_000_000
-
-    const first = await consumeRateLimit(store, OPTS, now)
-    expect(first).toMatchObject({ allowed: true, remaining: 2 })
-
+    expect(await consumeRateLimit(store, OPTS, now)).toMatchObject({ allowed: true, remaining: 2 })
     await consumeRateLimit(store, OPTS, now)
-    const third = await consumeRateLimit(store, OPTS, now)
-    expect(third).toMatchObject({ allowed: true, remaining: 0 })
-
-    const fourth = await consumeRateLimit(store, OPTS, now)
-    expect(fourth.allowed).toBe(false)
-    expect(fourth.remaining).toBe(0)
+    expect(await consumeRateLimit(store, OPTS, now)).toMatchObject({ allowed: true, remaining: 0 })
+    expect(await consumeRateLimit(store, OPTS, now)).toMatchObject({ allowed: false, remaining: 0 })
   })
 
-  it('does not consume budget once blocked', async () => {
-    // A blocked request must not write, or a client that keeps hammering keeps
-    // pushing the counter up and never recovers within the window.
+  it('keeps counting a blocked caller, and stays blocked', async () => {
     const store = makeStore()
-    const now = 1_000_000_000_000
-    for (let i = 0; i < 5; i++) await consumeRateLimit(store, OPTS, now)
-
-    expect(store.size()).toBe(1)
-    expect(await store.get('ratelimit:login:1.2.3.4:16666666')).toBe(3)
-  })
-
-  it('resets when the window rolls over', async () => {
-    const store = makeStore()
-    const now = 1_000_000_000_000
-
-    for (let i = 0; i < 3; i++) await consumeRateLimit(store, OPTS, now)
+    for (let i = 0; i < 10; i++) await consumeRateLimit(store, OPTS, now)
     expect((await consumeRateLimit(store, OPTS, now)).allowed).toBe(false)
-
-    const nextWindow = now + 60_000
-    expect((await consumeRateLimit(store, OPTS, nextWindow)).allowed).toBe(true)
+    expect(store.hits()).toBe(11)
   })
 
-  it('reports seconds until reset, for Retry-After', async () => {
+  it('reports the seconds left in the window, and starts again in the next one', async () => {
     const store = makeStore()
-    // Windows are aligned to absolute epoch time, not to first contact:
-    // 1_000_000_020s is a multiple of 60, so this is 15 seconds in → 45 left.
-    const now = 1_000_000_035_000
-    const result = await consumeRateLimit(store, OPTS, now)
-    expect(result.resetSeconds).toBe(45)
+    for (let i = 0; i < 3; i++) await consumeRateLimit(store, OPTS, now)
+    const blocked = await consumeRateLimit(store, OPTS, now)
+    expect(blocked).toMatchObject({ allowed: false, resetSeconds: 30 })
+    expect((await consumeRateLimit(store, OPTS, now + 30_000)).allowed).toBe(true)
   })
 
-  it('keeps separate callers in separate buckets', async () => {
+  it('counts each caller on their own', async () => {
     const store = makeStore()
-    const now = 1_000_000_000_000
-
     for (let i = 0; i < 3; i++) {
       await consumeRateLimit(store, { ...OPTS, key: 'login:1.1.1.1' }, now)
     }
-
     expect((await consumeRateLimit(store, { ...OPTS, key: 'login:1.1.1.1' }, now)).allowed).toBe(
       false,
     )
@@ -122,143 +109,133 @@ describe('consumeRateLimit', () => {
     )
   })
 
-  it('coerces a stringified count rather than producing NaN', async () => {
-    // KV can hand back a string for a value written by another runtime; NaN >= 3
-    // is false, which would silently disable the limit.
+  it('never hands the store the address or mailbox in the key', async () => {
     const store = makeStore()
-    const now = 1_000_000_000_000
-    await store.set('ratelimit:login:1.2.3.4:16666666', '3')
-
-    expect((await consumeRateLimit(store, OPTS, now)).allowed).toBe(false)
+    await consumeRateLimit(store, { ...OPTS, key: 'login:ann@example.com' }, now)
+    expect(store.buckets()).toHaveLength(1)
+    expect(store.buckets()[0]).toMatch(/^[0-9a-f]{64}$/)
   })
 })
 
-describe('chooseBackendAmong', () => {
-  it('picks the native binding when both numbers match what it was deployed with', () => {
+describe('the counter in D1', () => {
+  beforeEach(async () => {
+    await db.delete(schema.rateLimits)
+  })
+
+  // The whole reason this backend exists. A counter that reads and then writes
+  // (KV) let 75 simultaneous requests through as 10.
+  it('is exact when fifty requests arrive at once', async () => {
+    const store = d1RateLimitStore(db)
+    const opts = { key: 'sign-in:ann', limit: 5, windowSeconds: 60 }
+    const verdicts = await Promise.all(
+      Array.from({ length: 50 }, () => consumeRateLimit(store, opts)),
+    )
+    expect(verdicts.filter((verdict) => verdict.allowed)).toHaveLength(5)
+    const [row] = await db.select().from(schema.rateLimits)
+    expect(row?.count).toBe(50)
+  })
+
+  it('keeps a hash, not the key, and one row per caller and window', async () => {
+    const store = d1RateLimitStore(db)
+    const now = Date.UTC(2026, 0, 1, 12, 0, 30)
+    await consumeRateLimit(store, { ...OPTS, key: 'login:203.0.113.4' }, now)
+    await consumeRateLimit(store, { ...OPTS, key: 'login:203.0.113.4' }, now)
+    await consumeRateLimit(store, { ...OPTS, key: 'login:203.0.113.5' }, now)
+    await consumeRateLimit(store, { ...OPTS, key: 'login:203.0.113.4' }, now + 60_000)
+    const rows = await db.select().from(schema.rateLimits)
+    expect(rows.map((row) => row.count).toSorted()).toEqual([1, 1, 2])
+    expect(JSON.stringify(rows)).not.toContain('203.0.113')
+  })
+
+  it('is pruned once its window is over, and not before', async () => {
+    const store = d1RateLimitStore(db)
+    const now = Date.UTC(2026, 0, 1, 12, 0, 30)
+    await consumeRateLimit(store, OPTS, now)
+    expect(await pruneRateLimits(db, new Date(now + 20_000))).toBe(0)
+    expect(await pruneRateLimits(db, new Date(now + 31_000))).toBe(1)
+    expect(await db.select().from(schema.rateLimits)).toEqual([])
+  })
+})
+
+describe('nativeFor', () => {
+  it('gives a call site the native limiter only when both numbers match', () => {
     const native = makeNative([])
-    expect(chooseBackendAmong(natives(native), MATCHED)).toEqual({ backend: 'native', native })
+    expect(nativeFor(natives(native), MATCHED)).toBe(native)
+    expect(nativeFor(natives(native), { limit: 20, windowSeconds: 60 })).toBeUndefined()
+    expect(nativeFor(natives(native), { limit: 30, windowSeconds: 300 })).toBeUndefined()
   })
 
-  it('falls back to KV when there is no binding', () => {
-    // The `nuxt build` output on a non-Cloudflare preset, a trimmed
-    // wrangler.toml, a wrangler too old to know the binding. None of them throw.
-    expect(chooseBackendAmong(undefined, MATCHED)).toEqual({
-      backend: 'kv',
-      reason: 'binding-absent',
-    })
-  })
-
-  it('falls back to KV for a window the binding was not deployed for', () => {
-    // The real case: mcp-connect-code wants 10 per 300s. The platform only
-    // permits periods of 10 or 60, so no binding could serve this one.
-    expect(chooseBackendAmong(natives(makeNative([])), { limit: 10, windowSeconds: 300 })).toEqual({
-      backend: 'kv',
-      reason: 'window-mismatch',
-    })
-  })
-
-  it('falls back to KV when the limit differs, rather than enforcing the wrong one', () => {
-    // /api/auth/dev asks for 20/60s. The binding is 30/60s and cannot be told
-    // otherwise at call time, so delegating would enforce 30 while the response
-    // header promised 20. This is the case the exact-match rule exists for.
-    expect(chooseBackendAmong(natives(makeNative([])), { limit: 20, windowSeconds: 60 })).toEqual({
-      backend: 'kv',
-      reason: 'limit-mismatch',
-    })
+  it('gives none where the Worker has no binding', () => {
+    expect(nativeFor(undefined, MATCHED)).toBeUndefined()
+    expect(nativeFor({}, MATCHED)).toBeUndefined()
   })
 })
 
-describe('consumeRateLimitWithFallback', () => {
-  it('spends the request against the native binding, keyed the same way', async () => {
-    const native = makeNative([true])
+describe('checkRateLimit', () => {
+  const opts = { key: 'auth:1.2.3.4', ...MATCHED }
+
+  it('is refused by the native limiter without spending a count', async () => {
     const store = makeStore()
-
-    const verdict = await consumeRateLimitWithFallback(
-      { natives: natives(native), store },
-      { ...MATCHED, key: 'auth:1.2.3.4' },
-    )
-
-    expect(verdict.backend).toBe('native')
-    expect(verdict.allowed).toBe(true)
-    expect(native.keys).toEqual(['auth:1.2.3.4'])
-    // Nothing was written to KV — the two backends do not double-count.
-    expect(store.size()).toBe(0)
+    const native = makeNative([false])
+    expect(await checkRateLimit({ natives: natives(native), store }, opts)).toEqual({
+      allowed: false,
+      backend: 'native',
+      remaining: 0,
+      resetSeconds: opts.windowSeconds,
+    })
+    expect(store.hits()).toBe(0)
   })
 
-  it('reports remaining as unknown when the binding allows, and 0 when it blocks', async () => {
-    // The binding answers `{ success }` and nothing else. `null` is what makes
-    // rateLimit() omit X-RateLimit-Remaining rather than invent a number for it;
-    // 0 on a block is the one count the boolean does tell us.
-    const native = makeNative([true, false])
+  // What production did in November 2026: the binding answered "success" to
+  // every request on a fresh connection. The count has to stop them anyway.
+  it('is stopped by the count however long the native limiter keeps saying yes', async () => {
     const store = makeStore()
-    const opts = { ...MATCHED, key: 'auth:1.2.3.4' }
-
-    expect(
-      (await consumeRateLimitWithFallback({ natives: natives(native), store }, opts)).remaining,
-    ).toBeNull()
-
-    const blocked = await consumeRateLimitWithFallback({ natives: natives(native), store }, opts)
-    expect(blocked).toMatchObject({ allowed: false, remaining: 0 })
-    // No reset clock is exposed, so Retry-After is the whole period: an upper
-    // bound, which is the safe direction to be wrong in.
-    expect(blocked.resetSeconds).toBe(NATIVE_LIMITER.windowSeconds)
+    const native = makeNative([])
+    const backends = { natives: natives(native), store }
+    const verdicts = []
+    for (let i = 0; i < opts.limit + 5; i++) verdicts.push(await checkRateLimit(backends, opts))
+    expect(verdicts.filter((verdict) => verdict.allowed)).toHaveLength(opts.limit)
+    expect(verdicts.at(-1)).toMatchObject({ allowed: false, backend: 'd1', remaining: 0 })
+    expect(native.keys).toHaveLength(opts.limit + 5)
   })
 
-  it('gives the KV path results identical to calling consumeRateLimit directly', async () => {
-    const opts = { key: 'mcp:user_1', limit: 3, windowSeconds: 300 }
-    const now = 1_000_000_035_000
-
-    const direct = makeStore()
-    const viaFallback = makeStore()
-
-    for (let i = 0; i < 4; i++) {
-      const a = await consumeRateLimit(direct, opts, now)
-      const b = await consumeRateLimitWithFallback(
-        { natives: natives(makeNative([])), store: viaFallback },
-        opts,
-        now,
-      )
-      expect(b).toMatchObject({ ...a, backend: 'kv', reason: 'window-mismatch' })
-    }
-  })
-
-  it('fails open when the binding throws', async () => {
-    // An outage in the abuse-control layer must not take the product down. It
-    // also must not quietly fall through to KV: one broken backend paying two
-    // backends' latency is worse, and a binding that never gets used is a
-    // binding whose breakage nobody notices.
+  it('goes straight to the count for a call site with no native limiter', async () => {
     const store = makeStore()
-
-    const verdict = await consumeRateLimitWithFallback(
-      { natives: natives(THROWING_NATIVE), store },
-      { ...MATCHED, key: 'auth:1.2.3.4' },
-    )
-
-    expect(verdict).toMatchObject({ allowed: true, backend: 'unavailable', remaining: null })
-    expect(verdict.error).toContain('binding exploded')
-    expect(store.size()).toBe(0)
+    const native = makeNative([false])
+    const verdict = await checkRateLimit({ natives: natives(native), store }, OPTS)
+    expect(verdict).toMatchObject({ allowed: true, backend: 'd1', remaining: 2 })
+    expect(native.keys).toEqual([])
   })
 
-  it('fails open when the KV store throws', async () => {
+  it('still counts when the native binding throws', async () => {
+    const store = makeStore()
+    const verdict = await checkRateLimit({ natives: natives(THROWING_NATIVE), store }, opts)
+    expect(verdict).toMatchObject({ allowed: true, backend: 'd1' })
+    expect(store.hits()).toBe(1)
+  })
+
+  it('fails open, and says so, when the count cannot be taken', async () => {
     const exploding: RateLimitStore = {
-      get: async () => {
-        throw new Error('kv is not defined')
+      hit: async () => {
+        throw new Error('D1 is down')
       },
-      set: async () => undefined,
     }
-
-    const verdict = await consumeRateLimitWithFallback({ store: exploding }, OPTS)
-    expect(verdict).toMatchObject({ allowed: true, backend: 'unavailable' })
+    expect(await checkRateLimit({ store: exploding }, OPTS)).toEqual({
+      allowed: true,
+      backend: 'unavailable',
+      remaining: null,
+      resetSeconds: 0,
+      error: 'Error: D1 is down',
+    })
   })
 })
 
-describe('the deployed binding', () => {
+describe('the RATE_LIMITER binding', () => {
   // vitest.config.ts points the workers pool at the real wrangler.toml, so
-  // `env` here holds the same bindings production gets. These two facts cannot
-  // be asserted from the TypeScript side alone, and both fail silently in
-  // production: a missing binding means every call site quietly uses KV, and a
-  // limit that no longer matches NATIVE_LIMITER means the one endpoint the
-  // binding was sized for quietly uses KV too.
+  // `env` here holds the same bindings production gets. Neither fact can be
+  // asserted from the TypeScript side alone, and both fail silently: without
+  // the binding, or with numbers NATIVE_LIMITER does not claim, the auth
+  // surface loses its first check and every flood costs a D1 write.
 
   it('exists under the name server/utils/rate-limit.ts looks for', () => {
     const binding = (env as unknown as Record<string, unknown>)[NATIVE_LIMITER.binding]
@@ -273,7 +250,7 @@ describe('the deployed binding', () => {
   // windows are aligned to the wall clock, so a run that straddled a boundary let the extra
   // call through and failed a fork's Workers Build, and a retry loop only made that rarer.
   // miniflare builds the binding from this same file, so the text is the deployed number.
-  it('enforces exactly the limit NATIVE_LIMITER claims it does, in every environment', () => {
+  it('is declared with exactly the numbers NATIVE_LIMITER claims, in every environment', () => {
     const blocks = [
       ...WRANGLER_TOML.matchAll(/^\[\[(?:env\.(\w+)\.)?ratelimits\]\]\n((?:(?!\[).*\n?)*)/gm),
     ]
@@ -292,8 +269,8 @@ describe('the deployed binding', () => {
     for (const block of blocks) {
       expect(
         { limit: block.limit, period: block.period },
-        `wrangler.toml (${block.env}) enforces a number NATIVE_LIMITER does not claim, so the ` +
-          'auth surface would quietly fall back to KV',
+        `wrangler.toml (${block.env}) declares numbers NATIVE_LIMITER does not claim, so the ` +
+          'auth surface would lose its first check',
       ).toEqual({ limit: NATIVE_LIMITER.limit, period: NATIVE_LIMITER.windowSeconds })
     }
   })
@@ -308,44 +285,26 @@ describe('registerNativeLimiter', () => {
     expect(getNativeLimiters()).toEqual([NATIVE_LIMITER])
   })
 
-  it('routes a call site matching the registered budget to its own binding', () => {
+  it('gives a call site matching the registered budget its own binding', () => {
     registerNativeLimiter(GAME_CREATE)
     const auth = makeNative([])
     const create = makeNative([])
-    const natives = { [NATIVE_LIMITER.binding]: auth, [GAME_CREATE.binding]: create }
+    const both = { [NATIVE_LIMITER.binding]: auth, [GAME_CREATE.binding]: create }
 
-    expect(chooseBackendAmong(natives, MATCHED)).toEqual({ backend: 'native', native: auth })
-    expect(chooseBackendAmong(natives, { limit: 5, windowSeconds: 60 })).toEqual({
-      backend: 'native',
-      native: create,
-    })
+    expect(nativeFor(both, MATCHED)).toBe(auth)
+    expect(nativeFor(both, { limit: 5, windowSeconds: 60 })).toBe(create)
   })
 
-  it('still refuses a budget no binding was deployed for', () => {
+  it('gives none for a budget no binding was deployed for', () => {
     registerNativeLimiter(GAME_CREATE)
-    const natives = { [NATIVE_LIMITER.binding]: makeNative([]) }
-    expect(chooseBackendAmong(natives, { limit: 20, windowSeconds: 60 })).toEqual({
-      backend: 'kv',
-      reason: 'limit-mismatch',
-    })
-    expect(chooseBackendAmong(natives, { limit: 10, windowSeconds: 300 })).toEqual({
-      backend: 'kv',
-      reason: 'window-mismatch',
-    })
+    const only = { [NATIVE_LIMITER.binding]: makeNative([]) }
+    expect(nativeFor(only, { limit: 20, windowSeconds: 60 })).toBeUndefined()
+    // Registered by the app, but its wrangler.toml block is missing (a preview
+    // env that forgot to repeat it): no first check, and no TypeError.
+    expect(nativeFor(only, { limit: 5, windowSeconds: 60 })).toBeUndefined()
   })
 
-  it('falls back to KV when the matching spec has no binding on this Worker', () => {
-    // Registered by the app, but the wrangler.toml block for it is missing (a
-    // preview env that forgot to repeat it): KV, said out loud, not a TypeError.
-    registerNativeLimiter(GAME_CREATE)
-    const natives = { [NATIVE_LIMITER.binding]: makeNative([]) }
-    expect(chooseBackendAmong(natives, { limit: 5, windowSeconds: 60 })).toEqual({
-      backend: 'kv',
-      reason: 'binding-absent',
-    })
-  })
-
-  it('spends the request against the binding that matches', async () => {
+  it('asks the binding that matches, and no other', async () => {
     registerNativeLimiter(GAME_CREATE)
     const auth = makeNative([])
     const create = makeNative([true, false])
@@ -355,9 +314,12 @@ describe('registerNativeLimiter', () => {
     }
     const opts = { key: 'game-create:1.2.3.4', limit: 5, windowSeconds: 60 }
 
-    expect((await consumeRateLimitWithFallback(backends, opts)).allowed).toBe(true)
-    const blocked = await consumeRateLimitWithFallback(backends, opts)
-    expect(blocked).toMatchObject({ allowed: false, backend: 'native', remaining: 0 })
+    expect((await checkRateLimit(backends, opts)).allowed).toBe(true)
+    expect(await checkRateLimit(backends, opts)).toMatchObject({
+      allowed: false,
+      backend: 'native',
+      remaining: 0,
+    })
     expect(create.keys).toEqual([opts.key, opts.key])
     expect(auth.keys).toEqual([])
   })

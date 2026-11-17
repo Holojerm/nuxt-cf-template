@@ -169,15 +169,15 @@ So: seed before starting the dev server, or restart after seeding. Don't go debu
 
 `useUserSession()`'s `fetch()` and `clear()` calls hit `/api/_auth/session` — note the underscore. The global auth middleware allowlist must include `/api/_auth/` or sign-out and session refresh will 401. OAuth callback routes you write yourself live under `/api/auth/` (no underscore) and need their own allowlist entry.
 
-## NuxtHub's `kv` auto-import doesn't reach every file at runtime
+## NuxtHub's auto-imports don't reach every file at runtime
 
-`kv` (the unstorage handle for the KV binding) is declared in `.nuxt/types/nitro-imports.d.ts`, so
-it **typechecks** anywhere in `server/`. It is not always **injected** at runtime: in
-`server/utils/rate-limit.ts` it resolved to `ReferenceError: kv is not defined` while the build,
-typecheck, and lint were all green. Because the rate limiter fails open by design, the only symptom
-was a `rate_limit_unavailable` line in the logs — the feature was simply off.
+`kv` and `db` are declared in `.nuxt/types/nitro-imports.d.ts`, so they **typecheck** anywhere in
+`server/`. They are not always **injected** at runtime: in `server/utils/rate-limit.ts` the
+auto-imported handle once resolved to a `ReferenceError` while the build, typecheck, and lint were
+all green. Because the rate limiter fails open by design, the only symptom was a
+`rate_limit_unavailable` line in the logs — the feature was simply off.
 
-Import it explicitly (`import { kv } from '@nuxthub/kv'`) in server utils. More generally: when a
+Import them explicitly (`import { db } from '@nuxthub/db'`, `import { kv } from '@nuxthub/kv'`) in server utils. More generally: when a
 NuxtHub auto-import is load-bearing, check the running logs, not just the type checker.
 
 ## Custom `definePageMeta` keys need two opt-ins, and fail silently without them

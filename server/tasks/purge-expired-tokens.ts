@@ -50,6 +50,7 @@ import { z } from 'zod'
 
 import { getPurgeContributors } from '../utils/extensions'
 import { pruneOpsEvents } from '../utils/ops'
+import { pruneRateLimits } from '../utils/rate-limit'
 import { purgeExpiredTokens, PURGE_BATCH_LIMIT, PURGE_GRACE_SECONDS } from '../utils/purge'
 import { logEvent } from '../utils/log'
 
@@ -93,11 +94,14 @@ export default defineTask({
     // The ops spool is age-pruned here rather than on its own cron: apps only
     // spool now, and the fleet dashboard reads the last 24 h of it.
     const opsPruned = await pruneOpsEvents(db)
+    // Rate-limit counters whose window is over.
+    const rateLimitsPruned = await pruneRateLimits(db)
 
     logEvent('info', 'purge_expired_tokens', {
       ...result,
       ...counts,
       opsPruned,
+      rateLimitsPruned,
       truncated: result.truncated || sweeps.some(([, sweep]) => sweep.truncated),
       durationMs: Date.now() - started,
     })
