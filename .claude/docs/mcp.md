@@ -103,8 +103,8 @@ What a directory needs beyond that (a docs page, five test cases, a recording) i
 | | How it is submitted | How it stays current |
 | --- | --- | --- |
 | Official MCP Registry | CI, on push to main | Bump `mcp/package.json › version`; CI publishes the new version |
-| Claude Connectors Directory | By hand, once, at `claude.ai/directory/manage`. `mcp/.publish/claude-connector.md` has every field | Tools sync from the live server. Listing copy is edited in the portal |
-| ChatGPT directory | By hand, once, at `platform.openai.com/plugins`. Upload `mcp/.publish/chatgpt-plugin.zip` | The server is rescanned daily. A copy or asset change is a new ZIP |
+| Claude Connectors Directory | By hand, once, at `claude.ai/directory/manage`. The pack's Claude sheet (`bun run mcp:pack`) has every field | Tools sync from the live server. Listing copy is edited in the portal |
+| ChatGPT directory | By hand, once, at `platform.openai.com/plugins`. Upload the pack's plugin ZIP | The server is rescanned daily. A copy or asset change is a new ZIP |
 
 Neither portal has an API. `mcp:pack` automates everything up to the upload.
 
