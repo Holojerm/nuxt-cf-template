@@ -514,7 +514,8 @@ export default defineNuxtConfig({
       // emails, sitemap.xml, robots.txt, and og: tags are built from this —
       // there is no request context in a webhook to infer it from.
       appUrl: 'http://localhost:3000',
-      // The MCP worker's public origin (mcp/), no path and no trailing slash.
+      // The MCP worker's public origin (mcp/). Its endpoint, the same URL with
+      // `/mcp` on the end, is read as the same server (`mcpOrigin()`).
       // Set as NUXT_PUBLIC_MCP_URL once the worker is deployed. It puts the
       // server's address on /account, in llms.txt, and in
       // /.well-known/ai-catalog.json. Empty = the app advertises no MCP server.

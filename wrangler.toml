@@ -193,7 +193,8 @@ NUXT_EMAIL_QUEUE_NAME = "my-app-email"
 # and og: tags build absolute links from this — a webhook has no request to
 # infer it from. Set it to your real domain before the first production deploy.
 NUXT_PUBLIC_APP_URL = "https://my-app.example.workers.dev"
-# The MCP worker's public origin (mcp/), no path. Empty until that worker is
+# The MCP worker's public origin (mcp/); its endpoint, ending in /mcp, is read
+# as the same server. Empty until that worker is
 # deployed: the app then shows no server address on /account and serves no
 # /.well-known/ai-catalog.json. Must equal `url` in mcp/listing.json, which
 # `bun run mcp:check` enforces. See .claude/docs/mcp.md.

@@ -7,7 +7,7 @@
 // traffic is already gone.
 
 import type { PublicPage } from '#shared/utils/site'
-import { absoluteUrl, escapeXml, normalizeOrigin } from '#shared/utils/site'
+import { absoluteUrl, escapeXml, mcpOrigin, normalizeOrigin } from '#shared/utils/site'
 
 /**
  * The crawlers behind answer engines and model training, named explicitly.
@@ -270,7 +270,7 @@ export interface LlmsTxtInput {
   posts?: LlmsTxtPost[]
   /** After the blog, before About — see server/utils/public-pages.ts. */
   sections?: LlmsTxtSection[]
-  /** The MCP worker's origin (NUXT_PUBLIC_MCP_URL). Empty or absent = not mentioned. */
+  /** NUXT_PUBLIC_MCP_URL: the MCP worker's origin, or its endpoint. Empty or absent = not mentioned. */
   mcpUrl?: string
 }
 
@@ -322,7 +322,7 @@ export function buildLlmsTxt(input: LlmsTxtInput): string {
 
   // The one line here that is an instruction rather than a description: a model
   // reading this file is exactly the reader that can use an MCP endpoint.
-  const mcpUrl = normalizeOrigin(input.mcpUrl)
+  const mcpUrl = mcpOrigin(input.mcpUrl)
   if (mcpUrl) {
     sections.push(
       '## MCP server',
