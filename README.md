@@ -587,49 +587,47 @@ Adding OAuth providers, in the order they render:
 
 ## Rate limiting
 
-`rateLimit(event, { name, limit, windowSeconds })` — one call, two backends, auto-imported in server
-routes. Applied to the whole `/api/auth/` surface (30/min per IP) and per-user on connect-code
-minting (10 per 5 min). Responses carry `X-RateLimit-*`, and a block is a 429 with `Retry-After`.
+`rateLimit(event, { name, limit, windowSeconds })` — one call, auto-imported in server routes.
+Applied to the whole `/api/auth/` surface (30/min per IP) and per-user on connect-code minting (10
+per 5 min). Responses carry `X-RateLimit-*`, and a block is a 429 with `Retry-After`.
 
-**Backend 1, preferred: Cloudflare's native Rate Limiting binding.** Declared as `[[ratelimits]]` in
-`wrangler.toml`, it runs inside the runtime instead of over the network. `namespace_id` is any
-positive integer unique to your account — there is nothing to create in the dashboard.
+**The count is one row in D1.** Every call moves a counter in `rate_limits` with a single
+`INSERT … ON CONFLICT DO UPDATE SET count = count + 1 RETURNING count`. D1 runs writes one at a
+time, so the number is exact however many requests arrive together, and it is one count across
+every Cloudflare location. The row's key is a hash of the caller and endpoint, so no address is
+kept, and the daily purge removes finished windows.
 
-**Backend 2, fallback: a fixed-window counter in KV.** The original implementation, unchanged.
+**Cloudflare's native Rate Limiting binding is a first check in front of it, nothing more.**
+Declared as `[[ratelimits]]` in `wrangler.toml`, it can refuse a request before that request costs
+a D1 write. It is never trusted to let one through. Measured on production in November 2026: 120
+requests on one kept-alive connection were stopped after 31, but 200 requests that each opened a
+new connection were never stopped, because each machine keeps its own count and shares it "in the
+background". A call site gets the first check only when its numbers equal the binding's on both
+counts (`nativeFor`): a binding's `(limit, period)` is fixed at deploy and `limit({ key })` takes
+only a key.
 
-Which one runs is decided per call site by `chooseBackendAmong`, and the rule is exact-match on *both*
-numbers:
-
-| Call site | Backend | Why |
+| Call site | First check | Count |
 | --- | --- | --- |
-| `/api/auth/**` — 30 per 60s | native | Matches the `[[ratelimits]]` block, which was sized for it |
-| `/api/health` — 60 per 60s | KV | Different limit |
-| `mcp-connect-code` — 10 per 300s | KV | The binding's `period` may only be 10 or 60 |
+| `/api/auth/**` — 30 per 60s | native (matches the `[[ratelimits]]` block) | D1 |
+| `/api/health` — 60 per 60s | none | D1 |
+| `mcp-connect-code` — 10 per 300s | none (`period` may only be 10 or 60) | D1 |
 
-The strictness is the point. A binding's `(limit, period)` is fixed at deploy — `limit({ key })`
-takes only a key — so routing a 20/60s handler through a 30/60s binding would enforce 30 while the
-response header still promised 20. Every call site is logged once per isolate as
-`{"kind":"rate_limit_backend","name":…,"backend":…,"reason":…}`, so you can see which limiter is
-actually guarding what, and `reason` says exactly what to change to move one onto the binding.
+Caveats, all deliberate:
 
-Three honest caveats, all deliberate:
+- **It fails open.** If D1 cannot be reached the request goes through, logged as
+  `rate_limit_unavailable`. An outage in abuse control must not take sign-in down with it. A
+  native binding that throws is ignored: the count still decides.
+- **Every counted request is a D1 write.** That is the price of an exact count. The native first
+  check keeps a flood on one connection from paying it; a flood from many connections is what a
+  zone-level Cloudflare rate-limiting rule is for.
+- **The window is fixed, not sliding:** `limit` at the end of one window plus `limit` at the start
+  of the next.
 
-- **Both fail open.** If the limiter is unreachable the request goes through, logged as
-  `rate_limit_unavailable`. An outage in the abuse-control layer must not take sign-in down with it.
-  A throwing binding does *not* silently cascade to KV — one broken backend paying both backends'
-  latency is worse, and a binding nothing ever uses is a binding whose breakage nobody notices.
-- **The native binding counts per colo.** "30 per minute" means 30 per minute *in each Cloudflare
-  location*. Cloudflare describes it as permissive and eventually consistent, and explicitly not an
-  accounting system.
-- **KV is eventually consistent** and caps sustained writes at roughly one per second per key, so a
-  spray from many colos can overshoot for a beat.
-
-Neither is metering. This is front-door abuse control; anything you bill on belongs in a Durable
-Object, which is strongly consistent.
+This is front-door abuse control, not metering; anything you bill on belongs in a Durable Object.
 
 To change the auth limit, change `NATIVE_LIMITER` in
 [`server/utils/rate-limit.ts`](./server/utils/rate-limit.ts) **and** `simple` in `wrangler.toml`.
-`test/rate-limit.test.ts` drives the real binding and fails if the two ever drift.
+`test/rate-limit.test.ts` fails if the two ever drift.
 
 ---
 

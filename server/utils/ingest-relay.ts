@@ -9,17 +9,17 @@
 // reaches and no spammer wants.
 //
 // ── Opt-in ───────────────────────────────────────────────────────────────────
-// Off unless an app turns it on. The KV backend costs a read and a write per
-// relayed request, which is real money for an app with real traffic, and an
+// Off unless an app turns it on. The count costs a D1 write per relayed
+// request, which is real money for an app with real traffic, and an
 // unconfigured fork syncing this file must not start paying for it unasked.
 // An app that wants it calls `configureIngestRelay({ rateLimit: true })`.
 //
 // ── Why 120s ─────────────────────────────────────────────────────────────────
 // The window is deliberately not 10 or 60. Those are the only periods the native
-// Rate Limiting binding accepts, so a 120s window can only ever be served by the
-// KV backend (see `chooseBackendAmong` in rate-limit.ts). That is the right
-// backend here: this traffic arrives from wherever the visitor is, and a per-colo
-// count would make the effective budget depend on how spread out the abuse is.
+// Rate Limiting binding accepts, so a 120s window never gets the native first
+// check (see `nativeFor` in rate-limit.ts) and is only ever counted in D1. This
+// traffic arrives from wherever the visitor is, and the native count is kept
+// per location. Keep a retuned window off 10 and 60 for the same reason.
 // Keep a retuned window off 10 and 60 for the same reason.
 //
 // ── Changing it ──────────────────────────────────────────────────────────────

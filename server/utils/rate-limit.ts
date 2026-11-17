@@ -1,39 +1,48 @@
-// Rate limiting for unauthenticated endpoints. Two backends, one front door.
+// Rate limiting. One strict counter in D1, with Cloudflare's native limiter
+// in front of it as a free first check.
 //
-// Both are abuse control, not metering. For an exact quota (anything billed),
-// use a Durable Object.
+// Both are abuse control, not metering. For a quota anything is billed on, use
+// a Durable Object.
 //
-// Backend 1: Cloudflare's native Rate Limiting binding (preferred). Declared as
-// `[[ratelimits]]` in wrangler.toml; runs in the runtime, so it is faster and
-// cannot be raced by a slow KV write. Caveats:
-//   * It counts PER COLO: "30 per minute" is 30 in each location. Accepted: the
-//     realistic attacker on a login form is one host in one place.
-//   * Cloudflare calls it permissive and eventually consistent.
-//   * It answers `{ success }` only: no count, no reset time (see `rateLimit`).
+// The count: one row per caller, endpoint and window in `rate_limits`, moved by
+// a single `INSERT … ON CONFLICT DO UPDATE SET count = count + 1 RETURNING
+// count`. D1 runs writes one at a time, so the number that comes back is exact
+// however many requests arrive together, and it is the same count in every
+// Cloudflare location. The window is fixed, not sliding (`limit` at the end of
+// one window plus `limit` at the start of the next). A blocked request still
+// counts. The row's key is a hash, so no address is kept.
+//
+// The first check: Cloudflare's Rate Limiting binding (`[[ratelimits]]` in
+// wrangler.toml). It is NOT trusted to let anything through, only to refuse:
+//   * It counts on the machine that happens to serve the request and shares
+//     that count "in the background". Measured on production in November 2026:
+//     120 requests on one kept-alive connection were stopped after 31, and 200
+//     requests on a fresh connection each were never stopped at all.
+//   * It counts per Cloudflare location, and answers `{ success }` only.
 //   * Its (limit, period) is FIXED AT DEPLOY and `limit()` takes only a key, so
-//     `chooseBackendAmong` refuses to delegate a call site whose numbers differ:
-//     asking for 20/60s and silently getting 30/60s fails nowhere visible.
+//     only a call site whose numbers equal a registered spec uses it.
+// What it is good for is refusing a flood on one connection before that flood
+// costs a D1 write each.
 //
-// Backend 2: a fixed-window counter in KV (fallback). KV can serve a stale count
-// and caps sustained writes to ~1/s per key, so a spray from many colos can
-// overshoot for a beat. The window is fixed, not sliding (`limit` at the end of
-// one window plus `limit` at the start of the next); right for a login endpoint
-// at one read and one write per request. KV is the only backend for any window
-// the binding is not configured for (300s connect code, 600s export) and where
-// no Worker env is bound.
+// This used to be "native where the numbers match, otherwise a counter in KV".
+// Both let a determined client through: the native one for the reason above,
+// and KV because read-then-write is not atomic (75 simultaneous requests were
+// counted as 10).
 
 // Explicit, not NuxtHub's auto-import: that resolves for TypeScript but is not
-// injected here at runtime, and the resulting `kv is not defined` would be
+// injected here at runtime, and the resulting `db is not defined` would be
 // swallowed by the fail-open path (see gotchas.md).
-import { kv } from '@nuxthub/kv'
+import { db } from '@nuxthub/db'
+import * as tables from '@nuxthub/db/schema'
+import { lt, sql } from 'drizzle-orm'
 import type { H3Event } from 'h3'
-import { clientIp } from './hash'
+import { clientIp, sha256Hex } from './hash'
 import { pathForLog, logEvent } from './log'
 
-/** The slice of unstorage's Storage we use — lets tests pass a Map-backed fake. */
+/** Where hits are counted. `hit` must be atomic: it is the whole of the guarantee. */
 export interface RateLimitStore {
-  get(key: string): Promise<unknown>
-  set(key: string, value: unknown, opts?: { ttl?: number }): Promise<unknown>
+  /** Counts one hit in `bucket` and returns the count including it. */
+  hit(bucket: string, expiresAt: Date): Promise<number>
 }
 
 export interface RateLimitOptions {
@@ -54,8 +63,8 @@ export interface RateLimitResult {
 }
 
 /**
- * Pure-ish limiter: counts one hit against a window and reports the verdict.
- * Takes the store explicitly so test/rate-limit.test.ts can drive it directly.
+ * Counts one hit against a window and reports the verdict. Takes the store and
+ * the clock explicitly so test/rate-limit.test.ts can drive it directly.
  */
 export async function consumeRateLimit(
   store: RateLimitStore,
@@ -63,21 +72,41 @@ export async function consumeRateLimit(
   now: number = Date.now(),
 ): Promise<RateLimitResult> {
   const window = Math.floor(now / 1000 / windowSeconds)
-  const storeKey = `ratelimit:${key}:${window}`
   const resetSeconds = (window + 1) * windowSeconds - Math.floor(now / 1000)
+  // Hashed: the key holds an address or a mailbox, and the row outlives the
+  // request until the daily purge.
+  const bucket = await sha256Hex(`ratelimit:${key}:${window}`)
+  const count = await store.hit(bucket, new Date((window + 1) * windowSeconds * 1000))
+  return { allowed: count <= limit, remaining: Math.max(0, limit - count), resetSeconds }
+}
 
-  const raw = await store.get(storeKey)
-  // A value written by another runtime can come back as a string; coerce, or
-  // NaN >= limit is false and the limit is silently off.
-  const count = typeof raw === 'number' ? raw : Number(raw ?? 0) || 0
+type RateLimitDb = Pick<typeof db, 'insert' | 'delete'>
 
-  if (count >= limit) {
-    return { allowed: false, remaining: 0, resetSeconds }
+/** The counter in D1: one statement, so two requests can never read the same count. */
+export function d1RateLimitStore(database: RateLimitDb): RateLimitStore {
+  const { rateLimits } = tables
+  return {
+    async hit(bucket, expiresAt) {
+      const [row] = await database
+        .insert(rateLimits)
+        .values({ bucket, count: 1, expiresAt })
+        .onConflictDoUpdate({
+          target: rateLimits.bucket,
+          set: { count: sql`${rateLimits.count} + 1` },
+        })
+        .returning({ count: rateLimits.count })
+      return row?.count ?? 1
+    },
   }
+}
 
-  // Remaining window plus a second of slack, so dead counters expire.
-  await store.set(storeKey, count + 1, { ttl: resetSeconds + 1 })
-  return { allowed: true, remaining: limit - count - 1, resetSeconds }
+/** Removes counters whose window is over. Run by the daily purge; returns how many went. */
+export async function pruneRateLimits(database: RateLimitDb, now: Date = new Date()) {
+  const pruned = await database
+    .delete(tables.rateLimits)
+    .where(lt(tables.rateLimits.expiresAt, now))
+    .returning({ bucket: tables.rateLimits.bucket })
+  return pruned.length
 }
 
 /** The slice of Cloudflare's `RateLimit` binding we use — lets tests fake it. */
@@ -107,7 +136,8 @@ export const NATIVE_LIMITER: NativeLimiterSpec = {
 // More native budgets: a second `[[ratelimits]]` block (own name and
 // namespace_id) plus `registerNativeLimiter({ binding, limit, windowSeconds })`
 // from a Nitro plugin, never an edit here. A `rateLimit()` whose numbers equal a
-// registered spec goes native; anything else stays on KV. Keyed by binding, so
+// registered spec gets that binding as its first check; anything else gets
+// none. Keyed by binding, so
 // re-registering replaces.
 const nativeLimiters = new Map<string, NativeLimiterSpec>([
   [NATIVE_LIMITER.binding, NATIVE_LIMITER],
@@ -144,50 +174,31 @@ export function clearNativeLimitersForTest(): void {
 }
 
 /**
- * The unsubscribe surface's budget. Deliberately NOT NATIVE_LIMITER's numbers:
- * 30/60 matched the binding exactly, which silently put this surface on the
- * per-colo native limiter (its realistic caller is a mail provider fanning out
- * across many colos) and tied it to any retune of the auth budget. 60/120s keeps
- * the rate but is unmatchable (120 is not 10 or 60), so it stays on KV, counted
- * globally.
+ * The unsubscribe surface's budget. Deliberately NOT NATIVE_LIMITER's numbers,
+ * so the native first check never sees it: its realistic caller is a mail
+ * provider fanning out across many locations, and a retune of the auth budget
+ * should not move it.
  */
 export const UNSUBSCRIBE_LIMITER = { name: 'email-unsubscribe', limit: 60, windowSeconds: 120 }
-
-/** Why a call site fell back to KV. Reported once per call site, per isolate. */
-export type KvFallbackReason = 'binding-absent' | 'window-mismatch' | 'limit-mismatch'
-
-export type BackendChoice =
-  | { backend: 'native'; native: NativeRateLimiter }
-  | { backend: 'kv'; reason: KvFallbackReason }
 
 /** Resolved native bindings, by binding name. */
 export type NativeLimiters = Readonly<Record<string, NativeRateLimiter>>
 
 /**
- * Which backend may serve this request: exact match on BOTH numbers, or KV. A
- * binding configured 30/60s cannot be asked for 20/60s, so routing a 20/60s
- * handler through it would enforce 30 while `X-RateLimit-Limit: 20` went out.
- * "Use it when the binding is stricter" has the same flaw reversed. To move a
- * call site onto a binding, give it a registered spec's numbers.
- *
- * `natives` are the bindings this Worker actually has, by name; a matching spec
- * whose binding is missing falls back to KV with `binding-absent`.
+ * The native limiter that may give this call site its first check: one whose
+ * numbers equal the call site's on BOTH counts, and whose binding this Worker
+ * has. A binding configured 30/60s cannot be asked for 20/60s, so anything
+ * else gets none and goes straight to the count.
  */
-export function chooseBackendAmong(
+export function nativeFor(
   natives: NativeLimiters | undefined,
   opts: Pick<RateLimitOptions, 'limit' | 'windowSeconds'>,
-): BackendChoice {
-  if (!natives || Object.keys(natives).length === 0) {
-    return { backend: 'kv', reason: 'binding-absent' }
-  }
-  const specs = getNativeLimiters()
-  const match = specs.find((s) => s.windowSeconds === opts.windowSeconds && s.limit === opts.limit)
-  if (match) {
-    const native = natives[match.binding]
-    return native ? { backend: 'native', native } : { backend: 'kv', reason: 'binding-absent' }
-  }
-  const sameWindow = specs.some((s) => s.windowSeconds === opts.windowSeconds)
-  return { backend: 'kv', reason: sameWindow ? 'limit-mismatch' : 'window-mismatch' }
+): NativeRateLimiter | undefined {
+  if (!natives) return undefined
+  const match = getNativeLimiters().find(
+    (spec) => spec.windowSeconds === opts.windowSeconds && spec.limit === opts.limit,
+  )
+  return match ? natives[match.binding] : undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -215,52 +226,49 @@ export function resolveNativeLimiters(event: H3Event): NativeLimiters | undefine
   return Object.keys(found).length > 0 ? found : undefined
 }
 
-/** What actually happened, once a backend has been picked and run. */
+/** What actually happened. */
 export interface RateLimitVerdict {
   allowed: boolean
-  /** `unavailable` means the backend threw and the request was let through. */
-  backend: 'native' | 'kv' | 'unavailable'
-  /** Requests left in this window, or null when the backend cannot say. */
+  /**
+   * What decided. `native` only ever refuses; `d1` is the count; `unavailable`
+   * means the count threw and the request was let through.
+   */
+  backend: 'native' | 'd1' | 'unavailable'
+  /** Requests left in this window, or null when the count could not be read. */
   remaining: number | null
-  /** Seconds until the caller may retry. An upper bound on the native path. */
+  /** Seconds until the caller may retry. An upper bound when `native` refused. */
   resetSeconds: number
-  /** Why the KV path was chosen — for the one-line-per-call-site log. */
-  reason?: KvFallbackReason
   /** Set only when `backend` is `unavailable`. */
   error?: string
 }
 
 /**
- * Pick a backend, spend one request against it, and normalise the answer.
+ * Spend one request: the native first check when the call site has one, then
+ * the count.
  *
- * Fails OPEN, here rather than in the H3 wrapper, so it is a tested property.
- * A throwing native binding does NOT cascade to KV: that would charge a request
- * both backends' latency exactly when the platform is unhealthy, and hide the
- * broken binding. Broken limiter: request goes through, log says so.
+ * Fails OPEN, here rather than in the H3 wrapper, so it is a tested property:
+ * an outage in abuse control must not take the product down. A native binding
+ * that throws is ignored, since the count still decides.
  */
-export async function consumeRateLimitWithFallback(
+export async function checkRateLimit(
   backends: { natives?: NativeLimiters; store: RateLimitStore },
   opts: RateLimitOptions,
   now: number = Date.now(),
 ): Promise<RateLimitVerdict> {
-  const choice = chooseBackendAmong(backends.natives, opts)
-
-  try {
-    if (choice.backend === 'native') {
-      const { success } = await choice.native.limit({ key: opts.key })
-      return {
-        allowed: success,
-        backend: 'native',
-        // Blocked means 0 left; allowed means unknown (the binding returns a
-        // boolean), and null beats an invented number.
-        remaining: success ? null : 0,
-        // No reset clock either; one full period is always enough to wait.
-        resetSeconds: opts.windowSeconds,
-      }
+  const native = nativeFor(backends.natives, opts)
+  if (native) {
+    const refused = await native
+      .limit({ key: opts.key })
+      .then(({ success }) => !success)
+      .catch(() => false)
+    // No count and no reset clock from the binding; one full period is always
+    // enough to wait.
+    if (refused) {
+      return { allowed: false, backend: 'native', remaining: 0, resetSeconds: opts.windowSeconds }
     }
-
-    const result = await consumeRateLimit(backends.store, opts, now)
-    return { ...result, backend: 'kv', reason: choice.reason }
+  }
+  try {
+    return { ...(await consumeRateLimit(backends.store, opts, now)), backend: 'd1' }
   } catch (error) {
     return {
       allowed: true,
@@ -281,33 +289,14 @@ export function getClientIp(event: H3Event): string {
   return clientIp(event) ?? 'unknown'
 }
 
-/** Backends already reported, so the line is emitted once per call site per isolate. */
-const reportedBackends = new Set<string>()
-
-/**
- * Say once per endpoint which limiter guards it, with the fallback reason. A
- * limiter that quietly is not the one you think (`kv` undefined once left every
- * request on the fail-open path) is otherwise invisible.
- */
-function reportBackend(name: string, verdict: RateLimitVerdict): void {
-  if (verdict.backend === 'unavailable' || reportedBackends.has(name)) return
-  reportedBackends.add(name)
-  logEvent('info', 'rate_limit_backend', {
-    name,
-    backend: verdict.backend,
-    ...(verdict.reason ? { reason: verdict.reason } : {}),
-  })
-}
-
 /**
  * H3 wrapper: rate-limit this request by IP, or throw 429.
  *
  *   await rateLimit(event, { name: 'login', limit: 10, windowSeconds: 60 })
  *
- * Fails OPEN: an outage in abuse control must not take the product down; the
- * failure is logged. `X-RateLimit-Limit` and `Retry-After` go out on both
- * paths; `X-RateLimit-Remaining` only when known (always on KV, on native only
- * when blocked), so a bare `Limit` means the native limiter served it.
+ * Fails OPEN: the failure is logged as `rate_limit_unavailable`.
+ * `X-RateLimit-Limit` and, when blocked, `Retry-After` go out on every path;
+ * `X-RateLimit-Remaining` whenever the count was read.
  */
 export async function rateLimit(
   event: H3Event,
@@ -315,16 +304,14 @@ export async function rateLimit(
 ): Promise<void> {
   const identifier = opts.identifier ?? getClientIp(event)
 
-  const verdict = await consumeRateLimitWithFallback(
-    { natives: resolveNativeLimiters(event), store: kv },
+  const verdict = await checkRateLimit(
+    { natives: resolveNativeLimiters(event), store: d1RateLimitStore(db) },
     {
       key: `${opts.name}:${identifier}`,
       limit: opts.limit,
       windowSeconds: opts.windowSeconds,
     },
   )
-
-  reportBackend(opts.name, verdict)
 
   if (verdict.backend === 'unavailable') {
     logEvent('warn', 'rate_limit_unavailable', { name: opts.name, error: verdict.error })

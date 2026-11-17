@@ -308,6 +308,20 @@ export const opsEvents = sqliteTable('ops_events', {
   ...timestamps,
 })
 
+// Rate-limit counters: one row per caller, endpoint and window, moved by one
+// atomic statement (server/utils/rate-limit.ts). `bucket` is a hash, so no
+// address or mailbox is kept. A row outlives its window only until the daily
+// purge.
+export const rateLimits = sqliteTable(
+  'rate_limits',
+  {
+    bucket: text('bucket').primaryKey(),
+    count: integer('count').notNull(),
+    expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  },
+  (table) => [index('rate_limits_expires_idx').on(table.expiresAt)],
+)
+
 // Type exports
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
