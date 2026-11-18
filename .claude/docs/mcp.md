@@ -151,6 +151,10 @@ Setting it up, once per fork:
    build for this Worker with `mcp/` as its root, and is safe to run again: it changes nothing
    when the configuration is already right, and `--dry-run` prints what it would send.
 
+A pull request's build runs the worker's typecheck and uploads nothing. The setup script sets
+that explicitly, because a branch build left to Cloudflare's default uploads a preview version of
+the worker bound to the production database and the production OAuth store.
+
 `mcp:build:setup` needs `CLOUDFLARE_ACCOUNT_ID` and, in `CLOUDFLARE_API_TOKEN`, a **user** API
 token with "Workers Builds Configuration: Edit" and "Workers Scripts: Read". The Builds API
 refuses account-scoped tokens, and the token `wrangler login` holds does not carry the first

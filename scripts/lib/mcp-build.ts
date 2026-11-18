@@ -17,25 +17,43 @@ export interface BuildConfig {
     root_directory?: string
     [key: string]: unknown
   }
+  /** What a build of any other branch runs. Present even when Previews are off. */
+  previews_base_config?: {
+    build_command?: string
+    deploy_command?: string
+    build_token_uuid?: string
+    root_directory?: string
+    [key: string]: unknown
+  }
   [key: string]: unknown
+}
+
+interface BuildSettings {
+  build_command: string
+  deploy_command: string
+  build_token_uuid: string
+  root_directory: string
 }
 
 export interface DesiredBuild {
   script_tag: string
   git_repository: Record<string, unknown>
-  production_settings: {
-    build_command: string
-    deploy_command: string
-    build_token_uuid: string
-    root_directory: string
-  }
+  production_settings: BuildSettings
   previews_enabled: false
+  previews_base_config: BuildSettings
 }
 
 /** Where the worker lives in the repository, and what its build runs. */
 export const MCP_ROOT = 'mcp'
 export const MCP_BUILD_COMMAND = 'bun run typecheck'
 export const MCP_DEPLOY_COMMAND = 'bun run deploy:ci'
+/**
+ * What a build of a non-production branch "deploys": nothing. Left unset,
+ * Cloudflare uploads a preview version of the worker from every pull request,
+ * bound to the production database and the production OAuth store.
+ */
+export const MCP_BRANCH_DEPLOY_COMMAND =
+  'echo "Preview uploads disabled: a branch build would run with production bindings"'
 
 /**
  * The build configuration for the MCP worker, taken from the app's.
@@ -51,29 +69,41 @@ export function desiredBuild(input: { mcpTag: string; app: BuildConfig }): Desir
       'the app Worker has no Workers Build to copy: connect it to the repository first',
     )
   }
+  const settings = {
+    build_command: MCP_BUILD_COMMAND,
+    build_token_uuid: token,
+    root_directory: MCP_ROOT,
+  }
   return {
     script_tag: input.mcpTag,
     git_repository: input.app.git_repository,
-    production_settings: {
-      build_command: MCP_BUILD_COMMAND,
-      deploy_command: MCP_DEPLOY_COMMAND,
-      build_token_uuid: token,
-      root_directory: MCP_ROOT,
-    },
+    production_settings: { ...settings, deploy_command: MCP_DEPLOY_COMMAND },
     previews_enabled: false,
+    // A pull request still gets the typecheck, as a check on the PR.
+    previews_base_config: { ...settings, deploy_command: MCP_BRANCH_DEPLOY_COMMAND },
   }
 }
 
-/** Whether an existing configuration already is the desired one. */
+const sameRoot = (a: string | undefined, b: string) => (a ?? '/').replace(/^\/|\/$/g, '') === b
+
+function sameSettings(have: BuildConfig['production_settings'] | undefined, want: BuildSettings) {
+  return (
+    have?.build_command === want.build_command &&
+    have?.deploy_command === want.deploy_command &&
+    have?.build_token_uuid === want.build_token_uuid &&
+    sameRoot(have?.root_directory, want.root_directory)
+  )
+}
+
+/** Whether an existing configuration already is the desired one. Cloudflare spells the root `/mcp`. */
 export function isCurrent(existing: BuildConfig | null, want: DesiredBuild): boolean {
   if (!existing) return false
-  const have = existing.production_settings ?? {}
-  const settings = want.production_settings
+  // Compared field by field: Cloudflare adds its own (`grant_id`, timestamps).
+  const repository = existing.git_repository ?? {}
   return (
-    JSON.stringify(existing.git_repository) === JSON.stringify(want.git_repository) &&
-    have.build_command === settings.build_command &&
-    have.deploy_command === settings.deploy_command &&
-    have.build_token_uuid === settings.build_token_uuid &&
-    (have.root_directory ?? '/').replace(/^\/|\/$/g, '') === settings.root_directory
+    Object.entries(want.git_repository).every(([key, value]) => repository[key] === value) &&
+    existing.previews_enabled === false &&
+    sameSettings(existing.production_settings, want.production_settings) &&
+    sameSettings(existing.previews_base_config, want.previews_base_config)
   )
 }

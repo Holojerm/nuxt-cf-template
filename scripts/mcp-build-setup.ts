@@ -89,16 +89,13 @@ if (dryRun) {
   console.info(
     `mcp:build:setup — would ${have ? 'update' : 'create'} "${mcpName}"'s Workers Build:`,
   )
-  console.info(
-    JSON.stringify(
-      {
-        ...want,
-        production_settings: { ...want.production_settings, build_token_uuid: "(the app's)" },
-      },
-      null,
-      2,
-    ),
+  // The token's id is the app's own and says nothing a reader needs.
+  const shown = JSON.stringify(
+    want,
+    (key, value) => (key === 'build_token_uuid' ? "(the app's)" : value),
+    2,
   )
+  console.info(shown)
   process.exit(0)
 }
 

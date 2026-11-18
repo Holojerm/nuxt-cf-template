@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import mcpPackage from '../mcp/package.json'
 import {
+  MCP_BRANCH_DEPLOY_COMMAND,
   MCP_BUILD_COMMAND,
   MCP_DEPLOY_COMMAND,
   MCP_ROOT,
@@ -36,7 +37,25 @@ describe('the MCP worker’s own Workers Build', () => {
         root_directory: MCP_ROOT,
       },
       previews_enabled: false,
+      previews_base_config: {
+        build_command: MCP_BUILD_COMMAND,
+        deploy_command: MCP_BRANCH_DEPLOY_COMMAND,
+        build_token_uuid: 'token-1',
+        root_directory: MCP_ROOT,
+      },
     })
+  })
+
+  it('never uploads from a branch build', () => {
+    // A pull request's build would otherwise publish a preview of the worker
+    // bound to the production database.
+    const { previews_base_config: branch, previews_enabled } = desiredBuild({
+      mcpTag: 't',
+      app: APP,
+    })
+    expect(previews_enabled).toBe(false)
+    expect(branch.deploy_command).toMatch(/^echo /)
+    expect(branch.deploy_command).not.toMatch(/wrangler|deploy:ci/)
   })
 
   it('runs commands the worker’s package actually has', () => {
@@ -53,22 +72,40 @@ describe('the MCP worker’s own Workers Build', () => {
     expect(() => desiredBuild({ mcpTag: 'tag-mcp', app: unconnected })).toThrow(/connect it/)
   })
 
-  it('knows when nothing needs changing, however the root is spelled', () => {
+  it('knows when nothing needs changing, however Cloudflare spells it back', () => {
     const want = desiredBuild({ mcpTag: 'tag-mcp', app: APP })
-    const same = { git_repository: REPO, production_settings: { ...want.production_settings } }
-    expect(isCurrent(same, want)).toBe(true)
-    expect(
-      isCurrent(
-        { ...same, production_settings: { ...same.production_settings, root_directory: '/mcp/' } },
-        want,
-      ),
-    ).toBe(true)
+    // What a GET returns: extra fields, and the root as `/mcp`.
+    const stored: BuildConfig = {
+      git_repository: { ...REPO, grant_id: null },
+      production_settings: {
+        ...want.production_settings,
+        root_directory: '/mcp',
+        path_includes: ['*'],
+      },
+      previews_enabled: false,
+      previews_base_config: { ...want.previews_base_config, root_directory: '/mcp' },
+    }
+    expect(isCurrent(stored, want)).toBe(true)
     expect(isCurrent(null, want)).toBe(false)
     expect(
       isCurrent(
-        { ...same, production_settings: { ...same.production_settings, deploy_command: 'x' } },
+        { ...stored, production_settings: { ...stored.production_settings, deploy_command: 'x' } },
         want,
       ),
     ).toBe(false)
+    // A branch build that uploads is drift, and the one worth catching.
+    expect(
+      isCurrent(
+        {
+          ...stored,
+          previews_base_config: {
+            ...stored.previews_base_config,
+            deploy_command: 'bun run deploy',
+          },
+        },
+        want,
+      ),
+    ).toBe(false)
+    expect(isCurrent({ ...stored, previews_enabled: true }, want)).toBe(false)
   })
 })
