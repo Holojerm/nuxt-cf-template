@@ -176,7 +176,7 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
    - **API token**: the token Workers Builds generates has no D1 permission. Under **My
      Profile → API Tokens**, edit that token and add **Account → D1 → Edit**. Without it,
      every production deploy fails at the migrate step.
-4. Under **Build Variables and Secrets**, add `NUXT_APP_SECRET` and `NUXT_SESSION_PASSWORD` (mark both secret).
+4. Under **Build Variables and Secrets**, add `NUXT_SESSION_PASSWORD` (mark it secret). `NUXT_APP_SECRET` is a Worker secret only; the build does not read it.
 5. Enable **non-production branch builds** (Settings → Build → Branch control) so every PR branch gets the `bun run ci` check.
 6. If you re-enable branch uploads for preview URLs, point those builds at the preview
    resources rather than production's: add the build variable `CLOUDFLARE_ENV=preview`
