@@ -58,6 +58,7 @@
     "mcp:dev": "bun run --cwd mcp dev",
     "mcp:typecheck": "bun run --cwd mcp typecheck",
     "mcp:deploy": "bun run --cwd mcp deploy",
+    "mcp:build:setup": "bun run scripts/mcp-build-setup.ts",
     "mcp:check": "bun run scripts/check-mcp.ts",
     "mcp:pack": "bun run scripts/mcp-pack.ts",
     "mcp:publish": "bun run scripts/mcp-publish.ts",

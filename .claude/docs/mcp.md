@@ -132,6 +132,33 @@ The registry verifies the namespace, not the URL. A domain namespace is what let
 
 During submission the portal issues a token and fetches it from `https://<mcp-host>/.well-known/openai-apps-challenge`. Put it in `mcp/wrangler.jsonc › vars.OPENAI_APPS_CHALLENGE` and run `bun run mcp:deploy`. The route returns the token alone, and 404s while the var is empty. It is not a secret: the route publishes it.
 
+## Deploying the worker
+
+The worker has a Workers Build of its own, separate from the app's, because one build can deploy
+only its own Worker ([gotchas.md](gotchas.md)). On every push to the production branch Cloudflare
+builds it from `mcp/` and runs `bun run deploy:ci` there, which:
+
+1. refuses if the build belongs to another Worker (`mcp/scripts/guard-deploy.ts`);
+2. waits, up to ten minutes, until the app's migrations are applied to the shared D1
+   (`mcp/scripts/wait-for-migrations.ts`). The app's build is the one that migrates, and both builds
+   start on the same push;
+3. runs `wrangler deploy`.
+
+Setting it up, once per fork:
+
+1. `bun run mcp:deploy` from a machine, so the Worker exists.
+2. `bun run mcp:build:setup`. It copies the app's repository connection and build token to a
+   build for this Worker with `mcp/` as its root, and is safe to run again: it changes nothing
+   when the configuration is already right, and `--dry-run` prints what it would send.
+
+`mcp:build:setup` needs `CLOUDFLARE_ACCOUNT_ID` and, in `CLOUDFLARE_API_TOKEN`, a **user** API
+token with "Workers Builds Configuration: Edit" and "Workers Scripts: Read". The Builds API
+refuses account-scoped tokens, and the token `wrangler login` holds does not carry the first
+permission.
+
+The build has no watch paths on purpose: a worker left behind an app deploy reads a schema that
+has moved, and a rebuild that changes nothing costs seconds.
+
 ## Adding a tool
 
 1. Register it in `mcp/src/server.ts` with the full declaration above. Start the handler with `loadAuthorizedUser(env)`, as the two shipped tools do.
