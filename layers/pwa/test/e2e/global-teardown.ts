@@ -1,5 +1,6 @@
 // Runs before core's teardown, which deletes the e2e-* users: the push
-// subscriptions this layer's spec stored name those users, so they go first.
+// subscriptions and idempotency keys this layer's specs stored name those
+// users, so they go first.
 import { DatabaseSync } from 'node:sqlite'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -14,6 +15,9 @@ export default function globalTeardown(): void {
   try {
     db.exec(
       "DELETE FROM push_subscriptions WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'e2e-%')",
+    )
+    db.exec(
+      "DELETE FROM pwa_idempotency_keys WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'e2e-%')",
     )
   } finally {
     db.close()

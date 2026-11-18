@@ -1,11 +1,13 @@
 // What the pwa layer contributes to core: account deletion removes the
-// person's push subscriptions, and the data export lists them. Registered by
+// person's push subscriptions and idempotency keys, the data export lists the
+// subscriptions, and the purge task sweeps old keys. Registered by
 // server/plugins/pwa.ts; tests call registerPwaExtensions() directly.
 
 import { count, eq } from 'drizzle-orm'
 
 import * as tables from '../db/schema'
-import { registerAccountContributor } from '#server/utils/extensions'
+import { registerAccountContributor, registerPurgeContributor } from '#server/utils/extensions'
+import { purgeIdempotencyKeys } from './idempotency-keys'
 import { listPushSubscriptions } from './push-subscriptions'
 
 export interface AccountExportPushSubscription {
@@ -44,5 +46,25 @@ export function registerPwaExtensions(): void {
         lastSuccessAt: row.lastSuccessAt?.toISOString() ?? null,
       }))
     },
+  })
+  // Not in the export: a key is the client's own random id, and the answer
+  // stored under it repeats something the app's own section already lists.
+  registerAccountContributor({
+    key: 'idempotencyKeys',
+    async countForDeletion(db, userId) {
+      const [row] = await db
+        .select({ total: count() })
+        .from(tables.idempotencyKeys)
+        .where(eq(tables.idempotencyKeys.userId, userId))
+      return row?.total ?? 0
+    },
+    deletionStatements: (db, userId) => [
+      db.delete(tables.idempotencyKeys).where(eq(tables.idempotencyKeys.userId, userId)),
+    ],
+  })
+
+  registerPurgeContributor({
+    key: 'idempotencyKeys',
+    run: (db, options) => purgeIdempotencyKeys(db, options),
   })
 }
