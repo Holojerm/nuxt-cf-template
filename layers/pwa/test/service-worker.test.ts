@@ -1,120 +1,32 @@
-// The worker's handlers against a fake scope. The real thing, in a real
-// browser with the network cut, is test/e2e/pwa.spec.ts.
+// The worker's handlers against a fake scope (test/lib/fake-worker-scope.ts),
+// as they are with no offline routes named. What an app that names some gets
+// is service-worker-offline.test.ts; the real thing, in a real browser with
+// the network cut, is test/e2e/.
 
 import { describe, expect, it } from 'vitest'
 
-import {
-  renderServiceWorker,
-  serviceWorker,
-  type ServiceWorkerScope,
-} from '../server/utils/service-worker'
+import { renderServiceWorker } from '../server/utils/service-worker'
+import { fakeIndexedDb } from './lib/fake-indexeddb'
+import { fakeScope, ORIGIN, response } from './lib/fake-worker-scope'
 
-const CONFIG = {
-  cachePrefix: 'pwa-offline-',
+const OPTIONS = {
   version: 'b2',
   offlineUrl: '/offline',
   appName: 'My App',
   homeUrl: '/',
   iconUrl: '/icon-192.png',
-}
-const ORIGIN = 'https://app.example'
-
-interface Shown {
-  title: string
-  options: { body: string; icon: string; badge: string; data: { url: string } }
-}
-
-type Listener = (event: never) => void
-
-function fakeScope(
-  options: { online?: boolean; caches?: Record<string, string[]>; windows?: string[] } = {},
-) {
-  const listeners = new Map<string, Listener>()
-  const shown: Shown[] = []
-  const focused: string[] = []
-  const opened: string[] = []
-  const caches = new Map(Object.entries(options.caches ?? {}).map(([k, v]) => [k, new Set(v)]))
-  const calls: string[] = []
-  const scope: ServiceWorkerScope = {
-    addEventListener: (type: string, listener: Listener) => void listeners.set(type, listener),
-    caches: {
-      open: async (name) => {
-        const entries = caches.get(name) ?? caches.set(name, new Set()).get(name)!
-        return {
-          add: async (url) => void entries.add(url),
-          match: async (url) => (entries.has(url) ? `cached:${url}` : undefined),
-        }
-      },
-      keys: async () => [...caches.keys()],
-      delete: async (name) => caches.delete(name),
-    },
-    fetch: async () => {
-      if (options.online === false) throw new TypeError('Failed to fetch')
-      return 'network'
-    },
-    skipWaiting: async () => void calls.push('skipWaiting'),
-    clients: {
-      claim: async () => void calls.push('claim'),
-      matchAll: async () =>
-        (options.windows ?? []).map((url) => ({ url, focus: async () => void focused.push(url) })),
-      openWindow: async (url) => void opened.push(url),
-    },
-    registration: {
-      navigationPreload: { enable: async () => void calls.push('preload') },
-      showNotification: async (title, shownOptions) =>
-        void shown.push({ title, options: shownOptions }),
-    },
-    location: { href: `${ORIGIN}/sw.js`, origin: ORIGIN },
-  }
-  serviceWorker(scope, CONFIG)
-
-  /** Fire a lifecycle event and wait for what it handed to waitUntil. */
-  const lifecycle = async (type: 'install' | 'activate') => {
-    let work: Promise<unknown> = Promise.resolve()
-    listeners.get(type)!({ waitUntil: (promise: Promise<unknown>) => (work = promise) } as never)
-    await work
-  }
-  /** Fire a fetch; resolves to the response, or to `undefined` when the worker let it pass. */
-  const fetch = (mode: string, preloadResponse?: Promise<unknown>) => {
-    let response: Promise<unknown> | undefined
-    listeners.get('fetch')!({
-      request: { mode },
-      preloadResponse,
-      respondWith: (promise: Promise<unknown>) => (response = promise),
-    } as never)
-    return response
-  }
-  /** Fire a push carrying `data` (a string is sent as is, anything else as JSON; undefined = no payload). */
-  const push = async (data?: unknown) => {
-    let work: Promise<unknown> = Promise.resolve()
-    listeners.get('push')!({
-      data:
-        data === undefined
-          ? null
-          : { json: () => (typeof data === 'string' ? JSON.parse(data) : data) },
-      waitUntil: (promise: Promise<unknown>) => (work = promise),
-    } as never)
-    await work
-  }
-  /** Click a notification whose data carries `url`; resolves to whether it was closed. */
-  const click = async (url?: unknown) => {
-    let work: Promise<unknown> = Promise.resolve()
-    let closed = false
-    listeners.get('notificationclick')!({
-      notification: { close: () => (closed = true), data: url === undefined ? undefined : { url } },
-      waitUntil: (promise: Promise<unknown>) => (work = promise),
-    } as never)
-    await work
-    return closed
-  }
-  return { caches, calls, lifecycle, fetch, push, click, shown, focused, opened }
+  offlineRoutes: [],
+  offlineApi: [],
+  assetPrefixes: ['/_nuxt/'],
+  assetsHashed: true,
+  cacheLimits: { pages: 30, data: 100, assets: 400 },
 }
 
 describe('install and activate', () => {
   it('caches the offline page under this deploy and takes over', async () => {
     const worker = fakeScope()
     await worker.lifecycle('install')
-    expect([...worker.caches.get('pwa-offline-b2')!]).toEqual(['/offline'])
+    expect([...worker.caches.get('pwa-offline-b2')!.keys()]).toEqual(['/offline'])
     expect(worker.calls).toEqual(['skipWaiting'])
   })
 
@@ -127,35 +39,47 @@ describe('install and activate', () => {
   })
 })
 
-describe('fetch', () => {
-  it('leaves everything that is not a navigation alone', () => {
+describe('fetch, with no offline routes named', () => {
+  it('leaves everything that is not a navigation alone', async () => {
     const worker = fakeScope()
-    expect(worker.fetch('cors')).toBeUndefined()
-    expect(worker.fetch('no-cors')).toBeUndefined()
+    expect(await worker.fetch('/api/thing')).toBeUndefined()
+    expect(await worker.fetch('/_nuxt/entry.js', { mode: 'no-cors' })).toBeUndefined()
+    expect(worker.caches.size).toBe(0)
   })
 
-  it('answers a navigation from the network', async () => {
+  it('answers a navigation from the network and keeps nothing', async () => {
     const worker = fakeScope()
-    await expect(worker.fetch('navigate')).resolves.toBe('network')
+    expect(await worker.navigate('/dashboard')).toBe('network:/dashboard')
+    expect(worker.caches.size).toBe(0)
   })
 
   it('prefers the preloaded response', async () => {
     const worker = fakeScope()
-    await expect(worker.fetch('navigate', Promise.resolve('preloaded'))).resolves.toBe('preloaded')
+    expect(await worker.navigate('/dashboard', Promise.resolve(response('preloaded')))).toBe(
+      'preloaded',
+    )
   })
 
   it('answers with the offline page when the network gives nothing', async () => {
-    const worker = fakeScope({ online: false })
+    const worker = fakeScope({
+      network: () => {
+        throw new TypeError('Failed to fetch')
+      },
+    })
     await worker.lifecycle('install')
-    await expect(worker.fetch('navigate')).resolves.toBe('cached:/offline')
-    await expect(
-      worker.fetch('navigate', Promise.reject(new TypeError('Failed to fetch'))),
-    ).resolves.toBe('cached:/offline')
+    expect(await worker.navigate('/dashboard')).toBe('cached:/offline')
+    expect(
+      await worker.navigate('/dashboard', Promise.reject(new TypeError('Failed to fetch'))),
+    ).toBe('cached:/offline')
   })
 
   it('fails as the browser would when there is no offline page to show', async () => {
-    const worker = fakeScope({ online: false })
-    await expect(worker.fetch('navigate')).rejects.toThrow('Failed to fetch')
+    const worker = fakeScope({
+      network: () => {
+        throw new TypeError('Failed to fetch')
+      },
+    })
+    await expect(worker.navigate('/dashboard')).rejects.toThrow('Failed to fetch')
   })
 })
 
@@ -221,32 +145,60 @@ describe('notificationclick', () => {
 })
 
 describe('renderServiceWorker', () => {
-  it('calls the worker with the scope and the filled-in config', () => {
-    const script = renderServiceWorker({
-      version: 'b2',
-      offlineUrl: '/app/offline',
-      appName: 'My App',
-      homeUrl: '/app/',
-      iconUrl: '/app/icon-192.png',
-    })
+  it('calls the worker with the scope, the filled-in config and the outbox', () => {
+    const script = renderServiceWorker({ ...OPTIONS, offlineUrl: '/app/offline', homeUrl: '/app/' })
     expect(script.startsWith('const __name = (fn) => fn;\n(function serviceWorker(')).toBe(true)
     expect(script).toContain(
-      '(self, {"cachePrefix":"pwa-offline-","version":"b2","offlineUrl":"/app/offline","appName":"My App","homeUrl":"/app/","iconUrl":"/app/icon-192.png"})',
+      '(self, {"cachePrefix":"pwa-offline-","personalPrefix":"pwa-personal-","outboxTag":"pwa-outbox","version":"b2","offlineUrl":"/app/offline","appName":"My App","homeUrl":"/app/",',
     )
+    expect(script.trimEnd().endsWith('})')).toBe(true)
+    expect(script).toContain(', function outbox(')
   })
 
-  it('evaluates as a script with nothing but `self` in reach', () => {
-    const script = renderServiceWorker({
-      version: 'b2',
-      offlineUrl: '/offline',
-      appName: 'My App',
-      homeUrl: '/',
-      iconUrl: '/icon-192.png',
-    })
-    const registered: string[] = []
-    const self = { addEventListener: (type: string) => void registered.push(type) }
+  // `new Function` gives the script no scope but the global one, as the
+  // browser does: anything either function closed over is a ReferenceError here.
+  it('evaluates as a script with nothing but `self` in reach, the outbox included', async () => {
+    const script = renderServiceWorker(OPTIONS)
+    const listeners = new Map<string, (event: never) => void>()
+    const sent: string[] = []
+    const indexedDB = fakeIndexedDb()
+    const self = {
+      addEventListener: (type: string, listener: (event: never) => void) =>
+        void listeners.set(type, listener),
+      location: { href: `${ORIGIN}/sw.js`, origin: ORIGIN },
+      indexedDB,
+      fetch: async (url: string) => {
+        sent.push(url)
+        return response('{}')
+      },
+    }
     // eslint-disable-next-line no-new-func -- the browser does the same with this string
     new Function('self', script)(self)
-    expect(registered).toEqual(['install', 'activate', 'fetch', 'push', 'notificationclick'])
+    expect([...listeners.keys()]).toEqual([
+      'install',
+      'activate',
+      'fetch',
+      'message',
+      'sync',
+      'push',
+      'notificationclick',
+    ])
+
+    // The serialised outbox, run by the serialised worker.
+    const { outbox } = await import('../shared/utils/outbox')
+    await outbox({ indexedDB, fetch: self.fetch as never }).add({
+      id: 'key-1',
+      owner: 'user-ada',
+      url: '/api/sessions',
+      method: 'POST',
+      body: { reps: 5 },
+    })
+    let work: Promise<unknown> = Promise.resolve()
+    listeners.get('sync')!({
+      tag: 'pwa-outbox',
+      waitUntil: (promise: Promise<unknown>) => (work = promise),
+    } as never)
+    await work
+    expect(sent).toEqual(['/api/sessions'])
   })
 })

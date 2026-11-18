@@ -7,23 +7,23 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { generateBrowserKeys } from './lib/push-receiver'
 
-const SOURCES = import.meta.glob<string>('../server/api/**/*.ts', {
+const SOURCES = import.meta.glob<string>('../server/api/pwa/push/*.ts', {
   query: '?raw',
   import: 'default',
   eager: true,
 })
 const ROUTES = Object.entries(SOURCES).map(([file, source]) => ({
-  route: file.replace('../server/api/', ''),
+  route: file.replace('../server/api/pwa/push/', ''),
   source,
 }))
 
-describe('every route', () => {
+describe('every push route', () => {
   it('is one of the four this file knows about', () => {
     expect(ROUTES.map((entry) => entry.route).sort()).toEqual([
-      'pwa/push/key.get.ts',
-      'pwa/push/status.post.ts',
-      'pwa/push/subscribe.post.ts',
-      'pwa/push/unsubscribe.post.ts',
+      'key.get.ts',
+      'status.post.ts',
+      'subscribe.post.ts',
+      'unsubscribe.post.ts',
     ])
   })
 

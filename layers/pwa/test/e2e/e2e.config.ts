@@ -1,3 +1,6 @@
+// What the one shared dev server needs for this layer's specs: the example
+// page named as an offline route, and VAPID keys.
+//
 // Push needs VAPID keys before any of its routes exist. The browser suites
 // make a pair for the one dev server they share, so the settings page shows
 // the notifications switch and the spec here can drive it. Made fresh per run:
@@ -15,6 +18,9 @@ export default {
     // nuxt.config and cannot edit a vendored spec, so the suites pin the defaults.
     NUXT_PUBLIC_PWA_OFFLINE_TITLE: 'You are offline',
     NUXT_PUBLIC_PWA_OFFLINE_RETRY: 'Try again',
+    // offline.spec.ts: the dev-only example page opens offline, with its data.
+    NUXT_PUBLIC_PWA_OFFLINE_ROUTES: '["/pwa-example"]',
+    NUXT_PUBLIC_PWA_OFFLINE_API: '["/api/pwa/example"]',
   },
   globalTeardown: ['./global-teardown.ts'],
 } satisfies LayerE2e
