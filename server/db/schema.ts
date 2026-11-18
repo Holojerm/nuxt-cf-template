@@ -69,9 +69,10 @@ export const users = sqliteTable(
 )
 
 // MCP connect codes — short-lived, single-use codes bridging the app's session
-// auth to the MCP worker's OAuth flow (device-code style). Minted for the
-// signed-in user by POST /api/mcp/connect-code; redeemed (by hash) on the MCP
-// worker's /authorize page. Only the SHA-256 hash is stored.
+// auth to the MCP worker's OAuth flow. Minted for the signed-in user by
+// POST /api/mcp/connect-code, bound to the sign-in the worker started, and
+// redeemed (by hash) at the worker's /authorize/callback. The browser carries
+// the code across; nobody types it. Only the SHA-256 hash is stored.
 export const mcpConnectCodes = sqliteTable(
   'mcp_connect_codes',
   {

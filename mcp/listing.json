@@ -14,7 +14,7 @@
     "Check which account an AI client is connected as",
     "Confirm a subscription is active before starting paid work"
   ],
-  "prerequisites": "An account. Generate a single-use connect code on the account page, then paste it into the authorization screen your AI client opens.",
+  "prerequisites": "An account. Add the server address in your AI client, sign in when it opens the app, and approve the connection.",
   "commerce": "",
   "links": {
     "docs": "",
