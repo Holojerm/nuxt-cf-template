@@ -20,6 +20,7 @@ import type { APIRequestContext, APIResponse, Page } from '@playwright/test'
 
 import { playwrightPort } from '../../../../scripts/worktree-port'
 import { expect as baseExpect, test as base } from '../../../../test/e2e/fixtures'
+import { workerAddressHeaders } from '../../../../test/lib/worker-address'
 import { billingE2e } from './fork-config'
 import { E2E_PADDLE_PRICES } from './paddle-prices'
 import { signPaddleWebhook } from './sign'
@@ -193,6 +194,7 @@ export const test = base.extend<
               if (cached) return cached
               const request = await playwright.request.newContext({
                 baseURL: `http://localhost:${playwrightPort()}`,
+                extraHTTPHeaders: workerAddressHeaders(),
               })
               const { userId } = await signIn(request, { email, name })
               const session = {

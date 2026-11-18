@@ -24,40 +24,21 @@ const ACCOUNTS = {
   grace: uniqueEmail('offline-grace'),
 }
 
-type Cookies = Awaited<ReturnType<BrowserContext['cookies']>>
-const sessions = new Map<string, { id: string; cookies: Cookies }>()
-
 const test = base.extend<{
   /** Make this test's browser `who`: their session cookie replaces whoever was there. */
   signIn: (who: keyof typeof ACCOUNTS) => Promise<SignedIn>
 }>({
-  signIn: async ({ context }, use) => {
+  signIn: async ({ signInCache, context }, use) => {
     await use(async (who) => {
-      const email = ACCOUNTS[who]
-      const known = sessions.get(who)
-      if (known) {
-        await context.addCookies(known.cookies)
-        return { id: known.id, email }
-      }
-      // Not the shared `signInCache`: its requests come from the address every
-      // suite shares.
-      const response = await context.request.post('/api/auth/dev', {
-        data: { email, name: who },
-      })
-      expect(response.ok(), `dev sign-in for ${email}: ${response.status()}`).toBe(true)
-      const { user } = (await response.json()) as { user: { id: string } }
-      sessions.set(who, { id: user.id, cookies: await context.cookies() })
-      return { id: user.id, email }
+      const { userId, storageState } = await signInCache(ACCOUNTS[who], who)
+      await context.addCookies(storageState.cookies)
+      return { id: userId, email: ACCOUNTS[who] }
     })
   },
 })
 
 // Every other suite runs with service workers blocked (playwright.config.ts).
-// And from one address, which the sign-in limits count by: a full run of the
-// suites already spends most of a minute's allowance (30 requests to
-// /api/auth/), so this file's browser is at an address of its own (from the
-// range kept for documentation) and neither takes from that nor waits on it.
-test.use({ serviceWorkers: 'allow', extraHTTPHeaders: { 'cf-connecting-ip': '203.0.113.18' } })
+test.use({ serviceWorkers: 'allow' })
 test.describe.configure({ mode: 'default' })
 
 const NOTES = '/api/pwa/example/notes'

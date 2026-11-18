@@ -15,10 +15,10 @@
 // ── Why sign-in is cached per worker ──────────────────────────────────────
 // POST /api/auth/dev is rate-limited (20/60s — see server/api/auth/dev.post.ts)
 // and sits behind the whole-`/api/auth/` surface limit too
-// (server/middleware/auth.ts). In local dev every request shares one IP
-// bucket (no `cf-connecting-ip` outside Cloudflare), so re-signing in for
-// every test would burn that budget for no reason — the session cookie
-// doesn't need to change just because the entitlement behind it does.
+// (server/middleware/auth.ts). Each worker has those budgets to itself
+// (test/lib/worker-address.ts), but re-signing in for every test would still
+// burn its own for no reason — the session cookie doesn't need to change just
+// because the entitlement behind it does.
 // `signInAs` below is backed by a worker-scoped cache keyed by email: the
 // POST happens at most once per (worker, email) pair, and every later call
 // for that same email in that worker reuses the storageState it captured the
@@ -29,6 +29,7 @@ import type { APIRequestContext, BrowserContext, Page } from '@playwright/test'
 
 import { playwrightPort } from '../../scripts/worktree-port'
 import { recordConsole } from '../lib/console'
+import { workerAddressHeaders } from '../lib/worker-address'
 
 // Playwright's built-in `baseURL` fixture is TEST-scoped, so a WORKER-scoped
 // fixture (apiRequest, below) can't depend on it — Playwright rejects that
@@ -123,7 +124,12 @@ interface TestFixtures {
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   apiRequest: [
     async ({ playwright }, use) => {
-      const context = await playwright.request.newContext({ baseURL: HOST })
+      // Not a context Playwright builds from the config's `use`, so it names
+      // the worker's address itself.
+      const context = await playwright.request.newContext({
+        baseURL: HOST,
+        extraHTTPHeaders: workerAddressHeaders(),
+      })
       await use(context)
       await context.dispose()
     },

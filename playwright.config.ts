@@ -31,6 +31,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 import { playwrightPort } from './scripts/worktree-port'
 import { discoverLayerE2e } from './test/e2e/layers'
+import { workerAddressHeaders } from './test/lib/worker-address'
 
 // Layers that ship browser specs of their own (billing's money path) contribute
 // a project, server environment and warm-ups from layers/<name>/test/e2e/. A repo
@@ -89,6 +90,10 @@ export default defineConfig({
 
   use: {
     baseURL: HOST,
+    // Each worker calls from an address of its own, so no suite spends another's
+    // sign-in allowance. Per worker because each one imports this file again;
+    // see test/lib/worker-address.ts.
+    extraHTTPHeaders: workerAddressHeaders(),
     // layers/pwa registers a worker that answers navigations. Only its own
     // spec lets it in, so no other suite's requests pass through one.
     serviceWorkers: 'block',

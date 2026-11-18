@@ -96,9 +96,8 @@ async function withoutBrowserInstallOffer(page: Page): Promise<void> {
 test.use({ serviceWorkers: 'allow' })
 
 // One account for the whole file, and one worker, so the file costs two dev
-// sign-ins. Every local request shares one address and the /api/auth/ surface
-// allows 30 a minute: a sign-in per test here was enough to get another
-// layer's spec refused. Tests stay apart by using their own endpoints.
+// sign-ins: the /api/auth/ surface allows a worker 30 requests a minute
+// (test/lib/worker-address.ts). Tests stay apart by using their own endpoints.
 test.describe.configure({ mode: 'default' })
 const EMAIL = uniqueEmail('device')
 const NAME = 'Ada'
