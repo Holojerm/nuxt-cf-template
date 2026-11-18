@@ -12,13 +12,15 @@ import { captureServerEvent } from '../utils/posthog'
 import { emailBranding } from '../utils/email-templates'
 import { sendEmail } from '../utils/email'
 import { getRegisteredLifecycleSteps } from '../utils/extensions'
-import { runLifecycle } from '../utils/lifecycle'
+import { runLifecycle, type LifecycleStepReport } from '../utils/lifecycle'
 import { APP_LIFECYCLE_STEPS } from '../utils/lifecycle-app-steps'
 import { TEMPLATE_LIFECYCLE_STEPS } from '../utils/lifecycle-steps'
 import { buildUnsubscribeUrl } from '../utils/unsubscribe'
 import { logEvent } from '../utils/log'
 
-export default defineTask({
+// The result type is spelled out because TypeScript infers it from the first
+// `return` alone, and this task has two shapes.
+export default defineTask<'skipped' | Record<string, LifecycleStepReport>>({
   meta: {
     name: 'lifecycle-email',
     description: 'Send the day’s lifecycle emails (activation nudge, pass expiring, app steps)',

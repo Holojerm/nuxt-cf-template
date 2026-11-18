@@ -274,9 +274,20 @@ export default defineNuxtConfig({
   // sets NUXT_TYPECHECK=false to skip it: `bun run ci` has already run
   // `bun run typecheck` by that point, so doing it again just puts vue-tsc in
   // competition with the cold Vite build for the same CI runner.
+  //
+  // tsConfig.compilerOptions reach all four generated projects (app, server,
+  // shared, node). The root tsconfig.json only references them, so an option
+  // set there applies to nothing.
   typescript: {
     strict: true,
     typeCheck: process.env.NUXT_TYPECHECK !== 'false',
+    tsConfig: {
+      compilerOptions: {
+        noUnusedLocals: true,
+        noUnusedParameters: true,
+        noImplicitReturns: true,
+      },
+    },
   },
 
   // Icons — DESIGN.md › Identity › Iconography. Every setting here exists so
