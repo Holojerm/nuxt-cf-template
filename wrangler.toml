@@ -359,13 +359,18 @@ NUXT_PUBLIC_TURNSTILE_SITE_KEY = ""
 # Secrets are per-environment too: add `--env preview` to set them on the
 # preview Worker, which starts with none of production's.
 #
-#   wrangler secret put NUXT_SESSION_PASSWORD --env preview
+#   wrangler secret put NUXT_APP_SECRET --env preview
 #
 # The list:
-#   NUXT_SESSION_PASSWORD        32+ char random string for sealed sessions (required).
-#                                Safe to rotate — signing everyone out is the
-#                                users.sessions_invalid_before watermark, not this — and
-#                                rotating it does NOT re-arm spent referral welcome
+#   NUXT_APP_SECRET              32+ char random string (required). Nuxt's appSecret;
+#                                nuxt-auth-utils seals sessions with a key derived from it,
+#                                and without it every session read 500s. Rotating it signs
+#                                everyone out (the per-user lever is the
+#                                users.sessions_invalid_before watermark).
+#   NUXT_SESSION_PASSWORD        32+ char random string (required). Not the session key:
+#                                the app's salt for unsubscribe links and IP/search hashes.
+#                                Rotating it invalidates unsubscribe links already mailed,
+#                                and does NOT re-arm spent referral welcome
 #                                trials, whose salt is a generated row in D1
 #                                (instance_secrets; see server/utils/identity.ts).
 #   NUXT_OAUTH_GITHUB_CLIENT_ID / _SECRET    GitHub sign-in

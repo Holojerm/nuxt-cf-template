@@ -75,10 +75,10 @@ export async function afterSignIn(label: string, work: () => Promise<void>): Pro
 }
 
 /**
- * Build the whole session payload, every key written explicitly. Exported
- * because `replaceUserSession` shallow-merges over the previous session (see
- * the call site), so "every top-level key of `UserSession` is written here" is
- * an invariant; test/session-payload.test.ts asserts the key set. `issuedAt`
+ * Build the whole session payload, every key written explicitly, so no key of
+ * a previous session can survive a sign-in whatever `replaceUserSession` does
+ * with it (see the call site). Exported so test/session-payload.test.ts can
+ * assert the key set. `issuedAt`
  * (seconds, D1's resolution) is what makes revocation possible: a sealed cookie
  * has no server record, so it is dated and compared against
  * `users.sessions_invalid_before`.
@@ -138,14 +138,13 @@ export async function establishSession(
   // Consumed: clear it so a stale channel does not reach the next account from this browser.
   if (created && attribution) deleteCookie(event, ATTRIBUTION_COOKIE, { path: '/' })
 
-  // `replaceUserSession` does not replace: it calls `session.clear()` (which does
-  // not touch the INCOMING Cookie header) then `session.update(data)`, which
-  // re-unseals the request cookie and shallow-merges `data` over it. Nothing
-  // leaks only because the payload writes every top-level key of `UserSession`
-  // (app/types/auth.d.ts); buildSessionPayload() and
-  // test/session-payload.test.ts keep that checkable. Still better than
-  // `setUserSession`, which deep-merges via defu and skips nulls, so a null
-  // avatarUrl would inherit the previous account's picture.
+  // `replaceUserSession` drops every key of the previous session before writing.
+  // It did not before nuxt-auth-utils 0.6 (it shallow-merged over the request
+  // cookie), so the payload still writes every top-level key of `UserSession`
+  // (app/types/auth.d.ts): buildSessionPayload() and
+  // test/session-payload.test.ts keep that checkable, whatever the module does.
+  // Never `setUserSession`, which deep-merges via defu and skips nulls, so a
+  // null avatarUrl would inherit the previous account's picture.
   await replaceUserSession(event, buildSessionPayload(user))
 
   await captureServerEvent({

@@ -115,12 +115,16 @@ them in step, including `EMAIL_QUEUE_NAME` in `server/utils/email-queue.ts`.
 cp .env.example .env
 ```
 
-Only three things are actually required to run:
+Only four things are actually required to run:
 
 ```
+NUXT_APP_SECRET=         # 32+ char random string: openssl rand -base64 32
+                         # Seals session cookies (Nuxt's appSecret). Dev makes
+                         # one up if unset; production 500s every session
+                         # read without it. Rotating it signs everyone out.
 NUXT_SESSION_PASSWORD=   # 32+ char random string: openssl rand -base64 32
-                         # Safe to rotate: sign-out-everywhere is the
-                         # users.sessions_invalid_before watermark, not this.
+                         # Not the session key, despite the name: the app's
+                         # salt for unsubscribe links and IP/search hashes.
                          # Rotating it must NOT re-arm spent referral welcome
                          # trials — that is why their salt is a generated row
                          # in D1 (instance_secrets) rather than derived from
@@ -143,10 +147,11 @@ instead; in production, no key means that endpoint honestly 503s. See Auth, belo
 
 See `.env.example` for the full list, including the exact OAuth callback URLs to register.
 
-Set the session password as a Worker secret (required for production):
+Set both secrets on the Worker (required for production):
 
 ```bash
-bunx wrangler secret put NUXT_SESSION_PASSWORD
+openssl rand -base64 32 | bunx wrangler secret put NUXT_APP_SECRET
+openssl rand -base64 32 | bunx wrangler secret put NUXT_SESSION_PASSWORD
 ```
 
 ### 4. Connect Workers Builds (CI/CD)
@@ -171,7 +176,7 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
    - **API token**: the token Workers Builds generates has no D1 permission. Under **My
      Profile → API Tokens**, edit that token and add **Account → D1 → Edit**. Without it,
      every production deploy fails at the migrate step.
-4. Under **Build Variables and Secrets**, add `NUXT_SESSION_PASSWORD` (mark it secret).
+4. Under **Build Variables and Secrets**, add `NUXT_APP_SECRET` and `NUXT_SESSION_PASSWORD` (mark both secret).
 5. Enable **non-production branch builds** (Settings → Build → Branch control) so every PR branch gets the `bun run ci` check.
 6. If you re-enable branch uploads for preview URLs, point those builds at the preview
    resources rather than production's: add the build variable `CLOUDFLARE_ENV=preview`
@@ -428,6 +433,7 @@ upload versions to it, and this is also what registers its cron trigger and queu
 
 ```bash
 bun run deploy:preview        # CLOUDFLARE_ENV=preview nuxt build && wrangler --cwd .output deploy
+wrangler secret put NUXT_APP_SECRET --env preview
 wrangler secret put NUXT_SESSION_PASSWORD --env preview
 bun run db:migrate:preview    # nothing applies migrations for you — see below
 ```
