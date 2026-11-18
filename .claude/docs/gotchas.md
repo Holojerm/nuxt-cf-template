@@ -220,6 +220,24 @@ all green. Because the rate limiter fails open by design, the only symptom was a
 Import them explicitly (`import { db } from '@nuxthub/db'`, `import { kv } from '@nuxthub/kv'`) in server utils. More generally: when a
 NuxtHub auto-import is load-bearing, check the running logs, not just the type checker.
 
+## `nuxt typecheck` checks `server/` only when the root tsconfig is solution-style
+
+Nuxt 4 generates four projects (`.nuxt/tsconfig.app.json`, `.server.json`, `.shared.json`,
+`.node.json`). `nuxt typecheck`, and the checker inside `nuxt dev` and `nuxt build`, run
+`vue-tsc -b` over all four only when the root `tsconfig.json` has `references`, `"files": []`
+and no `include`. Until 2026-11 it was `"extends": "./.nuxt/tsconfig.json"`, the legacy config
+that excludes `server/**`, so nothing under `server/` or `layers/*/server/` was ever
+typechecked and the gate stayed green. A fork shipped three scheduled tasks calling an
+auto-import NuxtHub had removed: `ReferenceError` on every run, and no backup for three months.
+
+- Keep the root `tsconfig.json` as it is. Compiler options go in `nuxt.config.ts` ›
+  `typescript.tsConfig`; set in the root file they reach no project.
+- A type augmentation both sides read (`shared/types/auth.d.ts`) lives in `shared/types/`.
+  Under `app/types/` only the app project sees it.
+- A removed auto-import is now `TS2304` in the gate, even where a test replaces the name with
+  `vi.stubGlobal`. It does not cover the case above (a name that typechecks but is not
+  injected), and nothing typechecks `test/` or `scripts/`.
+
 ## Custom `definePageMeta` keys need two opt-ins, and fail silently without them
 
 `sitemap.xml` and `llms.txt` are built from `definePageMeta({ publicPage: … })`, collected by
@@ -257,7 +275,7 @@ How each gate stays scoped — **match this when you add a gate**:
 | `lint` | `.oxlintrc.json` › `ignorePatterns` lists `.claude/**` |
 | `design:check` / `seo:check` / `brand:check` | Walk `ROOT/app`, `ROOT/app/pages`, `ROOT/content/blog`, and fixed root-relative asset paths |
 | `test` | `vitest.config.ts` › `include` is `test/**` + `server/**`, relative to the checkout |
-| `typecheck` | Nuxt's generated `.nuxt/tsconfig.*` use scoped includes (`../app/**/*`, `../server/**/*`), not a root glob |
+| `typecheck` | The root `tsconfig.json` has no files of its own, and Nuxt's generated `.nuxt/tsconfig.*` use scoped includes (`../app/**/*`, `../server/**/*`), not a root glob |
 | `test:a11y` | Per-checkout port — see below |
 | `build` | Nuxt only reads `app/`, `server/`, `shared/` |
 
