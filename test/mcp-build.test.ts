@@ -6,12 +6,16 @@ import { describe, expect, it } from 'vitest'
 import mcpPackage from '../mcp/package.json'
 import {
   MCP_BRANCH_DEPLOY_COMMAND,
+  MCP_BRANCH_TRIGGER,
   MCP_BUILD_COMMAND,
   MCP_DEPLOY_COMMAND,
   MCP_ROOT,
+  branchTriggerState,
+  desiredBranchTrigger,
   desiredBuild,
   isCurrent,
   type BuildConfig,
+  type Trigger,
 } from '../scripts/lib/mcp-build'
 
 const REPO = { provider_type: 'github', repo_id: '42', repo_name: 'my-app', branch: 'main' }
@@ -106,5 +110,68 @@ describe('the MCP worker’s own Workers Build', () => {
       ),
     ).toBe(false)
     expect(isCurrent({ ...stored, previews_enabled: true }, want)).toBe(false)
+  })
+
+  // With previews off nothing builds a pull request, so the worker has a
+  // trigger of its own for that, as the app does.
+  describe('the check on other branches', () => {
+    const connection = { repo_connection_uuid: 'conn-1' }
+    const APP_TRIGGERS: Trigger[] = [
+      {
+        trigger_uuid: 't-branches',
+        trigger_name: 'Check non-production branches (no upload)',
+        branch_includes: ['*'],
+        branch_excludes: ['main', 'ops-journal'],
+        repo_connection: connection,
+      },
+      {
+        trigger_uuid: 't-main',
+        trigger_name: 'tag-app',
+        branch_includes: ['main'],
+        branch_excludes: [],
+        repo_connection: connection,
+      },
+    ]
+    const build = desiredBuild({ mcpTag: 'tag-mcp', app: APP })
+    const want = desiredBranchTrigger({ mcpTag: 'tag-mcp', build, appTriggers: APP_TRIGGERS })
+
+    it('builds every branch the app builds, from mcp/, and uploads nothing', () => {
+      expect(want).toEqual({
+        external_script_id: 'tag-mcp',
+        repo_connection_uuid: 'conn-1',
+        build_token_uuid: 'token-1',
+        trigger_name: MCP_BRANCH_TRIGGER,
+        build_command: MCP_BUILD_COMMAND,
+        deploy_command: MCP_BRANCH_DEPLOY_COMMAND,
+        root_directory: MCP_ROOT,
+        branch_includes: ['*'],
+        branch_excludes: ['main', 'ops-journal'],
+        path_includes: ['*'],
+        path_excludes: [],
+      })
+    })
+
+    it('skips the production branch even when the app has no branch trigger', () => {
+      const onlyMain = APP_TRIGGERS.slice(1)
+      const trigger = desiredBranchTrigger({ mcpTag: 'tag-mcp', build, appTriggers: onlyMain })
+      expect(trigger.branch_excludes).toEqual(['main'])
+      expect(() => desiredBranchTrigger({ mcpTag: 'tag-mcp', build, appTriggers: [] })).toThrow(
+        /no build trigger/,
+      )
+    })
+
+    it('knows a missing trigger from a drifted one', () => {
+      const stored: Trigger = { ...want, trigger_uuid: 't-1', root_directory: '/mcp' }
+      expect(branchTriggerState([], want)).toEqual({ current: false })
+      expect(branchTriggerState([stored], want)).toEqual({ current: true, uuid: 't-1' })
+      expect(branchTriggerState([{ ...stored, deploy_command: 'bun run deploy' }], want)).toEqual({
+        current: false,
+        uuid: 't-1',
+      })
+      expect(branchTriggerState([{ ...stored, branch_excludes: [] }], want)).toEqual({
+        current: false,
+        uuid: 't-1',
+      })
+    })
   })
 })

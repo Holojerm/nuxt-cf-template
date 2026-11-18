@@ -156,9 +156,11 @@ token with "Workers Builds Configuration: Edit" and "Workers Scripts: Read". The
 refuses account-scoped tokens, and the token `wrangler login` holds does not carry the first
 permission.
 
-A pull request's branch gets the build command only, as a check named `Workers Builds: <worker>`.
-Its deploy command is an `echo`: a preview version of this worker would run with the production
-database and the production OAuth store.
+A pull request's branch gets the build command only, as a check named `Workers Builds: <worker>`,
+from a second trigger ("Check non-production branches (no upload)") that skips the branches the
+app's own branch trigger skips. Its deploy command is an `echo`: a preview version of this worker
+would run with the production database and the production OAuth store. Previews stay off, and
+with them off Cloudflare builds no other branch unless such a trigger exists.
 
 Two things the Builds API does that its reference does not say, both handled by the script:
 creating a build stores the production settings and drops the branch settings sent with them, and

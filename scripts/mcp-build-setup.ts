@@ -14,7 +14,14 @@
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
-import { desiredBuild, isCurrent, type BuildConfig } from './lib/mcp-build'
+import {
+  branchTriggerState,
+  desiredBranchTrigger,
+  desiredBuild,
+  isCurrent,
+  type BuildConfig,
+  type Trigger,
+} from './lib/mcp-build'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const dryRun = process.argv.includes('--dry-run')
@@ -74,11 +81,23 @@ if (!mcpTag) fail(`no Worker named "${mcpName}" yet: deploy it once with \`bun r
 const app = await api<BuildConfig>('GET', `/builds/workers/${appTag}`)
 if (!app.success) fail(`could not read "${appName}"'s Workers Build: ${why(app)}`)
 
+const triggersOf = async (tag: string) => {
+  const listed = await api<Trigger[]>('GET', `/builds/workers/${tag}/triggers`)
+  return listed.success ? listed.result : []
+}
+
 const want = desiredBuild({ mcpTag, app: app.result })
+const wantTrigger = desiredBranchTrigger({
+  mcpTag,
+  build: want,
+  appTriggers: await triggersOf(appTag),
+})
 const existing = await api<BuildConfig>('GET', `/builds/workers/${mcpTag}`)
 const have = existing.success ? existing.result : null
+const configCurrent = isCurrent(have, want)
+const triggerBefore = branchTriggerState(have ? await triggersOf(mcpTag) : [], wantTrigger)
 
-if (isCurrent(have, want)) {
+if (configCurrent && triggerBefore.current) {
   console.info(
     `mcp:build:setup — "${mcpName}" already builds from ${want.production_settings.root_directory}/ on every push`,
   )
@@ -86,6 +105,7 @@ if (isCurrent(have, want)) {
 }
 
 if (dryRun) {
+  const theApps = "(the app's)"
   console.info(
     `mcp:build:setup — would ${have ? 'update' : 'create'} "${mcpName}"'s Workers Build:`,
   )
@@ -93,8 +113,13 @@ if (dryRun) {
     JSON.stringify(
       {
         ...want,
-        production_settings: { ...want.production_settings, build_token_uuid: "(the app's)" },
-        previews_base_config: { ...want.previews_base_config, build_token_uuid: "(the app's)" },
+        production_settings: { ...want.production_settings, build_token_uuid: theApps },
+        previews_base_config: { ...want.previews_base_config, build_token_uuid: theApps },
+        branch_trigger: {
+          ...wantTrigger,
+          build_token_uuid: theApps,
+          repo_connection_uuid: theApps,
+        },
       },
       null,
       2,
@@ -103,33 +128,50 @@ if (dryRun) {
   process.exit(0)
 }
 
-// Two requests, because that is what the API accepts. Creating a build stores
-// the production settings and ignores the branch settings sent with it; those
-// are then written by a PATCH of their own, complete.
-if (!have) {
-  const created = await api<BuildConfig>('POST', '/builds/workers', {
-    script_tag: want.script_tag,
+if (!configCurrent) {
+  // Two requests, because that is what the API accepts. Creating a build stores
+  // the production settings and ignores the branch settings sent with it; those
+  // are then written by a PATCH of their own, complete.
+  if (!have) {
+    const created = await api<BuildConfig>('POST', '/builds/workers', {
+      script_tag: want.script_tag,
+      git_repository: want.git_repository,
+      production_settings: want.production_settings,
+      previews_enabled: want.previews_enabled,
+    })
+    if (!created.success) fail(`Cloudflare refused the build: ${why(created)}`)
+  }
+  const saved = await api<BuildConfig>('PATCH', `/builds/workers/${mcpTag}`, {
     git_repository: want.git_repository,
     production_settings: want.production_settings,
     previews_enabled: want.previews_enabled,
+    previews_base_config: want.previews_base_config,
   })
-  if (!created.success) fail(`Cloudflare refused the build: ${why(created)}`)
+  if (!saved.success) fail(`Cloudflare refused the settings: ${why(saved)}`)
 }
-const saved = await api<BuildConfig>('PATCH', `/builds/workers/${mcpTag}`, {
-  git_repository: want.git_repository,
-  production_settings: want.production_settings,
-  previews_enabled: want.previews_enabled,
-  previews_base_config: want.previews_base_config,
-})
-if (!saved.success) fail(`Cloudflare refused the settings: ${why(saved)}`)
+
+// Previews are off, so nothing builds a pull request until the worker has a
+// trigger for the other branches. Looked up again: a new build has new triggers.
+const trigger = branchTriggerState(await triggersOf(mcpTag), wantTrigger)
+if (!trigger.current) {
+  const saved = trigger.uuid
+    ? await api<Trigger>('PATCH', `/builds/triggers/${trigger.uuid}`, wantTrigger)
+    : await api<Trigger>('POST', '/builds/triggers', wantTrigger)
+  if (!saved.success) fail(`Cloudflare refused the branch trigger: ${why(saved)}`)
+}
 
 // Read back rather than trusted: the create call accepts fields it then drops.
 const stored = await api<BuildConfig>('GET', `/builds/workers/${mcpTag}`)
-if (!stored.success || !isCurrent(stored.result, want)) {
+if (
+  !stored.success ||
+  !isCurrent(stored.result, want) ||
+  !branchTriggerState(await triggersOf(mcpTag), wantTrigger).current
+) {
   fail('Cloudflare accepted the settings but did not store them all; compare with --dry-run')
 }
 
 console.info(
   `mcp:build:setup — "${mcpName}" now has its own Workers Build (root ${want.production_settings.root_directory}/, ` +
-    `deploy \`${want.production_settings.deploy_command}\`). The next push to the production branch deploys it.`,
+    `deploy \`${want.production_settings.deploy_command}\`). The next push to the production branch deploys it; ` +
+    `other branches run \`${wantTrigger.build_command}\` and upload nothing.`,
 )

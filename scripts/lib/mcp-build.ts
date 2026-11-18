@@ -123,3 +123,93 @@ export function isCurrent(existing: BuildConfig | null, want: DesiredBuild): boo
     sameSettings(existing.previews_base_config, want.previews_base_config)
   )
 }
+
+// ── The check on other branches ─────────────────────────────────────────────
+// With previews off Cloudflare builds nothing for a pull request, so the
+// worker gets a second trigger, the same way the app has one: it runs the
+// build command on every other branch and uploads nothing.
+
+/** A build trigger, as Cloudflare returns it. */
+export interface Trigger {
+  trigger_uuid: string
+  trigger_name: string
+  build_command?: string
+  deploy_command?: string
+  root_directory?: string
+  build_token_uuid?: string
+  branch_includes?: string[]
+  branch_excludes?: string[]
+  repo_connection?: { repo_connection_uuid?: string }
+  [key: string]: unknown
+}
+
+export interface DesiredTrigger {
+  external_script_id: string
+  repo_connection_uuid: string
+  build_token_uuid: string
+  trigger_name: string
+  build_command: string
+  deploy_command: string
+  root_directory: string
+  branch_includes: string[]
+  branch_excludes: string[]
+  path_includes: string[]
+  path_excludes: string[]
+}
+
+export const MCP_BRANCH_TRIGGER = 'Check non-production branches (no upload)'
+
+const watchesEveryBranch = (trigger: Trigger) => (trigger.branch_includes ?? []).includes('*')
+
+/**
+ * The worker's trigger for every branch but production, from the app's.
+ *
+ * It skips the branches the app's own branch trigger skips (a fork may keep a
+ * branch that is never built), and always the production branch.
+ */
+export function desiredBranchTrigger(input: {
+  mcpTag: string
+  build: DesiredBuild
+  appTriggers: Trigger[]
+}): DesiredTrigger {
+  const connection = input.appTriggers.find(
+    (trigger) => trigger.repo_connection?.repo_connection_uuid,
+  )?.repo_connection?.repo_connection_uuid
+  if (!connection) throw new Error('the app Worker has no build trigger to copy a repository from')
+  const production = String(input.build.git_repository.branch ?? 'main')
+  const skipped = input.appTriggers.find(watchesEveryBranch)?.branch_excludes ?? []
+  const branch = input.build.previews_base_config
+  return {
+    external_script_id: input.mcpTag,
+    repo_connection_uuid: connection,
+    build_token_uuid: branch.build_token_uuid,
+    trigger_name: MCP_BRANCH_TRIGGER,
+    build_command: branch.build_command,
+    deploy_command: branch.deploy_command,
+    root_directory: branch.root_directory,
+    branch_includes: ['*'],
+    branch_excludes: [...new Set([production, ...skipped])],
+    path_includes: ['*'],
+    path_excludes: [],
+  }
+}
+
+const sameList = (have: string[] | undefined, want: string[]) =>
+  [...(have ?? [])].sort().join('\n') === [...want].sort().join('\n')
+
+/** The worker's existing branch trigger, and whether it already is the desired one. */
+export function branchTriggerState(
+  existing: Trigger[],
+  want: DesiredTrigger,
+): { current: boolean; uuid?: string } {
+  const have = existing.find((trigger) => trigger.trigger_name === want.trigger_name)
+  if (!have) return { current: false }
+  const current =
+    have.build_command === want.build_command &&
+    have.deploy_command === want.deploy_command &&
+    have.build_token_uuid === want.build_token_uuid &&
+    sameRoot(have.root_directory, want.root_directory) &&
+    sameList(have.branch_includes, want.branch_includes) &&
+    sameList(have.branch_excludes, want.branch_excludes)
+  return { current, uuid: have.trigger_uuid }
+}
