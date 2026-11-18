@@ -39,6 +39,7 @@
     "methods:check": "bun run scripts/check-method-bodies.ts",
     "layers:pull": "bun run scripts/layers-pull.ts",
     "layers:check": "bun run scripts/check-layers.ts",
+    "patches:check": "bun run scripts/check-patches.ts",
     "forkless:check": "bun run scripts/check-forkless.ts --fast",
     "ci:forkless": "bun run scripts/check-forkless.ts",
     "billing:replay": "bun run layers/billing/test/replay/billing-replay.ts",
@@ -112,6 +113,6 @@
   },
   "packageManager": "bun@1.4.0",
   "patchedDependencies": {
-    "@nuxthub/core@0.10.8": "patches/@nuxthub%2Fcore@0.10.8.patch"
+    "@nuxthub/core@0.10.12": "patches/@nuxthub%2Fcore@0.10.12.patch"
   }
 }
