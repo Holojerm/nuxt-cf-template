@@ -315,9 +315,9 @@ Recovery, in this order: `wrangler rollback <the app's last version id> --name <
 `wrangler --cwd .output triggers deploy` from a built checkout to put the domain and the crons
 back (a rollback restores code and bindings, not triggers).
 
-Deploy the MCP worker by hand, or from a Workers Build of its own with `mcp/` as the root
-directory. `mcp/scripts/guard-deploy.ts` refuses to run when the forced name is not the MCP
-worker's.
+The MCP worker deploys from a Workers Build of its own, with `mcp/` as the root directory:
+`bun run mcp:build:setup` creates it ([mcp.md](mcp.md) › Deploying the worker).
+`mcp/scripts/guard-deploy.ts` refuses to run when the forced name is not the MCP worker's.
 
 ## Workers Builds: dashboard Worker name must match `wrangler.toml`
 

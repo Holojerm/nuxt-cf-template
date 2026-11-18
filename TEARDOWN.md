@@ -313,8 +313,9 @@ Nothing in the app depends on it — it is a second Worker that reads the same D
    - [`server/routes/.well-known/ai-catalog.json.get.ts`](server/routes/.well-known/ai-catalog.json.get.ts),
      [`server/utils/ai-catalog.ts`](server/utils/ai-catalog.ts) and `test/ai-catalog.test.ts`
    - [`scripts/check-mcp.ts`](scripts/check-mcp.ts), [`scripts/mcp-pack.ts`](scripts/mcp-pack.ts),
-     [`scripts/mcp-publish.ts`](scripts/mcp-publish.ts), the three `scripts/lib/mcp-*.ts`
-     files, `test/mcp-tools.test.ts` and `test/mcp-listing.test.ts`
+     [`scripts/mcp-publish.ts`](scripts/mcp-publish.ts),
+     [`scripts/mcp-build-setup.ts`](scripts/mcp-build-setup.ts), the four `scripts/lib/mcp-*.ts`
+     files, `test/mcp-tools.test.ts`, `test/mcp-listing.test.ts` and `test/mcp-build.test.ts`
    - [`.github/workflows/mcp-publish.yml`](.github/workflows/mcp-publish.yml),
      `.claude/docs/mcp.md` and `.claude/commands/mcp-publish.md`
 
