@@ -5,27 +5,65 @@
 
 import type { BrowserContext, Page } from '@playwright/test'
 
-import { expect, test, uniqueEmail } from '../../../../test/e2e/fixtures'
-
-// Every other suite runs with service workers blocked (playwright.config.ts).
-test.use({ serviceWorkers: 'allow' })
-
-const NOTES = '/api/pwa/example/notes'
+import { expect, test as base, uniqueEmail } from '../../../../test/e2e/fixtures'
 
 interface SignedIn {
   id: string
   email: string
-  name: string
 }
 
-/** Sign this context in, as the dev shortcut a person uses locally does. */
-async function signIn(context: BrowserContext, name: string): Promise<SignedIn> {
-  const email = uniqueEmail(name.replace(/\W+/g, '-'))
-  const response = await context.request.post('/api/auth/dev', { data: { email, name } })
-  expect(response.ok(), `dev sign-in for ${email}`).toBe(true)
-  const { user } = (await response.json()) as { user: { id: string } }
-  return { id: user.id, email, name }
+/**
+ * Three accounts for the whole file, each signed in once, and the tests in
+ * order in one worker: a sign-in per test was enough to get refused by the
+ * sign-in limits. So nothing may assume an account's notes start empty: each
+ * test writes a note of its own.
+ */
+const ACCOUNTS = {
+  main: uniqueEmail('offline-main'),
+  ada: uniqueEmail('offline-ada'),
+  grace: uniqueEmail('offline-grace'),
 }
+
+type Cookies = Awaited<ReturnType<BrowserContext['cookies']>>
+const sessions = new Map<string, { id: string; cookies: Cookies }>()
+
+const test = base.extend<{
+  /** Make this test's browser `who`: their session cookie replaces whoever was there. */
+  signIn: (who: keyof typeof ACCOUNTS) => Promise<SignedIn>
+}>({
+  signIn: async ({ context }, use) => {
+    await use(async (who) => {
+      const email = ACCOUNTS[who]
+      const known = sessions.get(who)
+      if (known) {
+        await context.addCookies(known.cookies)
+        return { id: known.id, email }
+      }
+      // Not the shared `signInCache`: its requests come from the address every
+      // suite shares.
+      const response = await context.request.post('/api/auth/dev', {
+        data: { email, name: who },
+      })
+      expect(response.ok(), `dev sign-in for ${email}: ${response.status()}`).toBe(true)
+      const { user } = (await response.json()) as { user: { id: string } }
+      sessions.set(who, { id: user.id, cookies: await context.cookies() })
+      return { id: user.id, email }
+    })
+  },
+})
+
+// Every other suite runs with service workers blocked (playwright.config.ts).
+// And from one address, which the sign-in limits count by: a full run of the
+// suites already spends most of a minute's allowance (30 requests to
+// /api/auth/), so this file's browser is at an address of its own (from the
+// range kept for documentation) and neither takes from that nor waits on it.
+test.use({ serviceWorkers: 'allow', extraHTTPHeaders: { 'cf-connecting-ip': '203.0.113.18' } })
+test.describe.configure({ mode: 'default' })
+
+const NOTES = '/api/pwa/example/notes'
+
+/** A note no other test, and no earlier run against this server, has written. */
+const unique = (text: string) => `${text} ${Math.random().toString(36).slice(2, 8)}`
 
 const hydrated = (page: Page) =>
   page.waitForFunction(
@@ -46,8 +84,6 @@ const kept = (page: Page) =>
     }
     return paths
   })
-
-const keptCount = async (page: Page) => Object.values(await kept(page)).flat().length
 
 /** What is in the outbox's IndexedDB store, whoever made it. */
 const stored = (page: Page) =>
@@ -79,7 +115,7 @@ async function openExample(page: Page): Promise<void> {
   let last = -1
   await expect
     .poll(async () => {
-      const now = await keptCount(page)
+      const now = Object.values(await kept(page)).flat().length
       const settled = now > 0 && now === last
       last = now
       return settled
@@ -87,17 +123,27 @@ async function openExample(page: Page): Promise<void> {
     .toBe(true)
 }
 
-const serverNotes = async (context: BrowserContext) =>
-  (
-    (await (await context.request.get(NOTES)).json()) as { notes: Array<{ text: string }> }
-  ).notes.map((note) => note.text)
+/** How many of the signed-in account's notes on the server say exactly `text`. */
+const onServer = async (context: BrowserContext, text: string) =>
+  ((await (await context.request.get(NOTES)).json()) as { notes: Array<{ text: string }> }).notes
+    .map((note) => note.text)
+    .filter((saved) => saved === text).length
+
+const note = (page: Page) => page.getByRole('textbox', { name: 'Note' })
+const save = (page: Page) => page.getByRole('button', { name: 'Save' })
+const notes = (page: Page) => page.getByRole('list', { name: 'Notes' })
+const waitingLine = (page: Page) => page.getByText(/saved on this device/)
+const notSaved = (page: Page) => page.getByRole('list', { name: 'Not saved' })
+const offlinePage = (page: Page) => page.getByRole('heading', { name: 'You are offline' })
 
 test('an offline route opens from its copy with the network cut, and so does its data', async ({
   page,
   context,
+  signIn,
 }) => {
-  const { email } = await signIn(context, 'offline-page')
-  await context.request.post(NOTES, { data: { text: 'Squat 5x5' } })
+  const { email } = await signIn('main')
+  const text = unique('Squat 5x5')
+  await context.request.post(NOTES, { data: { text } })
   await openExample(page)
   // The page's own GET, as its `refresh()` makes after a write.
   await page.evaluate((url) => fetch(url), NOTES)
@@ -106,32 +152,29 @@ test('an offline route opens from its copy with the network cut, and so does its
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Offline example' })).toBeVisible()
   await expect(page.getByText(`Signed in as ${email}`)).toBeVisible()
-  await expect(page.getByRole('list', { name: 'Notes' })).toContainText('Squat 5x5')
+  await expect(notes(page)).toContainText(text)
   // Not just markup: the kept build files ran.
   await hydrated(page)
 
   const data = await page.evaluate((url) => fetch(url).then((response) => response.json()), NOTES)
-  expect(data).toEqual({ notes: [{ id: expect.any(String), text: 'Squat 5x5' }] })
+  expect(data.notes).toContainEqual({ id: expect.any(String), text })
 
   // A route nobody named still gets the offline page.
   await page.goto('/pwa-example-is-the-only-route-named')
-  await expect(page.getByRole('heading', { name: 'You are offline' })).toBeVisible()
+  await expect(offlinePage(page)).toBeVisible()
 })
-
-const note = (page: Page) => page.getByRole('textbox', { name: 'Note' })
-const save = (page: Page) => page.getByRole('button', { name: 'Save' })
-const waitingLine = (page: Page) => page.getByText(/saved on this device/)
-const notSaved = (page: Page) => page.getByRole('list', { name: 'Not saved' })
 
 test('a write made offline is kept on the device, survives a reload, and is sent when the connection returns', async ({
   page,
   context,
+  signIn,
 }) => {
-  await signIn(context, 'outbox-offline')
+  await signIn('main')
+  const text = unique('Deadlift 3x5')
   await openExample(page)
 
   await context.setOffline(true)
-  await note(page).fill('Deadlift 3x5')
+  await note(page).fill(text)
   await save(page).click()
   await expect(waitingLine(page)).toContainText('1 saved on this device')
   await expect(note(page)).toHaveValue('')
@@ -139,27 +182,30 @@ test('a write made offline is kept on the device, survives a reload, and is sent
   await page.reload()
   await hydrated(page)
   await expect(waitingLine(page)).toContainText('1 saved on this device')
-  expect(await serverNotes(context)).toEqual([])
+  expect(await onServer(context, text)).toBe(0)
 
   // Nothing is clicked from here on: under `nuxt dev` Vite reloads the page
   // when it finds its server again, and the outbox goes out either way (on
   // `online`, or on the load).
   await context.setOffline(false)
-  await expect.poll(() => serverNotes(context)).toEqual(['Deadlift 3x5'])
+  await expect.poll(() => onServer(context, text)).toBe(1)
   await expect(waitingLine(page)).toHaveCount(0)
-  await expect(page.getByRole('list', { name: 'Notes' })).toContainText('Deadlift 3x5')
+  await expect(notes(page)).toContainText(text)
   expect(await stored(page)).toEqual([])
+  expect(await onServer(context, text)).toBe(1)
 })
 
 test('a write whose answer was lost is sent again with the same key, and lands once', async ({
   page,
   context,
+  signIn,
 }) => {
-  await signIn(context, 'outbox-lost-answer')
+  await signIn('main')
+  const text = unique('Bench 5x5')
   await openExample(page)
 
   const posts: Array<{ key: string | undefined; replayed: string | undefined }> = []
-  page.on('response', async (response) => {
+  page.on('response', (response) => {
     const request = response.request()
     if (request.method() !== 'POST' || !request.url().endsWith(NOTES)) return
     posts.push({
@@ -176,13 +222,14 @@ test('a write whose answer was lost is sent again with the same key, and lands o
     await route.abort('connectionreset')
   })
 
-  await note(page).fill('Bench 5x5')
+  await note(page).fill(text)
   await save(page).click()
-  await expect(page.getByRole('list', { name: 'Notes' })).toContainText('Bench 5x5')
+  await expect(notes(page)).toContainText(text)
   await expect(waitingLine(page)).toHaveCount(0)
 
   expect(lost).toBe(true)
-  expect(await serverNotes(context)).toEqual(['Bench 5x5'])
+  expect(await onServer(context, text)).toBe(1)
+  // The one answer the page saw was the replay's, marked as such.
   expect(posts).toEqual([{ key: expect.stringMatching(/^[\w-]{36}$/), replayed: 'true' }])
   expect(await stored(page)).toEqual([])
 })
@@ -204,8 +251,9 @@ async function saveRejectedNote(page: Page): Promise<void> {
 test('a write the server rejects is kept and shown until the person discards it', async ({
   page,
   context,
+  signIn,
 }) => {
-  const { id } = await signIn(context, 'outbox-rejected')
+  const { id } = await signIn('main')
   await openExample(page)
   await saveRejectedNote(page)
   expect(await stored(page)).toEqual([
@@ -220,12 +268,11 @@ test('a write the server rejects is kept and shown until the person discards it'
   await page.getByRole('button', { name: 'Discard' }).click()
   await expect(notSaved(page)).toHaveCount(0)
   expect(await stored(page)).toEqual([])
-  expect(await serverNotes(context)).toEqual([])
+  expect(await onServer(context, 'x'.repeat(61))).toBe(0)
 })
 
-/** Ada, with everything this layer can leave on a device: a kept page, kept data, a write in the outbox. */
-async function adaLeavesHerTraces(page: Page, context: BrowserContext): Promise<SignedIn> {
-  const ada = await signIn(context, 'Ada Offline')
+/** Everything this layer can leave on a device for `ada`: a kept page, kept data, a write in the outbox. */
+async function leaveTraces(page: Page, context: BrowserContext, ada: SignedIn): Promise<void> {
   await context.request.post(NOTES, { data: { text: 'Ada, private' } })
   await openExample(page)
   await page.evaluate((url) => fetch(url), NOTES)
@@ -234,15 +281,16 @@ async function adaLeavesHerTraces(page: Page, context: BrowserContext): Promise<
   const copies = await kept(page)
   expect(copies.pages).toContain('/pwa-example')
   expect(copies.data).toContain(NOTES)
-  expect(await stored(page)).toHaveLength(1)
-  return ada
+  expect((await stored(page)).map((entry) => entry.owner)).toEqual([ada.id])
 }
 
 test("signing out deletes the kept page, its data and the outbox, and the next account never sees the last one's", async ({
   page,
   context,
+  signIn,
 }) => {
-  const ada = await adaLeavesHerTraces(page, context)
+  const ada = await signIn('ada')
+  await leaveTraces(page, context, ada)
 
   // The page's own button, not the app's menu: a fork has its own header.
   await page.getByTestId('pwa-example-sign-out').click()
@@ -255,10 +303,10 @@ test("signing out deletes the kept page, its data and the outbox, and the next a
 
   // Grace signs in on the same browser and has no connection before she has
   // loaded anything: there is no copy to show her, Ada's least of all.
-  const grace = await signIn(context, 'Grace Offline')
+  const grace = await signIn('grace')
   await context.setOffline(true)
   await page.goto('/pwa-example')
-  await expect(page.getByRole('heading', { name: 'You are offline' })).toBeVisible()
+  await expect(offlinePage(page)).toBeVisible()
   await expect(page.locator('body')).not.toContainText(ada.email)
   expect(
     await page.evaluate(
@@ -275,7 +323,7 @@ test("signing out deletes the kept page, its data and the outbox, and the next a
   await context.setOffline(false)
   await openExample(page)
   await expect(page.getByText(`Signed in as ${grace.email}`)).toBeVisible()
-  await expect(page.getByText('No notes yet.')).toBeVisible()
+  await expect(notes(page)).toHaveCount(0)
   await expect(notSaved(page)).toHaveCount(0)
 
   await context.setOffline(true)
@@ -288,12 +336,14 @@ test("signing out deletes the kept page, its data and the outbox, and the next a
 test('an account that replaces another without a sign-out clears what the first one left', async ({
   page,
   context,
+  signIn,
 }) => {
-  const ada = await adaLeavesHerTraces(page, context)
+  const ada = await signIn('ada')
+  await leaveTraces(page, context, ada)
 
   // The cookie changes hands with no sign-out in between, and the next page
   // Grace loads is not an offline route.
-  const grace = await signIn(context, 'Grace Swap')
+  const grace = await signIn('grace')
   await page.goto('/terms')
   await expect.poll(() => page.evaluate(() => localStorage.getItem('pwa:owner'))).toBe(grace.id)
   const copies = await kept(page)
@@ -301,7 +351,7 @@ test('an account that replaces another without a sign-out clears what the first 
 
   await context.setOffline(true)
   await page.goto('/pwa-example')
-  await expect(page.getByRole('heading', { name: 'You are offline' })).toBeVisible()
+  await expect(offlinePage(page)).toBeVisible()
   await expect(page.locator('body')).not.toContainText(ada.email)
 })
 
@@ -311,19 +361,21 @@ test('an account that replaces another without a sign-out clears what the first 
 test('the worker sends the outbox on a Background Sync, with the app closed', async ({
   page,
   context,
+  signIn,
 }) => {
-  await signIn(context, 'outbox-sync')
+  await signIn('main')
+  const text = unique('Row 3x8')
   await openExample(page)
   const origin = new URL(page.url()).origin
 
   await context.setOffline(true)
-  await note(page).fill('Row 3x8')
+  await note(page).fill(text)
   await save(page).click()
   await expect(waitingLine(page)).toContainText('1 saved on this device')
 
   // The offline page is plain HTML: nothing on it listens for `online`.
   await page.goto('/offline')
-  await expect(page.getByRole('heading', { name: 'You are offline' })).toBeVisible()
+  await expect(offlinePage(page)).toBeVisible()
   await context.setOffline(false)
 
   const cdp = await context.newCDPSession(page)
@@ -341,6 +393,7 @@ test('the worker sends the outbox on a Background Sync, with the app closed', as
     lastChance: false,
   })
 
-  await expect.poll(() => serverNotes(context)).toEqual(['Row 3x8'])
+  await expect.poll(() => onServer(context, text)).toBe(1)
   await expect.poll(() => stored(page)).toEqual([])
+  expect(await onServer(context, text)).toBe(1)
 })
