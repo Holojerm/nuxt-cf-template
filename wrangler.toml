@@ -390,3 +390,8 @@ NUXT_PUBLIC_TURNSTILE_SITE_KEY = ""
 #                                32+ chars (`openssl rand -base64 32`). Unset = the
 #                                route 404s and the app is simply not on the dashboard.
 #   NUXT_FLEET_TOKEN_PREVIOUS    only during a rotation — server/utils/fleet-auth.ts.
+#   NUXT_PWA_VAPID_PRIVATE_KEY   Web Push (layers/pwa). Set it with its public half,
+#   NUXT_PUBLIC_PWA_VAPID_PUBLIC_KEY   both or neither; unset = no push routes and
+#                                sendPush() does nothing. `bun layers/pwa/scripts/vapid-keys.ts`
+#                                makes the pair without printing the private key
+#                                (.claude/docs/pwa.md › Keys).
