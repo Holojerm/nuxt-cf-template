@@ -299,6 +299,26 @@ move every time the branch did. `bun dev:app` bypasses the proxy entirely.
 > code now passes `bun typecheck` untouched. Believing the old note is the more expensive
 > mistake, because it argues against running agents in parallel at all.
 
+## A second `wrangler deploy` in the app's Workers Build overwrites the app
+
+A Workers Build belongs to one Worker, and it sets `WRANGLER_CI_OVERRIDE_NAME` so that every <!-- refs-check-ignore: set by Workers Builds, read in mcp/scripts/guard-deploy.ts -->
+`wrangler deploy` in the build uploads to that Worker, whatever `name` the config says. The
+section below is the reason that exists; the side effect is that one build cannot deploy a second
+Worker.
+
+A fork ended its `deploy:ci` with `bun run mcp:deploy`. On the first run (2026-11-18) wrangler
+uploaded the MCP worker under the app's name: the app's code was replaced, and because a deploy
+also sets the Worker's routes to the config's, the app's custom domain was detached and its crons
+removed. The site answered Cloudflare **error 1016**. No step failed until the smoke check.
+
+Recovery, in this order: `wrangler rollback <the app's last version id> --name <app>`, then
+`wrangler --cwd .output triggers deploy` from a built checkout to put the domain and the crons
+back (a rollback restores code and bindings, not triggers).
+
+Deploy the MCP worker by hand, or from a Workers Build of its own with `mcp/` as the root
+directory. `mcp/scripts/guard-deploy.ts` refuses to run when the forced name is not the MCP
+worker's.
+
 ## Workers Builds: dashboard Worker name must match `wrangler.toml`
 
 CI/CD runs on Cloudflare Workers Builds (repo connected in the dashboard under Worker → Settings → Build). The Worker's name in the dashboard must exactly match `name` in the root `wrangler.toml`, or every build fails before it starts. When you fork and rename the project, reconnect the repo to a Worker with the new name. Build settings live in the dashboard, not in the repo, as two triggers. Production branch `main`: build `bun run typecheck && bun run build`, deploy `bun run deploy:ci` (migrates production D1, then deploys; needs D1 Edit on the build token, see above). Non-production branches (excluding `main` and `ops-journal`): build `bun run ci` (the PR gate), deploy a no-op `echo`, so branch builds upload nothing. `NUXT_SESSION_PASSWORD` must be set as a build variable there too — the old GitHub Actions secrets are gone. `NUXT_APP_SECRET` is runtime-only: build and tests run without it, so it is a Worker secret, not a build variable.
