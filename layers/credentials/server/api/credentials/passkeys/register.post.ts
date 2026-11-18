@@ -4,9 +4,11 @@
 
 import { db } from '@nuxthub/db'
 import type { WebAuthnCredential } from '#auth-utils'
+import { createError } from 'nuxt/server'
 import { z } from 'zod'
 
 import { rateLimit } from '#server/utils/rate-limit'
+import { h3Event, requestEvent } from '#server/utils/request-event'
 import { credentialsPasskeyLabelSchema } from '../../../../shared/utils/credentials-schemas'
 import { requireCredentialsEnabled } from '../../../utils/credentials-config'
 import { CREDENTIALS_LIMITS } from '../../../utils/credentials-limits'
@@ -26,13 +28,13 @@ const userSchema = z.object({
   prfCapable: z.boolean().default(false),
 })
 
-const register = defineWebAuthnRegisterEventHandler({
+const register = defineWebAuthnRegisterEventHandler<z.infer<typeof userSchema>>({
   // The handler takes the account from the request body; the session decides.
   async validateUser(body, event) {
     const { user } = await requireUserSession(event)
     const parsed = userSchema.parse(body)
     if (parsed.userName !== user.email) {
-      throw createError({ statusCode: 403, message: 'Not your account' })
+      throw createError({ status: 403, message: 'Not your account' })
     }
     return parsed
   },
@@ -41,7 +43,7 @@ const register = defineWebAuthnRegisterEventHandler({
     const challenge = await takePasskeyChallenge(db, attemptId)
     if (!challenge) {
       throw createError({
-        statusCode: 400,
+        status: 400,
         message: 'That took too long. Try again.',
         data: { code: 'passkey_expired' },
       })
@@ -49,7 +51,7 @@ const register = defineWebAuthnRegisterEventHandler({
     return challenge
   },
   getOptions: (event) => ({
-    rpName: useRuntimeConfig(event).public.appName,
+    rpName: useRuntimeConfig(h3Event(event)).public.appName,
     // Discoverable, so sign-in needs no address typed first.
     authenticatorSelection: { residentKey: 'required', userVerification: 'preferred' },
   }),
@@ -69,7 +71,7 @@ const register = defineWebAuthnRegisterEventHandler({
     })
     if (saved === 'limit_reached') {
       throw createError({
-        statusCode: 409,
+        status: 409,
         message: 'Remove a passkey before adding another',
         data: { code: 'passkey_limit' },
       })
@@ -81,5 +83,5 @@ const register = defineWebAuthnRegisterEventHandler({
 export default defineEventHandler(async (event) => {
   requireCredentialsEnabled(event)
   await rateLimit(event, CREDENTIALS_LIMITS.passkeyRegister)
-  return register(event)
+  return register(requestEvent(event))
 })

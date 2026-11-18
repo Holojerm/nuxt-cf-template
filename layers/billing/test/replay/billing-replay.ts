@@ -80,6 +80,8 @@ const base = `http://127.0.0.1:${port}`
 const stateDir = process.env.REPLAY_STATE_DIR ?? mkdtempSync(join(tmpdir(), 'billing-replay-'))
 
 const SESSION_PASSWORD = 'replay-session-password-0123456789abcdef'
+const APP_SECRET = 'replay-app-secret-0123456789abcdef0123456789'
+const SESSION_COOKIE = 'nuxt-auth-session'
 const FLEET_TOKEN = 'replay-fleet-token-0123456789abcdef0123456789'
 const WORKER_CONFIG = join(root, '.output/server/wrangler.json')
 
@@ -210,6 +212,7 @@ writeFileSync(
     `NUXT_PUBLIC_PADDLE_PRICE_PASS=${PRICE_PASS}`,
     `NUXT_PUBLIC_PADDLE_PRICE_MONTHLY=${PRICE_MONTHLY}`,
     `NUXT_SESSION_PASSWORD=${SESSION_PASSWORD}`,
+    `NUXT_APP_SECRET=${APP_SECRET}`,
     `NUXT_FLEET_TOKEN=${FLEET_TOKEN}`,
     ...extraVars,
   ].join('\n') + '\n',
@@ -259,26 +262,46 @@ async function waitReady() {
   throw new Error(`worker never became ready\n${logs.join('')}`)
 }
 
-// ── 3. Sessions: sealed exactly the way h3/nuxt-auth-utils seal them ─────────
+// ── 3. Sessions: sealed exactly the way nuxt/server's useSession seals them ──
+// Its password is `deriveSecret('nuxt-session:<cookie name>')`: HKDF-SHA256 of
+// the appSecret with salt "nuxt", hex. The payload carries a version tag.
+async function sessionPassword(): Promise<string> {
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey('raw', encoder.encode(APP_SECRET), 'HKDF', false, [
+    'deriveBits',
+  ])
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: encoder.encode('nuxt'),
+      info: encoder.encode(`nuxt-session:${SESSION_COOKIE}`),
+    },
+    key,
+    256,
+  )
+  return [...new Uint8Array(bits)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
 async function sessionCookie(user: {
   id: string
   email: string
   name: string
   role: string
 }): Promise<string> {
-  const session = {
+  const payload = {
+    nuxt: 1,
     id: crypto.randomUUID(),
-    createdAt: Date.now(),
     data: {
       user: { id: user.id, email: user.email, name: user.name, avatarUrl: null, role: user.role },
       issuedAt: Math.floor(Date.now() / 1000),
     },
   }
-  const sealed = await seal(crypto, session, SESSION_PASSWORD, {
+  const sealed = await seal(payload, await sessionPassword(), {
     ...defaults,
     ttl: 60 * 60 * 24 * 30 * 1000,
   })
-  return `nuxt-session=${sealed}`
+  return `${SESSION_COOKIE}=${sealed}`
 }
 
 async function hmacHex(secret: string, message: string): Promise<string> {
@@ -448,7 +471,7 @@ async function run(step: Step): Promise<StepResult> {
   })
   if (req.capture) {
     // The session this sign-in just issued, kept so later steps can be that person.
-    const session = res.headers.getSetCookie().find((c) => c.startsWith('nuxt-session='))
+    const session = res.headers.getSetCookie().find((c) => c.startsWith(`${SESSION_COOKIE}=`))
     if (session) cookies[req.capture] = session.split(';')[0]!
   }
   const location = res.headers.get('location') ?? undefined

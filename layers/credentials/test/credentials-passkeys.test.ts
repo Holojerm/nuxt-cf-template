@@ -10,6 +10,9 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from '@simplewebauthn/server'
+import { createError as h3CreateError } from 'h3'
+import { createError, isNuxtError } from 'nuxt/server'
+import type { NuxtError, RequestEvent } from 'nuxt/server'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { CeremonyDeps } from '../app/utils/passkey-ceremony'
@@ -23,6 +26,7 @@ import {
   findPasskey,
   listPasskeys,
   MAX_PASSKEYS_PER_USER,
+  passkeyCeremonyFailed,
   passkeySummary,
   PASSKEY_CHALLENGE_TTL_SECONDS,
   removePasskey,
@@ -275,5 +279,38 @@ describe('storage', () => {
     expect(await savePasskey(db, 'u1', credential('extra'), { name: 'x', prfCapable: false })).toBe(
       'limit_reached',
     )
+  })
+})
+
+// nuxt-auth-utils hands a callback's error to onError only when `isNuxtError`
+// accepts it, and turns anything else into a 500. That check needs `status`,
+// which h3 v1's createError never sets: a refusal built with it would reach the
+// browser as "could not be verified" instead of its own code.
+describe('passkey ceremony errors', () => {
+  const event = {} as RequestEvent
+  const thrownBy = (fn: () => unknown) => {
+    try {
+      fn()
+    } catch (error) {
+      return error as NuxtError
+    }
+    throw new Error('expected a throw')
+  }
+
+  it('builds refusals the handlers recognise, which h3 v1 errors are not', () => {
+    expect(isNuxtError(createError({ status: 409, message: 'x' }))).toBe(true)
+    expect(isNuxtError(h3CreateError({ statusCode: 409, message: 'x' }))).toBe(false)
+  })
+
+  it('passes a 4xx refusal through with its code', () => {
+    const refusal = createError({ status: 409, message: 'x', data: { code: 'passkey_limit' } })
+    expect(thrownBy(() => passkeyCeremonyFailed(event, refusal))).toBe(refusal)
+  })
+
+  it('answers a response that did not verify as a 400, not a 500', () => {
+    const failed = createError({ status: 500, message: 'Failed to authenticate credential' })
+    const error = thrownBy(() => passkeyCeremonyFailed(event, failed))
+    expect(error.status).toBe(400)
+    expect(error.data).toEqual({ code: 'passkey_rejected' })
   })
 })

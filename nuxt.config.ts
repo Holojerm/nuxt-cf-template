@@ -386,7 +386,12 @@ export default defineNuxtConfig({
   // Runtime config — public vars go in public, secrets stay private
   runtimeConfig: {
     // Server-only secrets (access via useRuntimeConfig().mySecret)
-    // Set via NUXT_SESSION_PASSWORD env var — Nuxt reads it automatically
+    // NUXT_SESSION_PASSWORD: the app's own salt and signing key (unsubscribe
+    // links, IP and search hashes, legacy referral refs). Sessions no longer
+    // use it: nuxt-auth-utils seals them with a key derived from Nuxt's
+    // `appSecret` (NUXT_APP_SECRET). Its startup warning that this variable "is
+    // not used anymore" is about the module, not this app; changing the value
+    // breaks every link and hash made with it.
     sessionPassword: '',
     // Capture the `user_signed_out` analytics event on POST /api/auth/logout.
     // On by default; an app that collects less analytics sets it to false
@@ -397,10 +402,9 @@ export default defineNuxtConfig({
     // `sessions_invalid_before` is the per-user revocation lever, this is the
     // ceiling on how long any session can live at all. 30 days: a consumer
     // re-signs in monthly via the magic link, which is the whole cost.
-    // `password` is the same NUXT_SESSION_PASSWORD env var as above — the
-    // module's own default is this empty string; it is spelled out because the
-    // config type requires it next to `maxAge`.
-    session: { password: '', maxAge: 60 * 60 * 24 * 30 },
+    // The clock restarts on every session write: sign-in, signing out other
+    // devices, and a password change. Ordinary requests never write one.
+    session: { maxAge: 60 * 60 * 24 * 30 },
     // Filled by the `pages:resolved` hook above from
     // `definePageMeta({ publicPage })`. Server-only: sitemap.xml and llms.txt
     // are the only readers, so it stays out of the client bundle.
@@ -593,6 +597,13 @@ export default defineNuxtConfig({
     // of this file (so /api/status can report the same map) — the rules for
     // keeping it in step with wrangler.toml are written there.
     scheduledTasks: SCHEDULED_TASKS,
+
+    // Nitro tree-shakes every module not listed here as side-effect-free. The
+    // passkey stack (@simplewebauthn/server → @peculiar/x509 → tsyringe) needs
+    // the bare `import 'reflect-metadata'` to run; dropped, the Worker throws
+    // "tsyringe requires a reflect polyfill" at startup and serves nothing.
+    // Nitro's own defaults are merged in, not replaced.
+    moduleSideEffects: ['reflect-metadata'],
   },
 
   compatibilityDate: '2025-09-01',

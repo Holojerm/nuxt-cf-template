@@ -7,14 +7,14 @@
 // ── Why no new secret ─────────────────────────────────────────────────────
 // .claude/docs/billing.md is explicit that a new secret is a human gate — every fork of
 // this template would have to go set one before this feature worked at all.
-// `sessionPassword` is the one secret guaranteed to exist (nuxt-auth-utils
-// refuses to boot without it), so the unsubscribe key is DERIVED from it via
-// HKDF rather than reused as-is. HKDF's `info` parameter domain-separates
-// this key from whatever nuxt-auth-utils derives from the same password for
-// session sealing: a bug in one derivation can't be leveraged against the
-// other, and an unsubscribe token — which, unlike a session cookie, is mailed
-// out in plaintext links and sits in inboxes indefinitely — can't be turned
-// into anything session-shaped even if one leaked.
+// `sessionPassword` is a secret every deployment already has (fleet.json lists
+// it, so fleet flags a Worker without it), so the unsubscribe key is DERIVED
+// from it via HKDF rather than reused as-is. HKDF's `info` parameter
+// domain-separates this key from every other use of the same password, and
+// sessions are sealed from a different secret altogether (`appSecret`): an
+// unsubscribe token — which, unlike a session cookie, is mailed out in
+// plaintext links and sits in inboxes indefinitely — can't be turned into
+// anything session-shaped even if one leaked.
 //
 // ── Verification shape ────────────────────────────────────────────────────
 // Recompute-and-compare, not crypto.subtle.verify, to match the existing

@@ -202,13 +202,13 @@ jobs:
       # command that fails on Workers Builds.
       - run: bun run playwright:install
 
-      # The suite boots its own `nuxt dev`, and nuxt-auth-utils refuses to start
-      # a session layer without this — every /api/* route would 500 and the
-      # pages under test would render against broken endpoints. Generated per
-      # run: it seals nothing that outlives the job, so it must NOT be a repo
-      # secret that someone later mistakes for the production one.
+      # The suite boots its own `nuxt dev`, which would generate an appSecret
+      # itself; setting both keeps the run the shape production has. Generated
+      # per run: they seal and sign nothing that outlives the job, so they must
+      # NOT be repo secrets that someone later mistakes for the production ones.
       - name: Run axe, CSP and E2E suites
         run: |
+          export NUXT_APP_SECRET="$(openssl rand -base64 32)"
           export NUXT_SESSION_PASSWORD="$(openssl rand -base64 32)"
           bun run test:a11y
 

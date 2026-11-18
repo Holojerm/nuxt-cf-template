@@ -23,7 +23,7 @@ export default defineOAuthGoogleEventHandler({
   async onSuccess(event, { user }) {
     const profile = user as GoogleUser
 
-    return completeOAuthSignIn(event, {
+    return completeOAuthSignIn(h3Event(event), {
       profile: {
         provider: 'google',
         email: profile.email,
@@ -36,6 +36,6 @@ export default defineOAuthGoogleEventHandler({
 
   onError(event, error) {
     logEvent('error', 'oauth_failed', { provider: 'google', message: error.message })
-    return redirectToLoginError(event, 'provider_error')
+    return redirectToLoginError(h3Event(event), 'provider_error')
   },
 })
