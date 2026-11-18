@@ -1,24 +1,10 @@
-// Mint a short-lived, single-use connect code for the signed-in user. The MCP
-// worker's /authorize page exchanges it for an OAuth grant (see mcp/src/authorize.ts).
-// Auth comes from the global /api/* middleware; only the code's SHA-256 hash
-// is stored, so a DB leak doesn't leak live codes.
+// The app's step in the MCP worker's sign-in. The worker's /authorize sends a
+// browser to /auth/mcp, which calls this: it mints a single-use code for the
+// signed-in user, bound to the worker's request, and answers with the worker
+// URL that finishes the connection (see server/utils/mcp-connect.ts).
+// Auth comes from the global /api/* middleware.
 
-import { sha256Hex } from '../../utils/hash'
-
-const CODE_TTL_SECONDS = 600 // 10 minutes
-const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789' // no 0/O/1/I/L lookalikes
-
-function generateCode(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(8))
-  const chars = Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('')
-  return `${chars.slice(0, 4)}-${chars.slice(4)}`
-}
-
-export async function hashConnectCode(code: string): Promise<string> {
-  // Normalised before hashing so the dash and the casing a user types back are
-  // irrelevant. The digest itself is the shared one — see server/utils/hash.ts.
-  return sha256Hex(code.toUpperCase().replace(/[^A-Z0-9]/g, ''))
-}
+import { ConnectRequestSchema, connectCallbackUrl, mintConnectCode } from '../../utils/mcp-connect'
 
 export default defineEventHandler(async (event) => {
   const { user } = await requireUserSession(event)
@@ -33,14 +19,12 @@ export default defineEventHandler(async (event) => {
     windowSeconds: 300,
   })
 
-  const code = generateCode()
-  const expiresAt = new Date(Date.now() + CODE_TTL_SECONDS * 1000)
-  await db.insert(schema.mcpConnectCodes).values({
-    userId: user.id,
-    codeHash: await hashConnectCode(code),
-    expiresAt,
-  })
+  const { request: requestId } = await readValidatedBody(event, ConnectRequestSchema.parse)
+  const mcpUrl = useRuntimeConfig(event).public.mcpUrl
+  if (!mcpOrigin(mcpUrl)) {
+    throw createError({ statusCode: 404, message: 'No MCP server is configured' })
+  }
 
-  // The plaintext code exists only in this response — show it to the user once.
-  return { code, expiresAt: expiresAt.toISOString() }
+  const code = await mintConnectCode(db, { userId: user.id, requestId })
+  return { redirect: connectCallbackUrl(mcpUrl, { requestId, code }) }
 })

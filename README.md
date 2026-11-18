@@ -1023,7 +1023,7 @@ Full contract in [`.claude/docs/images.md`](.claude/docs/images.md).
 | `/login` | Public | Magic-link form, then buttons for configured OAuth providers, then dev sign-in. `noindex`. |
 | `/auth/verify` | Public | Where a magic link lands. Confirming is what spends the token. `noindex`. |
 | `/unsubscribe` | Public | Where an email footer's unsubscribe link lands. Confirming is what opts you out — a GET must not, because mail gateways fetch it. `noindex`. |
-| `/account` | Signed in | Plan status, billing history, self-serve cancel, MCP connect code, sign out. |
+| `/account` | Signed in | Plan status, billing history, self-serve cancel, MCP server address, sign out. |
 | `/dashboard` | Signed in **and** paying | The gated example. Replace with your product. |
 | `/files` | Signed in **and** paying | Upload, list, download, and delete files in R2 — see [Uploads (R2)](#uploads-r2). |
 | `/terms`, `/privacy` | Public | Templates written to match what this codebase actually does. **Have a lawyer read them.** |
@@ -1359,7 +1359,7 @@ await submit({ kind: 'other', message: reason, rating: 2 })
 How it hangs together:
 
 - **OAuth 2.1** via [`@cloudflare/workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) (dynamic client registration included, so MCP clients self-register). Tokens/grants live in the worker's own `OAUTH_KV` namespace.
-- **Identity bridge** (`mcp/src/authorize.ts`): device-code style. A signed-in user mints a single-use, 10-minute connect code in the app (`POST /api/mcp/connect-code` — only its SHA-256 hash is stored), pastes it into the worker's `/authorize` consent page, and their `userId` is sealed into the OAuth grant. No shared cookies, no upstream IdP.
+- **Sign-in** (`mcp/src/authorize.ts`): the app's own. The worker's `/authorize` sends the browser to the app's `/auth/mcp`, where the user is signed in (or signs in, by any method the app offers). The app mints a single-use, 10-minute code bound to that request (`POST /api/mcp/connect-code`, only its SHA-256 hash is stored) and sends the browser back to the worker, which shows who is connecting and to what, and on approval seals their `userId` into the OAuth grant. Nothing is typed or pasted. The code crosses through the shared D1, so the two origins share no cookie and no secret; it is spent only for the browser that started the request (`mcp/src/signin.ts`). The app's origin is `fleet.json › urls.prod`; for `wrangler dev` against a local app, set `APP_URL` in `mcp/.dev.vars`.
 - **Tools** (`mcp/src/server.ts`) run on `createMcpHandler` from the [`agents` SDK](https://developers.cloudflare.com/agents/) (stateless, MCP SDK v2). Every tool starts with `loadAuthorizedUser(env)` rather than reading the grant's `userId` directly — see below; `subscription_status` shows the entitlement-gating pattern against the shared `entitlements` table.
 - **Shared D1**: the worker binds the *same* `database_id` as the Nuxt app (D1 bindings are shareable). The app owns schema + migrations; the worker reads with plain SQL.
 

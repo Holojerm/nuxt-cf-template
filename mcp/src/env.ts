@@ -12,6 +12,12 @@ export interface Env {
    * it is a plain var in wrangler.jsonc rather than a secret. Empty = 404.
    */
   OPENAI_APPS_CHALLENGE?: string
+  /**
+   * The app's origin, where /authorize sends a browser to sign in. Unset in
+   * production, where it is `fleet.json › urls.prod`; set it in `.dev.vars`
+   * to point `wrangler dev` at a local app.
+   */
+  APP_URL?: string
 }
 
 // Application props attached to every grant at completeAuthorization() and
