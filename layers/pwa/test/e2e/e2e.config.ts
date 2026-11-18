@@ -11,6 +11,10 @@ export default {
   env: {
     NUXT_PWA_VAPID_PRIVATE_KEY: keys.privateKey,
     NUXT_PUBLIC_PWA_VAPID_PUBLIC_KEY: keys.publicKey,
+    // pwa.spec.ts finds the offline page by its wording. A fork sets its own in
+    // nuxt.config and cannot edit a vendored spec, so the suites pin the defaults.
+    NUXT_PUBLIC_PWA_OFFLINE_TITLE: 'You are offline',
+    NUXT_PUBLIC_PWA_OFFLINE_RETRY: 'Try again',
   },
   globalTeardown: ['./global-teardown.ts'],
 } satisfies LayerE2e
