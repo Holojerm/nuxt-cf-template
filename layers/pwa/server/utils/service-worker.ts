@@ -6,6 +6,9 @@
 // It answers navigations only. Each goes to the network, and the offline page
 // is the answer when the network gives none. Nothing a signed-in person sees is
 // ever written to a cache.
+//
+// It also shows the notifications `sendPush` sends (server/utils/push.ts) and
+// takes a click on one to the page it is about.
 
 import { PWA_CACHE_PREFIX } from '../../shared/utils/pwa-cache'
 
@@ -13,6 +16,11 @@ import { PWA_CACHE_PREFIX } from '../../shared/utils/pwa-cache'
 export interface ServiceWorkerScope {
   addEventListener(type: 'install' | 'activate', listener: (event: LifecycleEvent) => void): void
   addEventListener(type: 'fetch', listener: (event: FetchEvent) => void): void
+  addEventListener(type: 'push', listener: (event: PushEvent) => void): void
+  addEventListener(
+    type: 'notificationclick',
+    listener: (event: NotificationClickEvent) => void,
+  ): void
   caches: {
     open(name: string): Promise<{
       add(url: string): Promise<void>
@@ -23,8 +31,25 @@ export interface ServiceWorkerScope {
   }
   fetch(request: unknown): Promise<unknown>
   skipWaiting(): Promise<void>
-  clients: { claim(): Promise<void> }
-  registration: { navigationPreload?: { enable(): Promise<void> } }
+  clients: {
+    claim(): Promise<void>
+    matchAll(options: { type: 'window'; includeUncontrolled: boolean }): Promise<WindowClient[]>
+    openWindow(url: string): Promise<unknown>
+  }
+  registration: {
+    navigationPreload?: { enable(): Promise<void> }
+    showNotification(
+      title: string,
+      options: { body: string; icon: string; badge: string; data: { url: string } },
+    ): Promise<void>
+  }
+  /** The worker's own URL, which every notification link is resolved against. */
+  location: { href: string; origin: string }
+}
+
+interface WindowClient {
+  url: string
+  focus(): Promise<unknown>
 }
 
 interface LifecycleEvent {
@@ -38,6 +63,15 @@ interface FetchEvent {
   respondWith(response: Promise<unknown>): void
 }
 
+interface PushEvent extends LifecycleEvent {
+  /** Null for a push with no payload. */
+  data: { json(): unknown } | null
+}
+
+interface NotificationClickEvent extends LifecycleEvent {
+  notification: { close(): void; data?: { url?: unknown } }
+}
+
 export interface ServiceWorkerConfig {
   /** One cache per deploy, named with this prefix; the rest are deleted on activate. */
   cachePrefix: string
@@ -45,6 +79,12 @@ export interface ServiceWorkerConfig {
   version: string
   /** The offline page's URL, `app.baseURL` included. */
   offlineUrl: string
+  /** The title of a notification whose message carried none. */
+  appName: string
+  /** Where a notification with no usable link goes: `app.baseURL`. */
+  homeUrl: string
+  /** The icon on every notification, `app.baseURL` included. */
+  iconUrl: string
 }
 
 export function serviceWorker(scope: ServiceWorkerScope, config: ServiceWorkerConfig): void {
@@ -90,6 +130,52 @@ export function serviceWorker(scope: ServiceWorkerScope, config: ServiceWorkerCo
           if (offline) return offline
           throw error
         }
+      })(),
+    )
+  })
+
+  // A push must end in a notification: browsers revoke the subscription of a
+  // worker that receives pushes and shows nothing. So a message that cannot be
+  // read still shows one, under the app's name.
+  scope.addEventListener('push', (event) => {
+    let message: { title?: unknown; body?: unknown; url?: unknown } = {}
+    try {
+      const data: unknown = event.data?.json()
+      if (data && typeof data === 'object') message = data
+    } catch {
+      // Not JSON. Fall through to the bare notification.
+    }
+    const text = (value: unknown) => (typeof value === 'string' ? value : '')
+    event.waitUntil(
+      scope.registration.showNotification(text(message.title) || config.appName, {
+        body: text(message.body),
+        icon: config.iconUrl,
+        badge: config.iconUrl,
+        data: { url: text(message.url) || config.homeUrl },
+      }),
+    )
+  })
+
+  scope.addEventListener('notificationclick', (event) => {
+    event.notification.close()
+    event.waitUntil(
+      (async () => {
+        // The link came from our own server, but a notification is still not
+        // allowed to take anyone off this site.
+        let target = new URL(config.homeUrl, scope.location.href)
+        const link = event.notification.data?.url
+        if (typeof link === 'string' && link) {
+          try {
+            const asked = new URL(link, scope.location.href)
+            if (asked.origin === scope.location.origin) target = asked
+          } catch {
+            // Unparseable: home it is.
+          }
+        }
+        const windows = await scope.clients.matchAll({ type: 'window', includeUncontrolled: true })
+        const open = windows.find((client) => client.url === target.href)
+        if (open) await open.focus()
+        else await scope.clients.openWindow(target.href)
       })(),
     )
   })
