@@ -38,4 +38,10 @@ export interface AuthProps extends Record<string, unknown> {
    * actually revoked something — see loadAuthorizedUser().
    */
   grantedAt?: number
+  /**
+   * The client's registered name ("Claude", "Cursor"), for a tool that records
+   * who made a change. A label the client chose for itself, not an identity:
+   * never authorize on it. Optional for the same reason as `grantedAt`.
+   */
+  clientName?: string
 }

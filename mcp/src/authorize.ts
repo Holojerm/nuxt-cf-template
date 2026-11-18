@@ -219,7 +219,7 @@ async function finishSignin(request: Request, env: Env): Promise<Response> {
     userId: redeemed.userId,
     scope: oauthReq.scope ?? [],
     metadata: { clientName },
-    props: { userId: redeemed.userId, grantedAt: now } satisfies AuthProps,
+    props: { userId: redeemed.userId, grantedAt: now, clientName } satisfies AuthProps,
   })
   return new Response(null, {
     status: 302,
