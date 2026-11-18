@@ -59,6 +59,7 @@ import { z } from 'zod'
 
 import { completeOAuthSignIn, redirectToLoginError } from '../../utils/auth'
 import { logEvent } from '../../utils/log'
+import { h3Event } from '../../utils/request-event'
 
 /**
  * Apple sends the user's name exactly ONCE — on the very first authorization,
@@ -120,7 +121,7 @@ export default defineOAuthAppleEventHandler({
   config: { scope: 'name email' },
 
   async onSuccess(event, { user, payload }) {
-    return completeOAuthSignIn(event, {
+    return completeOAuthSignIn(h3Event(event), {
       profile: {
         provider: 'apple',
         // The address comes from the verified id_token, not from the form body.
@@ -137,6 +138,6 @@ export default defineOAuthAppleEventHandler({
 
   onError(event, error) {
     logEvent('error', 'oauth_failed', { provider: 'apple', message: error.message })
-    return redirectToLoginError(event, 'provider_error')
+    return redirectToLoginError(h3Event(event), 'provider_error')
   },
 })

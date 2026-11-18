@@ -7,9 +7,11 @@
 
 import { db } from '@nuxthub/db'
 import type { WebAuthnCredential } from '#auth-utils'
+import { createError } from 'nuxt/server'
 
 import { establishSession } from '#server/utils/auth'
 import { rateLimit } from '#server/utils/rate-limit'
+import { h3Event, requestEvent } from '#server/utils/request-event'
 import { findUserById, isUndeliverableAddress } from '#server/utils/users'
 import { requireCredentialsEnabled } from '../../../utils/credentials-config'
 import { CREDENTIALS_LIMITS } from '../../../utils/credentials-limits'
@@ -22,12 +24,14 @@ import {
 } from '../../../utils/credentials-passkeys'
 
 const refuse = (code: string) =>
-  createError({ statusCode: 400, message: 'That passkey cannot be used', data: { code } })
+  createError({ status: 400, message: 'That passkey cannot be used', data: { code } })
 
 /** Where onSuccess leaves the account id for the wrapper's response. */
 const SIGNED_IN_USER = 'credentialsPasskeyUser'
 
-const authenticate = defineWebAuthnAuthenticateEventHandler({
+const authenticate = defineWebAuthnAuthenticateEventHandler<
+  WebAuthnCredential & { userId: string }
+>({
   storeChallenge: (_event, challenge, attemptId) => storePasskeyChallenge(db, attemptId, challenge),
   async getChallenge(_event, attemptId) {
     const challenge = await takePasskeyChallenge(db, attemptId)
@@ -50,7 +54,7 @@ const authenticate = defineWebAuthnAuthenticateEventHandler({
     const user = await findUserById(db, credential.userId)
     if (!user || isUndeliverableAddress(user.email)) throw refuse('passkey_unknown')
     await touchPasskey(db, credential.id, authenticationInfo.newCounter)
-    await establishSession(event, {
+    await establishSession(h3Event(event), {
       profile: {
         provider: 'credentials',
         email: user.email,
@@ -70,7 +74,7 @@ const authenticate = defineWebAuthnAuthenticateEventHandler({
 export default defineEventHandler(async (event) => {
   requireCredentialsEnabled(event)
   await rateLimit(event, CREDENTIALS_LIMITS.passkeySignIn)
-  const result = await authenticate(event)
+  const result = await authenticate(requestEvent(event))
   const userId = event.context[SIGNED_IN_USER] as string | undefined
   // The first call returns the request options; only the second signs in.
   return userId ? { verified: true, user: { id: userId } } : result

@@ -2,8 +2,8 @@
 // each ceremony, and the credentials an account has registered.
 
 import { and, desc, eq, gt, lt } from 'drizzle-orm'
-import { createError } from 'h3'
-import type { H3Error, H3Event } from 'h3'
+import { createError } from 'nuxt/server'
+import type { NuxtError, RequestEvent } from 'nuxt/server'
 
 import * as tables from '../db/schema'
 import type { CredentialPasskey } from '../db/schema'
@@ -154,12 +154,16 @@ export type PasskeySummary = ReturnType<typeof passkeySummary>
  * refusals (4xx, with a code) pass through. Anything else is a response that
  * did not verify, which the handler reports as a 500; it is answered as a 400,
  * so a forged assertion cannot fill the ops spool that alerts are raised from.
+ *
+ * The handlers keep a thrown error's status only when it has a `status` field,
+ * which h3 v1's `createError` does not set, so every refusal thrown inside a
+ * WebAuthn callback uses `createError` from `nuxt/server`.
  */
-export function passkeyCeremonyFailed(_event: H3Event, error: H3Error): never {
-  if (error.statusCode < 500) throw error
+export function passkeyCeremonyFailed(_event: RequestEvent, error: NuxtError): never {
+  if ((error.status ?? 500) < 500) throw error
   logEvent('warn', 'credentials_passkey_rejected', { message: error.message })
   throw createError({
-    statusCode: 400,
+    status: 400,
     message: 'That passkey could not be verified',
     data: { code: 'passkey_rejected' },
   })

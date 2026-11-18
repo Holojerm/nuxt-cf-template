@@ -30,7 +30,7 @@ export default defineOAuthGitHubEventHandler({
   async onSuccess(event, { user }) {
     const profile = user as GitHubUser
 
-    return completeOAuthSignIn(event, {
+    return completeOAuthSignIn(h3Event(event), {
       profile: {
         provider: 'github',
         email: profile.email ?? '',
@@ -48,6 +48,6 @@ export default defineOAuthGitHubEventHandler({
 
   onError(event, error) {
     logEvent('error', 'oauth_failed', { provider: 'github', message: error.message })
-    return redirectToLoginError(event, 'provider_error')
+    return redirectToLoginError(h3Event(event), 'provider_error')
   },
 })
