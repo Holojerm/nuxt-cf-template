@@ -136,7 +136,7 @@ During submission the portal issues a token and fetches it from `https://<mcp-ho
 
 The worker has a Workers Build of its own, separate from the app's, because one build can deploy
 only its own Worker ([gotchas.md](gotchas.md)). On every push to the production branch Cloudflare
-builds it from `mcp/` and runs `bun run deploy:ci` there, which:
+builds it from `mcp/`: `bun run build:ci` (the typecheck), then `bun run deploy:ci`, which:
 
 1. refuses if the build belongs to another Worker (`mcp/scripts/guard-deploy.ts`);
 2. waits, up to ten minutes, until the app's migrations are applied to the shared D1
@@ -155,6 +155,15 @@ Setting it up, once per fork:
 token with "Workers Builds Configuration: Edit" and "Workers Scripts: Read". The Builds API
 refuses account-scoped tokens, and the token `wrangler login` holds does not carry the first
 permission.
+
+A pull request's branch gets the build command only, as a check named `Workers Builds: <worker>`.
+Its deploy command is an `echo`: a preview version of this worker would run with the production
+database and the production OAuth store.
+
+Two things the Builds API does that its reference does not say, both handled by the script:
+creating a build stores the production settings and drops the branch settings sent with them, and
+the first write of the branch settings must be complete. Build variables are merged, not replaced,
+so the script never removes one a fork set by hand.
 
 The build has no watch paths on purpose: a worker left behind an app deploy reads a schema that
 has moved, and a rebuild that changes nothing costs seconds.

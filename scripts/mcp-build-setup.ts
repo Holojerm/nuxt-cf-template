@@ -94,6 +94,7 @@ if (dryRun) {
       {
         ...want,
         production_settings: { ...want.production_settings, build_token_uuid: "(the app's)" },
+        previews_base_config: { ...want.previews_base_config, build_token_uuid: "(the app's)" },
       },
       null,
       2,
@@ -102,10 +103,31 @@ if (dryRun) {
   process.exit(0)
 }
 
-const saved = have
-  ? await api<BuildConfig>('PATCH', `/builds/workers/${mcpTag}`, want)
-  : await api<BuildConfig>('POST', '/builds/workers', want)
-if (!saved.success) fail(`Cloudflare refused the configuration: ${why(saved)}`)
+// Two requests, because that is what the API accepts. Creating a build stores
+// the production settings and ignores the branch settings sent with it; those
+// are then written by a PATCH of their own, complete.
+if (!have) {
+  const created = await api<BuildConfig>('POST', '/builds/workers', {
+    script_tag: want.script_tag,
+    git_repository: want.git_repository,
+    production_settings: want.production_settings,
+    previews_enabled: want.previews_enabled,
+  })
+  if (!created.success) fail(`Cloudflare refused the build: ${why(created)}`)
+}
+const saved = await api<BuildConfig>('PATCH', `/builds/workers/${mcpTag}`, {
+  git_repository: want.git_repository,
+  production_settings: want.production_settings,
+  previews_enabled: want.previews_enabled,
+  previews_base_config: want.previews_base_config,
+})
+if (!saved.success) fail(`Cloudflare refused the settings: ${why(saved)}`)
+
+// Read back rather than trusted: the create call accepts fields it then drops.
+const stored = await api<BuildConfig>('GET', `/builds/workers/${mcpTag}`)
+if (!stored.success || !isCurrent(stored.result, want)) {
+  fail('Cloudflare accepted the settings but did not store them all; compare with --dry-run')
+}
 
 console.info(
   `mcp:build:setup — "${mcpName}" now has its own Workers Build (root ${want.production_settings.root_directory}/, ` +
