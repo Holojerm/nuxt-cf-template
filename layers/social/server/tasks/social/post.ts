@@ -11,10 +11,12 @@ import { db } from '@nuxthub/db'
 import { recordOpsEvent } from '#server/utils/ops'
 
 import { createBufferPublisher } from '../../utils/buffer'
-import { drainSocialPosts, readSocialConfig } from '../../utils/social'
+import { drainSocialPosts, readSocialConfig, type SocialDrainResult } from '../../utils/social'
 import { logEvent } from '#server/utils/log'
 
-export default defineTask({
+// The result type is spelled out because TypeScript infers it from the first
+// `return` alone, and this task has two shapes.
+export default defineTask<{ skipped: 'unconfigured' } | SocialDrainResult>({
   meta: {
     name: 'social:post',
     description: 'Send due posts from the social outbox through Buffer',

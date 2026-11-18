@@ -10,6 +10,10 @@
 // holds identity, not state: read entitlements from the DB
 // (layers/billing/server/utils/billing.ts), never from the session, or a user who cancels
 // keeps their access until the cookie expires.
+//
+// Lives in shared/ because the app and server projects both include
+// `shared/**/*.d.ts`. Under app/types/ only the app saw it, and every
+// `session.user.id` in server/ was a type error nothing reported.
 
 declare module '#auth-utils' {
   interface User {

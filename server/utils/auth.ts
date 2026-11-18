@@ -141,7 +141,7 @@ export async function establishSession(
   // `replaceUserSession` drops every key of the previous session before writing.
   // It did not before nuxt-auth-utils 0.6 (it shallow-merged over the request
   // cookie), so the payload still writes every top-level key of `UserSession`
-  // (app/types/auth.d.ts): buildSessionPayload() and
+  // (shared/types/auth.d.ts): buildSessionPayload() and
   // test/session-payload.test.ts keep that checkable, whatever the module does.
   // Never `setUserSession`, which deep-merges via defu and skips nulls, so a
   // null avatarUrl would inherit the previous account's picture.
