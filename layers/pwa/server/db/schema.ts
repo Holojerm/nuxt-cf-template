@@ -1,6 +1,6 @@
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
-// The pwa layer's table. NuxtHub merges every layer's server/db/schema.ts into
+// The pwa layer's tables. NuxtHub merges every layer's server/db/schema.ts into
 // `hub:db`; migrations stay app-owned, generated from that merged schema.
 
 // A copy of core's timestamps helper: a layer schema imports only drizzle, so
@@ -48,3 +48,32 @@ export const pushSubscriptions = sqliteTable(
 
 export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect
 export type NewPushSubscriptionRow = typeof pushSubscriptions.$inferInsert
+
+// Idempotency keys: one row per write a client sent with an `Idempotency-Key`
+// header (the outbox does, on every attempt), holding the answer the first
+// attempt got. A replay after a lost response is given that answer back and
+// writes nothing (server/utils/idempotency.ts, idempotency-keys.ts).
+//
+// Keyed per account: a key is the client's own UUID, and one person's key must
+// never answer for another's. `status` is NULL while the first attempt is
+// still running. Rows are swept after IDEMPOTENCY_KEY_DAYS by the purge task.
+export const idempotencyKeys = sqliteTable(
+  'pwa_idempotency_keys',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text('user_id').notNull(),
+    key: text('key').notNull(),
+    // The first attempt's HTTP status and JSON body.
+    status: integer('status'),
+    response: text('response'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('pwa_idempotency_keys_user_key_idx').on(table.userId, table.key),
+    index('pwa_idempotency_keys_created_at_idx').on(table.createdAt),
+  ],
+)
+
+export type IdempotencyKeyRow = typeof idempotencyKeys.$inferSelect
