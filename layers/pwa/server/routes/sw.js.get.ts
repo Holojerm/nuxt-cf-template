@@ -19,5 +19,8 @@ export default defineEventHandler((event) => {
   return renderServiceWorker({
     version: config.app.buildId,
     offlineUrl: withBase(config.app.baseURL, '/offline'),
+    appName: config.public.appName,
+    homeUrl: config.app.baseURL,
+    iconUrl: withBase(config.app.baseURL, '/icon-192.png'),
   })
 })
