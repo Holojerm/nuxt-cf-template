@@ -33,7 +33,10 @@ export function usePasskeys() {
   })
 
   const deps = (): CeremonyDeps => ({
-    post: (url, body) => $fetch(url, { method: 'POST', body }),
+    // Explicit type arguments: inferring the route from a plain `string` makes
+    // Nuxt 4.6's typed-route matcher recurse past TypeScript's depth limit.
+    post: <T>(url: string, body: Record<string, unknown>) =>
+      $fetch<T, string>(url, { method: 'POST', body }),
     startRegistration,
     startAuthentication,
     rpId: window.location.hostname,

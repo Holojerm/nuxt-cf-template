@@ -363,7 +363,9 @@ export default defineNuxtConfig({
       const entries: PublicPage[] = []
       const collect = (list: typeof pages) => {
         for (const page of list) {
-          const meta = page.meta?.publicPage
+          // Build-time page meta is typed `unknown` per key; app/types/seo.d.ts
+          // declares this key's shape for `definePageMeta`.
+          const meta = page.meta?.publicPage as Omit<PublicPage, 'path'> | undefined
           // Dynamic segments have no single URL to publish — a route like
           // /posts/[id] is one pattern, not N pages. Those need a D1 query in
           // server/routes/sitemap.xml.get.ts, not a route-table entry.

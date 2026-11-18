@@ -107,8 +107,8 @@ useSeo({
         <div class="flex items-start gap-3">
           <UIcon name="i-lucide-circle-check" class="mt-1 size-5 shrink-0 text-primary" />
           <p class="text-muted">
-            Done — you're unsubscribed from <span class="text-highlighted">{{ label }}</span
-            >. You can turn it back on any time from your account settings.
+            Done — you're unsubscribed from <span class="text-highlighted">{{ label }}</span>. You
+            can turn it back on any time from your account settings.
           </p>
         </div>
         <UButton to="/account" color="neutral" variant="outline" block>
@@ -118,8 +118,8 @@ useSeo({
 
       <div v-else-if="params" class="flex flex-col gap-4">
         <p class="text-muted">
-          Unsubscribe from <span class="text-highlighted">{{ label }}</span
-          >? Billing and security email will keep coming — those aren't optional.
+          Unsubscribe from <span class="text-highlighted">{{ label }}</span>? Billing and security
+          email will keep coming — those aren't optional.
         </p>
 
         <UAlert
