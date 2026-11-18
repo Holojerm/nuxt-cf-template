@@ -172,6 +172,27 @@ or a `NODE_VERSION` build variable.
 
 Production is unaffected — there the store is D1 (`content.database`), not a file.
 
+## With no `node` on the PATH, `nuxt dev` silently runs under Bun — and SSR breaks
+
+The section above assumes the `nuxt` bin's node shebang finds Node. On a machine that has
+only Bun (the Mac mini was set up that way), `bun run dev:app` and the Playwright suites'
+web server run `nuxt dev` **on Bun itself**, with no warning. CI never does: the browser-suites
+workflow runs `actions/setup-node` from `.node-version`, and the runner image bakes in Node.
+
+Under Bun, every page that renders a component importing `zod` (the feedback widget is in the
+default layout, so that is nearly every page) returns 500:
+`undefined is not an object (evaluating '__vite_ssr_import_N__.z.object')`. Vite externalizes
+`zod`; Bun answers `true` to `'__esModule' in ns` for zod's ESM namespace and for its default
+export, so vite-node's `interopModule` swaps the module for its default export — the `z`
+namespace, which has every export except `z`. The error text is JavaScriptCore's, not V8's:
+that is the tell that Node is not what is running. Seen on Bun 1.4.0 and 1.4.4.
+
+The fix is the environment, not the app: install the Node that `.node-version` names
+(`mise use -g node@24`, or let your version manager read `.node-version`). `which node` should
+print a path before you trust a local browser run. `vite.ssr.noExternal: ['zod']` makes the
+pages render under Bun, but it is a local workaround for an environment CI does not have —
+do not commit it.
+
 ## The dev server caches its DB connection — external writes need a restart
 
 `bun seed` (and anything else writing to `.data/db/sqlite.db` with `bun:sqlite`) writes the file
