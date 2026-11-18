@@ -89,6 +89,9 @@ export default defineConfig({
 
   use: {
     baseURL: HOST,
+    // layers/pwa registers a worker that answers navigations. Only its own
+    // spec lets it in, so no other suite's requests pass through one.
+    serviceWorkers: 'block',
     // Only kept for failures, so a green run leaves nothing behind.
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

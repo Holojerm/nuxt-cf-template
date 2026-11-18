@@ -33,6 +33,7 @@ export const TEMPLATE_LAYERS: readonly string[] = [
   'credentials',
   'feedback',
   'files',
+  'pwa',
   'referral',
   'social',
 ]
