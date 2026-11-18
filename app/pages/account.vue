@@ -116,23 +116,14 @@ async function openBillingPortal(): Promise<void> {
   }
 }
 
-// ── MCP connect code ────────────────────────────────────────────────────────
-// Single-use, 10-minute code that bridges this session to the MCP worker's
-// OAuth flow. Shown once — only its hash is stored (server/api/mcp/connect-code).
-const connectCode = ref<string | null>(null)
-// The address a client is given. Empty until NUXT_PUBLIC_MCP_URL is set, and
-// then the card says what to paste where instead of assuming the user knows.
+// ── MCP server address ──────────────────────────────────────────────────────
+// All a client needs: adding it opens this app's sign-in (/auth/mcp) and a
+// page to approve the connection. Empty until NUXT_PUBLIC_MCP_URL is set, and
+// then there is no server to show a card for.
 const mcpEndpoint = computed(() => {
   const origin = mcpOrigin(config.public.mcpUrl)
   return origin ? `${origin}/mcp` : ''
 })
-const { pending: connectPending, run: mintConnectCode } = useAsyncAction(
-  async () => {
-    const result = await $fetch('/api/mcp/connect-code', { method: 'POST' })
-    connectCode.value = result.code
-  },
-  { errorTitle: 'Could not create a connect code' },
-)
 
 // Every other device's cookie dies on its next request; this one is re-issued
 // by the route, so nothing here has to change client state.
@@ -500,46 +491,17 @@ useSeo({
     <ReferralShareCard />
 
     <!-- MCP -->
-    <UCard>
+    <UCard v-if="mcpEndpoint">
       <template #header>
         <h2 class="text-xl text-highlighted">Connect an AI client</h2>
       </template>
 
       <div class="flex flex-col gap-4">
         <p class="text-muted">
-          Generate a single-use code to link this account to the MCP server from Claude, Cursor, or
-          any MCP-capable client. Codes expire after 10 minutes.
+          Add this server address as a connector in Claude, Cursor, or any MCP-capable client. It
+          opens a sign-in page here, where you approve the connection.
         </p>
-
-        <p v-if="mcpEndpoint" class="text-muted">
-          Add this server address in your client, then paste the code when it asks:
-          <code class="font-mono break-all text-highlighted">{{ mcpEndpoint }}</code>
-        </p>
-
-        <UAlert
-          v-if="connectCode"
-          color="success"
-          variant="subtle"
-          icon="i-lucide-key-round"
-          title="Your connect code"
-        >
-          <template #description>
-            <span class="font-mono text-lg tracking-widest text-highlighted">{{
-              connectCode
-            }}</span>
-            <p class="mt-2 text-sm">Paste it into the client's authorization page. Shown once.</p>
-          </template>
-        </UAlert>
-
-        <UButton
-          class="self-start"
-          color="neutral"
-          variant="outline"
-          :loading="connectPending"
-          @click="mintConnectCode()"
-        >
-          {{ connectCode ? 'Generate another' : 'Generate code' }}
-        </UButton>
+        <code class="font-mono break-all text-highlighted">{{ mcpEndpoint }}</code>
       </div>
     </UCard>
 

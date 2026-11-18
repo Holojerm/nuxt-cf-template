@@ -292,7 +292,9 @@ account that only ever used a magic link has no password: "Forgot password" sets
 Nothing in the app depends on it — it is a second Worker that reads the same D1.
 
 1. `rm -rf mcp/`
-2. Delete [`server/api/mcp/connect-code.post.ts`](server/api/mcp/connect-code.post.ts).
+2. Delete [`server/api/mcp/connect-code.post.ts`](server/api/mcp/connect-code.post.ts),
+   [`server/utils/mcp-connect.ts`](server/utils/mcp-connect.ts),
+   [`app/pages/auth/mcp.vue`](app/pages/auth/mcp.vue) and `test/mcp-signin.test.ts`.
 3. Schema: drop the `mcp_connect_codes` table, then `bun db:generate`.
 4. Remove the connect-code sweep from [`server/utils/purge.ts`](server/utils/purge.ts)
    and its case in `test/purge.test.ts`. **Keep the magic-link sweep** — expired tokens
@@ -305,7 +307,7 @@ Nothing in the app depends on it — it is a second Worker that reads the same D
 6. Remove every `mcp:*` script from `package.json`, and `'mcp:check'` from the `cheap` list
    in [`scripts/ci.ts`](scripts/ci.ts).
 7. Remove the MCP step from the onboarding checklist in
-   [`shared/utils/onboarding.ts`](shared/utils/onboarding.ts) and the connect-code UI in
+   [`shared/utils/onboarding.ts`](shared/utils/onboarding.ts) and the server-address card in
    [`app/pages/account.vue`](app/pages/account.vue).
 8. Discovery and publishing. Delete:
    - [`server/routes/.well-known/ai-catalog.json.get.ts`](server/routes/.well-known/ai-catalog.json.get.ts),
