@@ -29,6 +29,9 @@ queue_rules:
   - name: default
     merge_method: squash
     batch_size: 3
+    # The automatic timeout (p95 of recent queue runs) is under 20 minutes, and drafts
+    # tested while the mini's runner is busy outlast it and get dequeued for nothing.
+    checks_timeout: 40 minutes
     queue_conditions:
       - base = main
       - -draft
