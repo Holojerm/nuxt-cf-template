@@ -57,8 +57,12 @@ export const GENERATED_ASSETS = [
  *
  * Bumped to '5' when brand-colors.generated.ts gained the `og-*` hex colors that
  * scripts/og-images.ts draws per-page share cards with.
+ *
+ * Bumped to '6' when og.png started waiting for its webfonts: before, it was
+ * shot before the Google Fonts stylesheet arrived, so every og.png drawn
+ * since the pipeline began used the generic fallback faces.
  */
-export const GENERATOR_VERSION = '5'
+export const GENERATOR_VERSION = '6'
 
 export interface BrandColor {
   /** The `--color-*` token named in DESIGN.md › Brand mark. */
