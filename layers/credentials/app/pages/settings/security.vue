@@ -6,7 +6,7 @@ import type { PasskeyRow } from '../../composables/usePasskeys'
 definePageMeta({ layout: 'default', middleware: ['credentials', 'auth'] })
 
 const toast = useToast()
-const { changePassword } = useCredentials()
+const { changePassword, setPassword } = useCredentials()
 const passkeys = usePasskeys()
 
 const { data: me, refresh: refreshMe } = await useFetch('/api/credentials/me')
@@ -37,6 +37,25 @@ async function submitPassword() {
       description: 'Your other devices have been signed out.',
       color: 'success',
     })
+  } catch (error) {
+    passwordFailure.value = credentialsErrorMessage(error)
+  } finally {
+    passwordPending.value = false
+  }
+}
+
+// An account made with a passkey has no password until it sets one here.
+const firstSchema = z.object({ password: credentialsPasswordFieldSchema })
+const firstState = reactive({ password: '' })
+
+async function submitFirstPassword() {
+  passwordPending.value = true
+  passwordFailure.value = null
+  try {
+    await setPassword(firstState.password)
+    firstState.password = ''
+    await refreshMe()
+    toast.add({ title: 'Password set', color: 'success' })
   } catch (error) {
     passwordFailure.value = credentialsErrorMessage(error)
   } finally {
@@ -141,12 +160,40 @@ useSeo({
         </div>
       </UForm>
 
-      <div v-else class="flex flex-col items-start gap-4">
+      <UForm
+        v-else
+        :schema="firstSchema"
+        :state="firstState"
+        class="flex max-w-md flex-col gap-4"
+        @submit="submitFirstPassword"
+      >
         <p class="text-sm text-muted">
-          This account has no password yet. We can email you a link to set one.
+          This account has no password yet. With one, you can sign in on a computer that doesn't
+          have your passkey.
         </p>
-        <UButton to="/auth/reset" color="neutral" variant="outline">Set a password</UButton>
-      </div>
+        <UFormField
+          label="New password"
+          name="password"
+          :help="`At least ${CREDENTIALS_MIN_PASSWORD_LENGTH} characters.`"
+        >
+          <UInput
+            v-model="firstState.password"
+            type="password"
+            autocomplete="new-password"
+            class="w-full"
+          />
+        </UFormField>
+        <UAlert
+          v-if="passwordFailure"
+          color="error"
+          variant="subtle"
+          icon="i-lucide-circle-alert"
+          :description="passwordFailure"
+        />
+        <div>
+          <UButton type="submit" :loading="passwordPending">Set a password</UButton>
+        </div>
+      </UForm>
     </UCard>
 
     <UCard>

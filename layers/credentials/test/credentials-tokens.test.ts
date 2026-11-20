@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { purgeCredentialTokens } from '../server/utils/credentials-extensions'
 import { CREDENTIALS_MAIL_BUDGET } from '../server/utils/credentials-limits'
 import { hashNewPassword, passwordUpsert } from '../server/utils/credentials-password'
-import { storePasskeyChallenge } from '../server/utils/credentials-passkeys'
-import { redeemSignUp, startSignUp } from '../server/utils/credentials-signup'
+import { savePasskey, storePasskeyChallenge } from '../server/utils/credentials-passkeys'
+import { peekSignUp, redeemSignUp, startSignUp } from '../server/utils/credentials-signup'
 import {
   consumeCredentialToken,
   CREDENTIAL_TOKEN_TTL_SECONDS,
@@ -150,6 +150,39 @@ describe('sign-up', () => {
     await addUser('u1', 'ada@example.com')
     const { token } = await startSignUp(db, { email: 'ada@example.com', attribution: null }, NOW)
     expect((await redeemSignUp(db, token, NOW + MINUTE)).ok).toBe(true)
+  })
+
+  it('refuses an address that already signs in with a passkey', async () => {
+    await addUser('u1', 'ada@example.com')
+    await savePasskey(
+      db,
+      'u1',
+      { id: 'cred-1', publicKey: 'pk', counter: 0, backedUp: true },
+      { name: 'iPhone', prfCapable: true },
+    )
+    const { token } = await startSignUp(db, { email: 'ada@example.com', attribution: null }, NOW)
+    expect(await peekSignUp(db, token, NOW + MINUTE)).toEqual({
+      ok: false,
+      reason: 'already_registered',
+    })
+    expect(await redeemSignUp(db, token, NOW + MINUTE)).toEqual({
+      ok: false,
+      reason: 'already_registered',
+    })
+  })
+
+  it('peeks without spending: the passkey ceremony spends the token on its second call', async () => {
+    const { token } = await startSignUp(db, { email: 'ada@example.com', attribution: null }, NOW)
+    const pending = { ok: true, pending: { email: 'ada@example.com', attribution: null } }
+    expect(await peekSignUp(db, token, NOW + MINUTE)).toEqual(pending)
+    expect(await peekSignUp(db, token, NOW + MINUTE)).toEqual(pending)
+    expect(await redeemSignUp(db, token, NOW + MINUTE)).toEqual(pending)
+    expect(await peekSignUp(db, token, NOW + MINUTE)).toEqual({ ok: false, reason: 'used' })
+
+    const late = NOW + CREDENTIAL_TOKEN_TTL_SECONDS.verify * 1000 + 1
+    const other = await startSignUp(db, { email: 'b@example.com', attribution: null }, NOW)
+    expect(await peekSignUp(db, other.token, late)).toEqual({ ok: false, reason: 'expired' })
+    expect(await peekSignUp(db, 'not-a-token', NOW)).toEqual({ ok: false, reason: 'invalid' })
   })
 
   it('refuses a verification token whose time has passed, or one minted for a reset', async () => {

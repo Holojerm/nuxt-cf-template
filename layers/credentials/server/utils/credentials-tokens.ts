@@ -129,6 +129,28 @@ export async function consumeCredentialToken(
   return { ok: false, reason: existing.usedAt ? 'used' : 'expired' }
 }
 
+/**
+ * Read a token without spending it, for the first call of a two-call passkey
+ * ceremony. The second call spends it, and decides again from what it spent.
+ */
+export async function peekCredentialToken(
+  db: ExtensionDb,
+  purpose: CredentialTokenPurpose,
+  token: string,
+  now: number = Date.now(),
+): Promise<CredentialTokenResult> {
+  const record = await db.query.credentialTokens.findFirst({
+    where: and(
+      eq(tables.credentialTokens.tokenHash, await hashCredentialToken(token)),
+      eq(tables.credentialTokens.purpose, purpose),
+    ),
+  })
+  if (!record) return { ok: false, reason: 'invalid' }
+  if (record.usedAt) return { ok: false, reason: 'used' }
+  if (record.expiresAt.getTime() <= now) return { ok: false, reason: 'expired' }
+  return { ok: true, record }
+}
+
 /** Remove a token whose mail could not be sent, so it cannot be spent by whoever finds it. */
 export async function discardCredentialToken(db: ExtensionDb, id: string): Promise<void> {
   await db.delete(tables.credentialTokens).where(eq(tables.credentialTokens.id, id))

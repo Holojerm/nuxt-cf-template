@@ -155,6 +155,67 @@ export async function registerPasskey(
   return { credentialId: response.id, prf: result }
 }
 
+export interface CreateAccountWithPasskeyInput {
+  endpoint: string
+  user: { token: string; label: string; name?: string | null }
+  prf: boolean
+  /**
+   * Refuse a passkey that returns no PRF output, before the second call: an app
+   * that keeps its keys under PRF cannot make an account's first keys without
+   * it, and the mailed link stays usable for a password.
+   */
+  requirePrf: boolean
+}
+
+export interface CreateAccountWithPasskeyResult extends PasskeyCeremonyResult {
+  userId: string
+}
+
+/** Thrown, with nothing posted, when `requirePrf` is set and the passkey has none. */
+export const PRF_UNAVAILABLE = 'passkey_prf_unavailable'
+
+/**
+ * Finish a sign-up with a new passkey. Unlike `registerPasskey`, the PRF output
+ * is fetched before the server is told, so a passkey without one costs nothing
+ * but the passkey itself.
+ */
+export async function createAccountWithPasskey(
+  deps: CeremonyDeps,
+  { endpoint, user, prf, requirePrf }: CreateAccountWithPasskeyInput,
+): Promise<CreateAccountWithPasskeyResult> {
+  // `userName` is required by the handler and replaced by the server from the token.
+  const body = { userName: 'new-account', ...user }
+  const { creationOptions, attemptId } = await deps.post<{
+    creationOptions: CeremonyOptions
+    attemptId: string
+  }>(endpoint, { user: { ...body, prfCapable: false }, verify: false })
+
+  const response = await run(
+    deps.startRegistration,
+    prf ? withPrf(creationOptions) : creationOptions,
+  )
+  let result = readPrf(response.clientExtensionResults, prf)
+  const capable =
+    prf && (result.status === 'provided' || response.clientExtensionResults?.prf?.enabled === true)
+  if (capable && result.status !== 'provided') {
+    result = await evaluatePrf(deps, {
+      id: response.id,
+      transports: response.response.transports,
+    })
+  }
+  if (requirePrf && result.status !== 'provided') {
+    throw Object.assign(new Error(PRF_UNAVAILABLE), { data: { data: { code: PRF_UNAVAILABLE } } })
+  }
+
+  const { user: created } = await deps.post<{ user: { id: string } }>(endpoint, {
+    user: { ...body, prfCapable: capable },
+    attemptId,
+    response: withoutPrf(response),
+    verify: true,
+  })
+  return { userId: created.id, credentialId: response.id, prf: result }
+}
+
 export interface SignInWithPasskeyResult extends PasskeyCeremonyResult {
   userId: string
 }

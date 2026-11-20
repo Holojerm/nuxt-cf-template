@@ -16,6 +16,9 @@ const CREDENTIALS_ERROR_MESSAGES: Record<string, string> = {
   passkey_rejected: "That passkey couldn't be verified. Try again, or sign in another way.",
   passkey_limit: 'Remove a passkey before adding another.',
   passkey_cancelled: 'The passkey prompt was dismissed. Try again when you are ready.',
+  passkey_prf_unavailable: "This device can't be used for this account. Choose a password instead.",
+  password_exists: 'This account already has a password. Change it instead.',
+  passkey_last: "This is how you sign in. Set a password first, so you aren't locked out.",
 }
 
 export function credentialsErrorCode(error: unknown): string {
