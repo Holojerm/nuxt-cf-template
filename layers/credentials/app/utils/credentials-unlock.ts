@@ -18,6 +18,7 @@ export type CredentialsUnlockReason =
   | 'unlock'
   | 'password-change'
   | 'password-reset'
+  | 'password-set'
   | 'passkey-sign-in'
   | 'passkey-register'
 

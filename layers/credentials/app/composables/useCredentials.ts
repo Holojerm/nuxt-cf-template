@@ -172,5 +172,33 @@ export function useCredentials() {
     })
   }
 
-  return { signUp, completeSignUp, signIn, unlock, changePassword, requestReset, completeReset }
+  /**
+   * A first password for an account that signs in only with a passkey. Fires
+   * `password-set` with the new unlock key, so the app can wrap what this
+   * device already holds.
+   */
+  async function setPassword(password: string): Promise<void> {
+    const userId = requireUserId()
+    const kdf = newKdf()
+    const { proof, unlockKey } = await deriveCredentials(password, kdf)
+    await post('/api/credentials/password/first', { ...kdf, proof })
+    await finish({
+      reason: 'password-set',
+      userId,
+      unlockKey,
+      previousUnlockKey: null,
+      passkey: null,
+    })
+  }
+
+  return {
+    signUp,
+    completeSignUp,
+    signIn,
+    unlock,
+    changePassword,
+    setPassword,
+    requestReset,
+    completeReset,
+  }
 }

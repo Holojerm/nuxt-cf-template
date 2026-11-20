@@ -17,7 +17,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { CeremonyDeps } from '../app/utils/passkey-ceremony'
 import {
+  createAccountWithPasskey,
   PASSKEY_PRF_INPUT,
+  PRF_UNAVAILABLE,
   registerPasskey,
   signInWithPasskey,
 } from '../app/utils/passkey-ceremony'
@@ -35,6 +37,7 @@ import {
   takePasskeyChallenge,
   touchPasskey,
 } from '../server/utils/credentials-passkeys'
+import { passwordUpsert } from '../server/utils/credentials-password'
 import { addUser, db, resetCredentialTables } from './lib/fixtures'
 import { createSoftAuthenticator } from './lib/soft-authenticator'
 import type { PrfSupport, SoftAuthenticator } from './lib/soft-authenticator'
@@ -93,7 +96,7 @@ function server() {
         },
         { name: body.user.label, prfCapable: body.user.prfCapable },
       )
-      return { verified } as T
+      return { verified, user: { id: 'u1' } } as T
     }
 
     const passkey = await findPasskey(db, body.response.id)
@@ -242,6 +245,67 @@ describe('PRF hand-off', () => {
   })
 })
 
+describe('sign-up with a passkey', () => {
+  const signUp = { token: 'mailed-token', label: 'iPhone' }
+
+  it('makes the account with the PRF output in hand, and posts none of it', async () => {
+    const { deps, authenticator, posted } = await setup('full')
+    const created = await createAccountWithPasskey(deps, {
+      endpoint: REGISTER,
+      user: signUp,
+      prf: true,
+      requirePrf: true,
+    })
+    expect(created).toMatchObject({ userId: 'u1', credentialId: authenticator.credentialId })
+    expect(created.prf.output).toHaveLength(32)
+    expect(posted.map((body) => body.user.token)).toEqual(['mailed-token', 'mailed-token'])
+    expectNoPrfPosted(posted, authenticator)
+
+    const signedIn = await signInWithPasskey(deps, { endpoint: SIGN_IN, prf: true })
+    expect([...signedIn.prf.output!]).toEqual([...created.prf.output!])
+  })
+
+  it('asks a passkey that evaluates PRF only on use before telling the server', async () => {
+    const { deps, authenticator, posted } = await setup('on-assertion')
+    const created = await createAccountWithPasskey(deps, {
+      endpoint: REGISTER,
+      user: signUp,
+      prf: true,
+      requirePrf: true,
+    })
+    expect(created.prf.status).toBe('provided')
+    expect(authenticator.seen).toHaveLength(2)
+    expect(posted).toHaveLength(2)
+    expect((await listPasskeys(db, 'u1'))[0]?.prfCapable).toBe(true)
+  })
+
+  it('stops after the first call when PRF is required and absent, so the link still works', async () => {
+    const { deps, posted } = await setup('none')
+    await expect(
+      createAccountWithPasskey(deps, {
+        endpoint: REGISTER,
+        user: signUp,
+        prf: true,
+        requirePrf: true,
+      }),
+    ).rejects.toMatchObject({ data: { data: { code: PRF_UNAVAILABLE } } })
+    expect(posted.map((body) => body.verify)).toEqual([false])
+    expect(await listPasskeys(db, 'u1')).toEqual([])
+  })
+
+  it('goes ahead without PRF when the app does not need it', async () => {
+    const { deps } = await setup('none')
+    const created = await createAccountWithPasskey(deps, {
+      endpoint: REGISTER,
+      user: signUp,
+      prf: false,
+      requirePrf: false,
+    })
+    expect(created.prf.status).toBe('not-requested')
+    expect(await listPasskeys(db, 'u1')).toHaveLength(1)
+  })
+})
+
 describe('storage', () => {
   it('spends a challenge on first read, and never returns an expired one', async () => {
     const now = Date.parse('2026-11-15T12:00:00Z')
@@ -266,10 +330,22 @@ describe('storage', () => {
     ])
     expect(passkeySummary((await findPasskey(db, 'c1'))!)).not.toHaveProperty('publicKey')
 
-    expect(await removePasskey(db, 'u1', 'c2')).toBe(false)
+    expect(await removePasskey(db, 'u1', 'c2')).toBe('not_found')
     expect(await findPasskey(db, 'c2')).not.toBeNull()
-    expect(await removePasskey(db, 'u2', 'c2')).toBe(true)
+    expect(await removePasskey(db, 'u2', 'c2')).toBe('removed')
     expect(await findPasskey(db, 'c2')).toBeNull()
+  })
+
+  it('keeps the last way in: an account with no password keeps its only passkey', async () => {
+    await savePasskey(db, 'u1', credential('c1'), { name: 'iPhone', prfCapable: true })
+    await savePasskey(db, 'u1', credential('c2'), { name: 'iPad', prfCapable: true })
+
+    expect(await removePasskey(db, 'u1', 'c1', { keepOne: true })).toBe('removed')
+    expect(await removePasskey(db, 'u1', 'c2', { keepOne: true })).toBe('last_way_in')
+    expect(await findPasskey(db, 'c2')).not.toBeNull()
+
+    await passwordUpsert(db, 'u1', { proofHash: 'h', salt: 's', iterations: 600_000 })
+    expect(await removePasskey(db, 'u1', 'c2', { keepOne: true })).toBe('removed')
   })
 
   it('stops at the per-account ceiling', async () => {
