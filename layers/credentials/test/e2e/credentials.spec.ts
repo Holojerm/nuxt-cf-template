@@ -96,6 +96,9 @@ async function signOut(page: Page): Promise<void> {
   expect(await sessionEmail(page)).toBeNull()
 }
 
+/** The button names the device's own unlock (Touch ID, Windows Hello…), which depends on the runner. */
+const SIGN_IN_WITH_PASSKEY = /^Sign in with /
+
 async function addVirtualAuthenticator(page: Page): Promise<CDPSession> {
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('WebAuthn.enable')
@@ -132,6 +135,8 @@ test('sign up by mail, sign in, passkey with PRF, change and reset the password'
   expect(await sessionEmail(page)).toBeNull()
 
   await open(page, await mailedLink(page, 'Open the confirmation link'))
+  // This browser can make a passkey, so that is offered first.
+  await page.getByRole('button', { name: 'Use a password instead' }).click()
   await page.getByLabel('Password').fill(first)
   await page.getByRole('button', { name: 'Create account' }).click()
   await expect.poll(() => sessionEmail(page), { timeout: 30_000 }).toBe(email)
@@ -195,7 +200,7 @@ test('sign up by mail, sign in, passkey with PRF, change and reset the password'
   // ── Passkey sign-in: no password, the same PRF secret as at registration ───
   await signOut(page)
   await open(page, '/auth/sign-in')
-  await page.getByRole('button', { name: 'Sign in with a passkey' }).click()
+  await page.getByRole('button', { name: SIGN_IN_WITH_PASSKEY }).click()
   await expect.poll(() => sessionEmail(page), { timeout: 30_000 }).toBe(email)
   const viaPasskey = await unlock(page, 'passkey-sign-in')
   expect(viaPasskey).toMatchObject({
@@ -226,4 +231,49 @@ test('sign up by mail, sign in, passkey with PRF, change and reset the password'
   await page.getByLabel('Password').fill(second)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.getByText('Wrong email or password.')).toBeVisible({ timeout: 30_000 })
+})
+
+test('sign up with a passkey and no password, then add one from the security page', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  const email = uniqueEmail('passkey-first')
+  const password = 'later-password-0004'
+  await addVirtualAuthenticator(page)
+
+  await open(page, '/auth/sign-up')
+  await page.getByLabel('Email').fill(email)
+  await page.getByRole('button', { name: 'Email me a link' }).click()
+  await expect(page.getByText('Check your inbox')).toBeVisible({ timeout: 30_000 })
+
+  await open(page, await mailedLink(page, 'Open the confirmation link'))
+  await page.getByRole('button', { name: /^Continue with / }).click()
+  await expect.poll(() => sessionEmail(page), { timeout: 30_000 }).toBe(email)
+  const signedUp = await unlock(page, 'sign-up')
+  expect(signedUp).toMatchObject({ reason: 'sign-up', unlockKey: null, prfStatus: 'provided' })
+  expect(signedUp.prf).toMatch(/^[0-9a-f]{64}$/)
+
+  // No password yet: the security page sets the first one without asking for another.
+  await open(page, '/settings/security')
+  await expect(page.getByText('This account has no password yet.')).toBeVisible()
+  await page.getByLabel('New password').fill(password)
+  await page.getByRole('button', { name: 'Set a password' }).click()
+  const set = await unlock(page, 'password-set')
+  expect(set.unlockKey).toMatch(/^[0-9a-f]{64}$/)
+  await expect(page.getByLabel('Current password')).toBeVisible()
+
+  // The passkey and the password both sign in now.
+  await signOut(page)
+  await open(page, '/auth/sign-in')
+  await page.getByRole('button', { name: SIGN_IN_WITH_PASSKEY }).click()
+  await expect.poll(() => sessionEmail(page), { timeout: 30_000 }).toBe(email)
+  expect((await unlock(page, 'passkey-sign-in')).prf).toBe(signedUp.prf)
+
+  await signOut(page)
+  await open(page, '/auth/sign-in')
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect.poll(() => sessionEmail(page), { timeout: 30_000 }).toBe(email)
+  expect((await unlock(page, 'sign-in')).unlockKey).toBe(set.unlockKey)
 })

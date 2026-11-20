@@ -77,6 +77,23 @@ useSeo({
       :description="failure"
     />
 
+    <!-- First: an account made with a passkey has no password to type. Neutral
+         and outlined: one primary button per view (DESIGN.md › Component behavior). -->
+    <template v-if="passkeys.isSupported.value">
+      <UButton
+        icon="i-lucide-fingerprint"
+        size="lg"
+        color="neutral"
+        variant="outline"
+        block
+        :loading="passkeyPending"
+        @click="usePasskey"
+      >
+        Sign in with {{ passkeys.device.value.method }}
+      </UButton>
+      <USeparator label="or" />
+    </template>
+
     <UCard>
       <UForm :schema="schema" :state="state" class="flex flex-col gap-4" @submit="submit">
         <UFormField label="Email" name="email">
@@ -114,22 +131,6 @@ useSeo({
         </UButton>
       </UForm>
     </UCard>
-
-    <template v-if="passkeys.isSupported.value">
-      <USeparator label="or" />
-      <!-- Neutral and outlined: one primary button per view (DESIGN.md › Component behavior). -->
-      <UButton
-        icon="i-lucide-fingerprint"
-        size="lg"
-        color="neutral"
-        variant="outline"
-        block
-        :loading="passkeyPending"
-        @click="usePasskey"
-      >
-        Sign in with a passkey
-      </UButton>
-    </template>
 
     <p class="text-center text-sm text-muted">
       <ULink to="/auth/reset" class="text-primary underline underline-offset-2">

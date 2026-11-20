@@ -10,6 +10,7 @@ import {
   hashNewPassword,
   passwordUpsert,
   resetDecoyHashForTest,
+  setFirstPassword,
   verifyProofForUser,
   verifySignInProof,
 } from '../server/utils/credentials-password'
@@ -82,6 +83,24 @@ describe('verifyProofForUser', () => {
     expect(await verifyProofForUser(db, hasher, 'u1', proof)).toBe('ok')
     expect(await verifyProofForUser(db, hasher, 'u1', proofOf('z'))).toBe('wrong')
     expect(await verifyProofForUser(db, hasher, 'u2', proof)).toBe('no_password')
+  })
+})
+
+describe('setFirstPassword', () => {
+  it('gives an account with no password one, and never replaces one', async () => {
+    const hasher = fakeHasher()
+    await addUser('u1', 'ada@example.com')
+    const first = await deriveCredentials('first password one', PARAMS)
+    const second = await deriveCredentials('second password two', PARAMS)
+
+    expect(
+      await setFirstPassword(db, 'u1', await hashNewPassword(hasher, { ...PARAMS, ...first })),
+    ).toBe(true)
+    expect(
+      await setFirstPassword(db, 'u1', await hashNewPassword(hasher, { ...PARAMS, ...second })),
+    ).toBe(false)
+    expect(await verifyProofForUser(db, hasher, 'u1', first.proof)).toBe('ok')
+    expect(await verifyProofForUser(db, hasher, 'u1', second.proof)).toBe('wrong')
   })
 })
 

@@ -21,7 +21,7 @@ const ROUTES = Object.entries(SOURCES).map(([file, source]) => ({
 const sourceOf = (route: string) => ROUTES.find((entry) => entry.route === route)!.source
 
 describe('every route', () => {
-  it('is one of the thirteen this file knows about', () => {
+  it('is one of the fifteen this file knows about', () => {
     expect(ROUTES.map((entry) => entry.route).sort()).toEqual([
       'auth/credentials/params.post.ts',
       'auth/credentials/passkey.post.ts',
@@ -29,12 +29,14 @@ describe('every route', () => {
       'auth/credentials/reset/request.post.ts',
       'auth/credentials/sign-in.post.ts',
       'auth/credentials/sign-up.post.ts',
+      'auth/credentials/verify-passkey.post.ts',
       'auth/credentials/verify.post.ts',
       'credentials/me.get.ts',
       'credentials/passkeys/[id].delete.ts',
       'credentials/passkeys/index.get.ts',
       'credentials/passkeys/register.post.ts',
       'credentials/password.post.ts',
+      'credentials/password/first.post.ts',
       'credentials/unlock.post.ts',
     ])
   })
