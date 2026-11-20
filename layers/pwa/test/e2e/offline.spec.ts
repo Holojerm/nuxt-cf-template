@@ -326,6 +326,11 @@ test('an account that replaces another without a sign-out clears what the first 
   // Grace loads is not an offline route.
   const grace = await signIn('grace')
   await page.goto('/terms')
+  // The owner is settled from onNuxtReady, after hydration. page.goto returns
+  // at the load event, and on a loaded CI runner the dev server's client took
+  // over 4 s more to mount, which spent the poll's whole window before the
+  // plugin had run at all.
+  await hydrated(page)
   await expect.poll(() => page.evaluate(() => localStorage.getItem('pwa:owner'))).toBe(grace.id)
   const copies = await kept(page)
   expect([copies.pages, copies.data, await stored(page)]).toEqual([[], [], []])
