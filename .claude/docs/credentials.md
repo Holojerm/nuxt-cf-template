@@ -68,9 +68,9 @@ export default defineNuxtPlugin((nuxtApp) => {
 })
 
 interface CredentialsUnlock {
-  reason: 'sign-up' | 'sign-in' | 'unlock' | 'password-change' | 'password-reset' | 'passkey-sign-in' | 'passkey-register'
+  reason: 'sign-up' | 'sign-in' | 'unlock' | 'password-change' | 'password-reset' | 'password-set' | 'passkey-sign-in' | 'passkey-register'
   userId: string
-  unlockKey: Uint8Array | null          // 32 bytes; null on a passkey ceremony
+  unlockKey: Uint8Array | null          // 32 bytes; null on a passkey ceremony, a passkey sign-up included
   previousUnlockKey: Uint8Array | null  // 'password-change' only
   passkey: {
     credentialId: string
@@ -84,14 +84,17 @@ interface CredentialsUnlock {
 
 | `reason` | Fired by | Carries |
 | --- | --- | --- |
-| `sign-up` | `useCredentials().completeSignUp()`, on the page the mailed link opens: the account now exists | `unlockKey` |
+| `sign-up` | `useCredentials().completeSignUp()` or `usePasskeys().createAccount()`, on the page the mailed link opens: the account now exists | `unlockKey` for a password, `passkey` (and no `unlockKey`) for a passkey |
 | `sign-in` | `useCredentials().signIn()` | `unlockKey` |
 | `unlock` | `useCredentials().unlock(password)`, for someone signed in who has not typed a password: a passkey without PRF | `unlockKey`, after the server confirmed the password |
 | `password-change` | `changePassword()` | both keys, to re-wrap |
 | `password-reset` | `completeReset()` | the new `unlockKey` only: the old one is gone |
+| `password-set` | `setPassword()`: a first password for an account made with a passkey | the new `unlockKey` |
 | `passkey-sign-in`, `passkey-register` | `usePasskeys()` | `passkey` |
 
 Sign-up is email first. `signUp({ email })` only mails a link and fires nothing; the password is chosen on the page the link opens, by whoever holds the mailbox, and that is when the account is created and `sign-up` fires with its first unlock key. Asking for the password with the address would let anyone start a sign-up for someone else's address with a password of their own.
+
+**A passkey instead of a password.** Where the browser can make a passkey (and, with `prf` on, does not report that it lacks PRF), the page the link opens offers "Continue with Face ID or Touch ID" (or Touch ID, Windows Hello, the phone's screen lock: `passkey-device.ts` names it from the user agent, for wording only) above "Use a password instead". `POST /api/auth/credentials/verify-passkey` is a register ceremony that the token stands in for a session on: its first call reads the token without spending it, to learn the address; its second spends it, creates the account, saves the passkey and signs in. With `prf` on, the browser fetches the PRF output before the second call and stops if there is none (`passkey_prf_unavailable`), so the link still works for a password and no account exists without a secret the app can wrap its keys under. Such an account has no password; `/settings/security` lets its session set a first one (`POST /api/credentials/password/first`, `setPassword()`), with no mail, because a session can already add a passkey and a password grants nothing more. A sign-up link for an address that already signs in with a password or a passkey is refused (`already_registered`).
 
 ## Passkeys and PRF
 
@@ -122,11 +125,11 @@ onCredentialsPasswordChange({ key: 'keys', /* same shape */ })
 
 - **Nothing says whether an address has an account.** The params lookup answers an unknown address with a salt computed from the address and the instance secret (`getIdentitySalt()`), stable across calls. Sign-up and reset answer `{ ok: true }` either way. Sign-in has one failure, and verifies against a decoy hash when there is no account, so both cases cost one scrypt check.
 - **One residual.** The decoy carries the current `iterations`. After that default is raised, an account still on the old count can be told apart until its password changes.
-- **No account, and no password, before the mail comes back.** A pending sign-up is a token row holding only the address. A password row is written only in a request that carried a mailed token, which is what lets sign-in assert `emailVerified: true`.
+- **No account, and no password, before the mail comes back.** A pending sign-up is a token row holding only the address. A password or passkey is first written only in a request that carried a mailed token, which is what lets sign-in assert `emailVerified: true`; later ones are added from a session that began that way.
 - **Tokens** ride in the URL fragment, are stored hashed, and are spent by one atomic `UPDATE`. A GET never spends one: both pages confirm with a button.
 - **Every route is rate limited** (`CREDENTIALS_LIMITS`), on top of the per-IP limit core applies to `/api/auth/`. Sign-in also has a per-mailbox budget of 10 per 15 minutes, charged for every address. Mail is capped at 5 per mailbox per 15 minutes, counted in D1.
 - **Turnstile** guards sign-up, sign-in and the reset request, and runs before any per-mailbox budget is charged. Passkey sign-in has none: nothing there can be guessed and nothing is mailed.
-- **Password change needs the current password**, and passkeys are added only from a session.
+- **Password change needs the current password**. Passkeys, and a first password for an account that has none, are added only from a session.
 - Signed-in routes live under `/api/credentials/`, not `/api/auth/`: the session guard lets a revoked cookie through on the latter.
 
 ## Tests

@@ -1,7 +1,7 @@
 // Passkey storage behind nuxt-auth-utils' WebAuthn handlers: the challenge of
 // each ceremony, and the credentials an account has registered.
 
-import { and, desc, eq, gt, lt } from 'drizzle-orm'
+import { and, desc, eq, exists, gt, lt, ne, or } from 'drizzle-orm'
 import { createError } from 'nuxt/server'
 import type { NuxtError, RequestEvent } from 'nuxt/server'
 
@@ -126,13 +126,41 @@ export async function touchPasskey(
     .where(eq(tables.credentialPasskeys.id, id))
 }
 
-/** Scoped to the owner in the statement itself, so an id from another account removes nothing. */
-export async function removePasskey(db: ExtensionDb, userId: string, id: string): Promise<boolean> {
+export type RemovePasskeyResult = 'removed' | 'not_found' | 'last_way_in'
+
+/**
+ * Scoped to the owner in the statement itself, so an id from another account
+ * removes nothing. With `keepOne` (this layer is the only sign-in, so an
+ * account with no password signs in by passkey alone) the last passkey of an
+ * account without a password stays: removing it would leave no way in. The
+ * condition is in the same statement, so two removals at once cannot both pass it.
+ */
+export async function removePasskey(
+  db: ExtensionDb,
+  userId: string,
+  id: string,
+  { keepOne = false }: { keepOne?: boolean } = {},
+): Promise<RemovePasskeyResult> {
+  const { credentialPasskeys: passkeys, credentialPasswords: passwords } = tables
+  const mine = and(eq(passkeys.id, id), eq(passkeys.userId, userId))
+  const anotherWayIn = or(
+    exists(
+      db.select({ userId: passwords.userId }).from(passwords).where(eq(passwords.userId, userId)),
+    ),
+    exists(
+      db
+        .select({ id: passkeys.id })
+        .from(passkeys)
+        .where(and(eq(passkeys.userId, userId), ne(passkeys.id, id))),
+    ),
+  )
   const rows = await db
-    .delete(tables.credentialPasskeys)
-    .where(and(eq(tables.credentialPasskeys.id, id), eq(tables.credentialPasskeys.userId, userId)))
-    .returning({ id: tables.credentialPasskeys.id })
-  return rows.length > 0
+    .delete(passkeys)
+    .where(keepOne ? and(mine, anotherWayIn) : mine)
+    .returning({ id: passkeys.id })
+  if (rows.length > 0) return 'removed'
+  const [kept] = await db.select({ id: passkeys.id }).from(passkeys).where(mine)
+  return kept ? 'last_way_in' : 'not_found'
 }
 
 /** The shape the settings page lists. No public key: nothing on that page needs it. */

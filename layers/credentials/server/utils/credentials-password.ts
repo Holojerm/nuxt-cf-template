@@ -42,6 +42,24 @@ export async function hashNewPassword(
   }
 }
 
+/**
+ * Give an account that has none its first password. False when it has one:
+ * replacing a password is `replacePassword`'s job, which needs the old one or a
+ * mailed token.
+ */
+export async function setFirstPassword(
+  db: ExtensionDb,
+  userId: string,
+  stored: StoredPassword,
+): Promise<boolean> {
+  const rows = await db
+    .insert(tables.credentialPasswords)
+    .values({ userId, ...stored, kdfVersion: CREDENTIALS_KDF_VERSION })
+    .onConflictDoNothing()
+    .returning({ userId: tables.credentialPasswords.userId })
+  return rows.length > 0
+}
+
 /** Insert or replace the account's password row. */
 export function passwordUpsert(db: ExtensionDb, userId: string, stored: StoredPassword) {
   const values = { ...stored, kdfVersion: CREDENTIALS_KDF_VERSION }
