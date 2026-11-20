@@ -4,10 +4,10 @@
 <template>
   <EmailLayout heading="Finish creating your {{appName}} account">
     <EmailParagraph>
-      Open this link to choose your password and finish creating your account. It works once and
-      expires in <Raw>{{expiresMinutes}}</Raw> minutes.
+      Open this link to finish creating your account, with a passkey or a password. It works once
+      and expires in <Raw>{{expiresMinutes}}</Raw> minutes.
     </EmailParagraph>
-    <EmailButton href="{{url}}">Choose your password</EmailButton>
+    <EmailButton href="{{url}}">Finish creating your account</EmailButton>
     <template #footnote>
       Button not working? Paste this into your browser: <Raw>{{url}}</Raw>
       <br /><br />

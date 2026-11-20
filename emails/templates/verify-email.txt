@@ -1,10 +1,8 @@
 Finish creating your {{appName}} account
 
-Open this link to choose your password and finish creating your account. It works once and expires in {{expiresMinutes}} minutes.
+Open this link to finish creating your account, with a passkey or a password. It works once and expires in {{expiresMinutes}} minutes.
 
-Or paste this into your browser: {{url}}
-
-Choose your password: {{url}}
+Finish creating your account: {{url}}
 
 —
 If you didn't sign up, you can ignore this email — no account is created until the link is opened.
