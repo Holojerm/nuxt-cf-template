@@ -49,6 +49,8 @@ import { emailThemeCss } from './brand-email'
 import { BRAND_ROLES, markPlacement, markTransform, type BrandRole } from './brand-source'
 
 const OG = { width: 1200, height: 630 }
+/** How long og.png waits on the font provider before shooting with fallbacks. */
+const FONT_TIMEOUT_MS = 15_000
 /** Rendered at 2x the 32px it is shown at in an email, for retina screens. */
 const EMAIL_LOGO = 64
 const APPLE_TOUCH = 180
@@ -178,8 +180,8 @@ console.info(`  name      ${inputs.appName}${inputs.appHost ? `  (${inputs.appHo
 console.info(`  colors    ${BRAND_ROLES.map((role) => `${role} ${palette[role]}`).join('  ')}`)
 if (!fontsLoaded) {
   console.warn(
-    `  fonts     ${inputs.fonts.display} did not load — og.png fell back to a generic family.\n` +
-      '            Check the network, or that the family is on Google Fonts, then re-run.',
+    `  fonts     ${webfonts(inputs).join(', ')} did not all load — og.png fell back to a generic family.\n` +
+      '            Check the network, or that each family is on Google Fonts, then re-run.',
   )
 }
 
@@ -408,8 +410,16 @@ async function resolvePalette(page: Page, inputs: BrandInputs): Promise<Palette>
   return palette
 }
 
-/** Render HTML at exact pixel dimensions and write the PNG. Returns whether the
- *  requested webfonts actually arrived. */
+/** The faces og.png asks Google Fonts for. A generic family (an app whose
+ *  main.css names no display face) has nothing to download. */
+function webfonts(inputs: BrandInputs): string[] {
+  const generic = new Set(['serif', 'sans-serif', 'monospace'])
+  const { display, sans, mono } = inputs.fonts
+  return [...new Set([display, sans, mono])].filter((family) => !generic.has(family))
+}
+
+/** Render HTML at exact pixel dimensions and write the PNG. Returns whether
+ *  every webfont `fontCheck` names actually arrived. */
 async function shoot(
   page: Page,
   html: string,
@@ -420,20 +430,29 @@ async function shoot(
   transparent = false,
 ): Promise<boolean> {
   await page.setViewportSize({ width, height })
-  await page.setContent(html, { waitUntil: 'domcontentloaded' })
+  // `load`, not `domcontentloaded`: the Google Fonts <link>s hold the load
+  // event, and until they arrive there is no @font-face to wait for, so
+  // `document.fonts.ready` resolves at once and the shot takes the fallback.
+  // Never block on the provider: offline, shoot with the fallback.
+  await page
+    .setContent(html, { waitUntil: 'load', timeout: FONT_TIMEOUT_MS })
+    .catch(() => undefined)
 
-  // Never block on the font provider: an offline run should still produce a
-  // correct-looking image rather than hang for the default navigation timeout.
-  await page.evaluate(() =>
-    Promise.race([document.fonts.ready, new Promise((resolve) => setTimeout(resolve, 15_000))]),
+  const families = fontCheck ? webfonts(fontCheck) : []
+  // Ask for each face by name rather than trusting `document.fonts.ready`: a
+  // face is only fetched once something needs it. `load` resolves to the faces
+  // it found, so an empty list is a family that never arrived. (`fonts.check`
+  // cannot tell: it answers true when no face matches at all.)
+  const loaded = await page.evaluate(
+    ({ families, timeout }) =>
+      Promise.race([
+        Promise.all(families.map((family) => document.fonts.load(`88px "${family}"`))).then(
+          (found) => found.every((faces) => faces.length > 0),
+        ),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeout)),
+      ]),
+    { families, timeout: FONT_TIMEOUT_MS },
   )
-
-  const loaded = fontCheck
-    ? await page.evaluate(
-        (family: string) => document.fonts.check(`88px "${family}"`),
-        fontCheck.fonts.display,
-      )
-    : true
 
   await page.screenshot({ path: join(ROOT, target), type: 'png', omitBackground: transparent })
   return loaded
