@@ -91,6 +91,61 @@ describe('FleetManifestSchema', () => {
     expect(FleetManifestSchema.parse({ ...valid, product }).product).toEqual(product)
   })
 
+  it('leaves the goal fields absent until a product sets them', () => {
+    const product = {
+      northStar: 'session_completed',
+      activation: { event: 'user_activated', withinDays: 3 },
+      retention: { event: '$pageview', window: 'weekly' as const },
+    }
+    const parsed = FleetManifestSchema.parse({ ...valid, product }).product
+    expect(parsed).not.toHaveProperty('charter')
+    expect(parsed).not.toHaveProperty('target')
+    expect(parsed).not.toHaveProperty('stopRule')
+    expect(parsed).not.toHaveProperty('budgetUsd')
+  })
+
+  it('accepts a charter, a dated target, a stop rule and a budget', () => {
+    const product = {
+      northStar: 'session_completed',
+      activation: { event: 'user_activated', withinDays: 3 },
+      retention: { event: '$pageview', window: 'weekly' as const },
+      charter: 'Grow weekly graded sessions from people who found the product on their own.',
+      target: { metric: 'session_completed', value: 40, by: '2027-03-01' },
+      stopRule: 'Under 5 graded sessions a week after 90 days sends it back to maintenance.',
+      budgetUsd: 0,
+    }
+    expect(FleetManifestSchema.parse({ ...valid, product }).product).toEqual(product)
+  })
+
+  it('rejects a target without a real date or a positive value, and a negative budget', () => {
+    const product = {
+      northStar: 'session_completed',
+      activation: { event: 'user_activated', withinDays: 3 },
+      retention: { event: '$pageview', window: 'weekly' as const },
+      target: { metric: 'Session Completed', value: 0, by: 'March 2027' },
+      budgetUsd: -1,
+      charter: '',
+    }
+    const issues = FleetManifestSchema.safeParse({ ...valid, product }).error?.issues ?? []
+    expect(issues.map((issue) => issue.path.join('.')).sort()).toEqual([
+      'product.budgetUsd',
+      'product.charter',
+      'product.target.by',
+      'product.target.metric',
+      'product.target.value',
+    ])
+  })
+
+  it('rejects an unknown goal key, so a typo cannot pass for a target', () => {
+    const product = {
+      northStar: 'session_completed',
+      activation: { event: 'user_activated', withinDays: 3 },
+      retention: { event: '$pageview', window: 'weekly' as const },
+      target: { metric: 'session_completed', value: 40, by: '2027-03-01', stretch: 80 },
+    }
+    expect(FleetManifestSchema.safeParse({ ...valid, product }).success).toBe(false)
+  })
+
   it('rejects a product block with a malformed event or window', () => {
     const product = {
       northStar: 'Session Completed',

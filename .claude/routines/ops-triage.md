@@ -1,5 +1,8 @@
 ---
-schedule: "37 */6 * * *"
+fire: fleet # fires the API trigger when a collect finds new ops events or a deploy that never landed
+schedule: "37 6 * * *" # daily backstop
+gate: |
+  Run `git fetch -q origin main && curl -sS -f -H "Authorization: Bearer $OPS_TOKEN" "$OPS_BASE_URL/api/ops/events?hours=25" | bun -e 'const o = await Bun.stdin.json(); const head = Bun.spawnSync(["git", "rev-parse", "origin/main"]).stdout.toString().trim(); if (o.events.length || o.migrations?.pending?.length || (o.build?.sha && !head.startsWith(o.build.sha))) console.log("work")'`. Never print the token. Empty output means nothing to do.
 model: claude-sonnet-5
 connectors: [github]
 tier: 2
@@ -11,15 +14,16 @@ enabled: false
 ## Purpose
 
 The Worker spools every failure worth the owner's attention into `ops_events`; the fleet dashboard
-mails the owner from `GET /api/fleet`. Nothing else triages that spool. Every six hours, this
-routine reads it and handles each failure in one of three ways:
+mails the owner from `GET /api/fleet`. Nothing else triages that spool. Fleet fires this
+routine when a collect finds something new, and a daily run backs that up; either way it reads
+the spool and handles each failure in one of three ways:
 
 - it fixes the failures `routines.config.md` › **Mechanical fixes** declares safe to fix end
   to end;
 - it retriggers a merge whose production build never ran;
 - it turns everything else into a triaged issue that `bug-fix` or the owner picks up.
 
-Most runs find nothing new. Those runs must be short.
+Most backstop runs find nothing new, and its gate ends them before anything else is read.
 
 ## Configuration (cloud environment variables)
 
@@ -43,7 +47,7 @@ a configuration gap: journal it and do not retry.
 2. Read the spool and the deploy facts:
 
    ```bash
-   curl -sS -f -H "Authorization: Bearer $OPS_TOKEN" "$OPS_BASE_URL/api/ops/events?hours=24" > ops.json
+   curl -sS -f -H "Authorization: Bearer $OPS_TOKEN" "$OPS_BASE_URL/api/ops/events?hours=25" > ops.json
    git fetch origin main && git rev-parse origin/main
    ```
 
@@ -64,8 +68,8 @@ a configuration gap: journal it and do not retry.
 
 4. **Group the events** by `kind` and subject: the path, or the identifier the `detail` names.
    Drop a group when either of these holds:
-   - its newest event is older than the window the fork's longest cron covers (default 7
-     hours), meaning it has not recurred since;
+   - its newest event is older than the last `ops-triage` journal entry that ran past its
+     gate (25 hours when there is none), meaning it has not recurred since that run saw it;
    - an open issue or PR titled `ops-triage: <subject>` already covers it. Comment on that issue
      or PR only when the evidence has changed.
 
