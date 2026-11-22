@@ -1,6 +1,5 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 import { execSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
 
 import { useNitro, useNuxt } from '@nuxt/kit'
 
@@ -94,7 +93,7 @@ export default defineNuxtConfig({
     // the explicit empty `turnstile` entries in runtimeConfig below override
     // them (defu keeps a value already present on the config). So the template
     // renders no widget and verifies nothing until a real key is set — the same
-    // "runs without an account" posture as Resend and Paddle, and identical in
+    // "runs without an account" posture as Resend and Stripe, and identical in
     // dev and production rather than only in one of them.
     //
     // Expect one build-time warning, "No site key was provided." That is the
@@ -586,9 +585,7 @@ export default defineNuxtConfig({
   // default rather than by remembering to come back here.
   routeRules: {
     '/**': {
-      headers: securityHeaders(process.env.NODE_ENV !== 'production', {
-        billing: existsSync(new URL('./layers/billing/nuxt.config.ts', import.meta.url)),
-      }),
+      headers: securityHeaders(process.env.NODE_ENV !== 'production'),
     },
   },
 

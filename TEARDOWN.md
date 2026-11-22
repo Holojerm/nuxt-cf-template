@@ -104,10 +104,7 @@ Remember production and preview are separate and nothing applies migrations for 
 stub are `layers/billing/test/e2e/`; `playwright.config.ts` finds them there, so with the
 layer gone the `e2e-billing` project, the webhook secret and price ids on the dev server, and the
 webhook warm-up are gone too, and nothing needs deleting. The a11y and CSP specs follow the layer
-the same way: no `/pricing` scan, and the CSP spec instead asserts that no Paddle host is left in
-the policy, which the `billing` flag `nuxt.config.ts` passes to `securityHeaders()` guarantees.
-(Today that policy still carries Paddle's hosts when billing is present, because the layer no
-longer needs them and a follow-up PR removes them; Stripe Checkout and the portal are redirects.)
+the same way: no `/pricing` scan.
 
 **9. Strip the config.** The `runtimeConfig` declarations went with the layer. Remove from
 `.env.example` and `wrangler.toml` (both `[vars]` and `[env.preview.vars]`), and any
@@ -125,16 +122,16 @@ There is no client token and no environment variable: the prefix of the secret k
 or `sk_live_`) picks the mode. Delete the webhook endpoint in the Stripe Dashboard too, or Stripe keeps
 posting to a route that no longer exists.
 
-The CSP needs no edit: `nuxt.config.ts` builds it with `billing` set from whether
-`layers/billing/` exists, and `shared/security-headers.ts` adds the Paddle origins only when it is
-set, so they leave with the layer, and `test/security-headers.test.ts` asserts that no Paddle host
-is left. Until the follow-up PR lands, those origins are Paddle's, not Stripe's.
+The CSP needs no edit: Stripe Checkout and the customer portal are full-page redirects, so
+`shared/security-headers.ts` names no payment host with or without the layer, and
+`test/security-headers.test.ts` asserts that.
 
 **10. Fix the legal copy.** [`app/pages/privacy.vue`](app/pages/privacy.vue) and
-[`app/pages/terms.vue`](app/pages/terms.vue) still name Paddle as the merchant of record and
-as a subprocessor (a follow-up PR moves them to Stripe, as Link). Whichever processor they name,
-leaving it in once billing is gone is a factual misstatement in a legal document —
-it is not cosmetic. [`app/utils/changelog.ts`](app/utils/changelog.ts) mentions Paddle too.
+[`app/pages/terms.vue`](app/pages/terms.vue) name Stripe, selling as Link, as the merchant of
+record and as a subprocessor. Leaving that in once billing is gone is a factual misstatement in a
+legal document — it is not cosmetic. The pricing FAQ in [`app/utils/faq.ts`](app/utils/faq.ts),
+the landing page's billing card in [`app/pages/index.vue`](app/pages/index.vue) and
+[`content/blog/how-billing-works.md`](content/blog/how-billing-works.md) name Stripe too.
 
 **11. Delete emails that no longer have a trigger** — the receipt, payment-failed, and
 access-ended functions in [`server/utils/email-templates.ts`](server/utils/email-templates.ts),
@@ -151,7 +148,7 @@ remaining templates you still send.
 
 ---
 
-## Swap Stripe for another provider (Lemon Squeezy, Paddle, RevenueCat)
+## Swap Stripe for another provider (Lemon Squeezy, RevenueCat)
 
 Do **not** start by deleting things. The entitlement model — one row per subscription,
 status transitions drive email, refunds and chargebacks cascade a revocation — is

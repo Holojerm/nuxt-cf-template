@@ -7,7 +7,7 @@
 // Policy: audit before act. The row is written BEFORE the privileged action, and
 // a failed audit write fails the action; `withAudit()` exists so a handler is
 // not trusted to order a pair of calls. Unlike a dropped email (an inconvenience;
-// failing the Paddle webhook to save it would replay a payment), a dropped audit
+// failing the Stripe webhook to save it would replay a payment), a dropped audit
 // row is the disappearance of the only evidence an admin reached into someone's
 // account. An unrecorded action is worse than a refused one: a refusal is
 // visible and retried. D1 being down already takes the app down, so the cost is
@@ -61,7 +61,7 @@ export const AUDIT_ACTIONS = [
    */
   'account.deleted',
   /**
-   * Deletion is about to ask Paddle to cancel a live subscription immediately.
+   * Deletion is about to ask Stripe to cancel a live subscription immediately.
    * Written BEFORE the call, so it records intent (a refused call leaves this row
    * and no `account.deleted`). Metadata: the `sub_` id only. Written by billing,
    * only with `billing.cancelOnDeletion` on.

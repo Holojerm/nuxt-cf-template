@@ -1211,9 +1211,9 @@ mark, the DESIGN.md colours, and the app name in `wrangler.toml`. So the fix for
 that still says "My App" is to rename the project and re-run that command — and `bun run
 brand:check` fails the build until you do. See [Design system & brand mark](#design-system--brand-mark).
 
-The legal pages are the part people skip and then get stuck on: Paddle's onboarding review checks
-for reachable terms and privacy pages before approving an account. The ones here name the actual
-processors this template ships with (Cloudflare, Paddle, PostHog, Resend) and describe the real
+The legal pages are the part people skip and then get stuck on: a payment processor's account
+review looks for reachable terms and privacy pages before approving an account. The ones here name
+the actual processors this template ships with (Cloudflare, Stripe, PostHog, Resend) and describe the real
 refund behaviour. They are still a starting point, not legal advice, and each carries a banner
 saying so until you remove it.
 

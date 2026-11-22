@@ -67,7 +67,7 @@ export default defineTask({
   meta: {
     name: 'purge-expired-tokens',
     description:
-      'Delete spent and expired magic-link tokens, MCP connect codes, applied Paddle event ids and week-old ops events',
+      'Delete spent and expired magic-link tokens, MCP connect codes, applied Stripe event ids and week-old ops events',
   },
   async run({ payload }) {
     // Never throw out of here on bad input: a cron task that errors is retried

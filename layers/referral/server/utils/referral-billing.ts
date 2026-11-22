@@ -1,4 +1,4 @@
-// The referral loop's side of the Paddle webhook: pay the referrer when the
+// The referral loop's side of the Stripe webhook: pay the referrer when the
 // referee first pays, and record the clawback's paperwork when a refund or
 // chargeback reverses a purchase. Registered as a billing outcome handler by
 // server/plugins/referral.ts through core's seam (server/utils/billing-outcome.ts),
@@ -36,7 +36,7 @@ export function createReferralOutcomeHandler(
     // purchase — the reward's ref is derived from the referee's id, so the
     // unique index makes a redelivery a repair rather than a second payout, and
     // a customer's second pass pays nothing. Awaited so the isolate cannot be
-    // torn down mid-write, and it never throws, because a 500 here makes Paddle
+    // torn down mid-write, and it never throws, because a 500 here makes Stripe
     // replay a money event.
     //
     // ── What "first paid" actually means, and what it does not ───────────────
@@ -49,14 +49,15 @@ export function createReferralOutcomeHandler(
     // active` is a dunning recovery on a subscription that already paid,
     // `paused → active` is a resume, and `trialing` itself is not money.
     //
-    // It is deliberately NOT keyed on `transaction.completed` carrying a
-    // `subscription_id`, which would be the truer signal. applyBillingEvent
-    // classifies that as `ignored: 'subscription_transaction'` and returns no
-    // userId, so using it would mean widening that contract AND relying on
-    // Paddle to echo the checkout's `custom_data` onto subscription
-    // transactions — which is not something this template can verify. Getting
-    // that wrong pays no subscription referrer at all, silently, which is worse
-    // than the residue below.
+    // It is deliberately NOT keyed on the subscription's invoice being paid,
+    // which would be the truer signal. The layer translates no invoice event
+    // (stripe-events.ts), and applyBillingEvent classifies a transaction that
+    // carries a `subscription_id` as `ignored: 'subscription_transaction'` with
+    // no userId. Using it would mean widening that contract AND relying on
+    // Stripe to copy the checkout's metadata onto every invoice — which is not
+    // something this template has verified. Getting that wrong pays no
+    // subscription referrer at all, silently, which is worse than the residue
+    // below.
     //
     // The residue: a subscription created `active` under manual collection
     // before its invoice is paid, or one carrying a 100% discount, pays a
@@ -70,11 +71,11 @@ export function createReferralOutcomeHandler(
       (outcome.previousStatus === null || outcome.previousStatus === 'trialing')
 
     if (outcome.kind === 'pass' || firstSubscriptionPayment) {
-      // The ref a later refund will name: the transaction id for a pass, and for
-      // a subscription its FIRST transaction — so a refund of a later renewal
+      // The ref a later refund will name: the PaymentIntent for a pass, and for
+      // a subscription its FIRST invoice — so a refund of a later renewal
       // finds no reward to claw back. Falls back to the subscription id when
-      // Paddle never sent one. Without a ref the reward is unreachable by any
-      // clawback.
+      // Stripe's `created` event named no invoice. Without a ref the reward is
+      // unreachable by any clawback.
       await deps.reward(db, outcome.userId, {
         earnedFromRef:
           outcome.kind === 'subscription'

@@ -64,7 +64,7 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   registered), or `info` (the system handled it). Core knows `server_error` only, escalated to
   critical at `SERVER_ERROR_CRITICAL_COUNT` rows in the 24 h window. A layer or the app registers
   its own kinds with `registerOpsSeverity({ kind: { severity, action? } })` from a Nitro plugin,
-  next to the `recordOpsEvent` call (billing registers `paddle_webhook_unconfigured`).
+  next to the `recordOpsEvent` call (billing registers `stripe_webhook_unconfigured`).
   The `ops-triage` routine reads the same spool through `GET /api/ops/events`
   (bearer `NUXT_OPS_TOKEN`, 404 when unset). That route also reports the build sha
   and pending migrations, so the routine can tell when a merge never deployed.

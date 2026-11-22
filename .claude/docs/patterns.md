@@ -135,7 +135,7 @@ and writes its days into billing's table, and neither file imports the other.
 | Seam | Register with | Core does | With nothing registered |
 | --- | --- | --- | --- |
 | Deletion guard | `registerDeletionGuard({ key, check })` | `deleteAccount()` asks every guard first; the first `{ code, message, data }` it gets back becomes outcome `blocked` and the route's 409 (`data.code`). `check(db, userId, context?)` | Deletion is unguarded |
-| Deletion resolver | `registerDeletionResolver({ key, resolve })` | After every guard has passed and before the counts and the audit row, `deleteAccount()` runs each resolver; it may write (billing cancels the subscription at Paddle) and returns a block to refuse (same 409 path as a guard) or null. Not rolled back; must fail closed. `resolve(db, userId, context?)` | Nothing runs before the delete |
+| Deletion resolver | `registerDeletionResolver({ key, resolve })` | After every guard has passed and before the counts and the audit row, `deleteAccount()` runs each resolver; it may write (billing cancels the subscription at Stripe) and returns a block to refuse (same 409 path as a guard) or null. Not rolled back; must fail closed. `resolve(db, userId, context?)` | Nothing runs before the delete |
 | Paywall gate | `registerAccessGate(fn)` | Paywalled routes call `requireAccess(event, productKey?)` | `requireUserSession(event)`: free, sign-in required |
 | Lifecycle step | `registerLifecycleStep(step)` | `server/tasks/lifecycle-email.ts` runs template steps, then registered ones, then the app's. Never rename a step id | Only the template and app steps <!-- forkless:lifecycle --> |
 | Funnel `paid` stage | `registerFunnelStageContributor({ key: 'paid', count })` | `collectFleetFunnel()` reports its count | `funnel.paid` is 0 |
@@ -250,7 +250,7 @@ carries no local patch for it. The checks that make that true:
   layer's `runtimeConfig` options (set in the app's `nuxt.config.ts`), an extension point,
   or upstream in the template. Feedback's options: `feedback.anonymiseUserId`,
   `feedback.deletionCountKey`; billing's: `billing.passDays`,
-  `billing.alertUnmatchedAdjustments`, `paddle.productId`. Referral has none. A fork's own util whose file name
+  `billing.alertUnmatchedAdjustments`, `stripe.productId`. Referral has none. A fork's own util whose file name
   collides with a layer's must be renamed before vendoring.
 - **Why not `extends: ['github:…']`**: NuxtHub's merged schema types leave layers under
   `node_modules` untyped, so a remote layer's tables lose their types.

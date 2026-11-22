@@ -26,9 +26,8 @@ export interface CspViolation {
 
 // The window property name is part of this module's public contract, not an
 // implementation detail: a caller that needs to read it from INSIDE a
-// page.evaluate() callback (test/csp/csp.spec.ts's Paddle.js test does,
-// because it has to check for a violation from the same browser-side
-// callback that triggered it) has no other way to reach it.
+// page.evaluate() callback (to check for a violation from the same
+// browser-side callback that triggered it) has no other way to reach it.
 declare global {
   interface Window {
     __cspViolations?: CspViolation[]

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 // ── A STARTING POINT, NOT LEGAL ADVICE ───────────────────────────────────────
 // This is a plain-language terms template for a solo/small SaaS selling through
-// Paddle as merchant of record. It is written to be readable and to describe
-// what this codebase actually does (refunds revoke access, cancellation is
-// self-serve, Paddle holds the payment relationship) — which is the part
+// Stripe (as Link) as merchant of record. It is written to be readable and to
+// describe what this codebase actually does (refunds revoke access, cancellation
+// is self-serve, Stripe holds the payment relationship) — which is the part
 // generators get wrong.
 //
 // It is NOT reviewed by a lawyer and is not tailored to your jurisdiction,
@@ -24,7 +24,7 @@ definePageMeta({
 const config = useRuntimeConfig()
 
 // Bump when you change the terms. Users are entitled to know when the deal changed.
-const LAST_UPDATED = '2026-08-21'
+const LAST_UPDATED = '2026-11-22'
 
 const app = computed(() => config.public.appName)
 const entity = computed(() => config.public.legalEntity)
@@ -77,16 +77,21 @@ useSeo({
       <section class="flex flex-col gap-3">
         <h2 class="text-2xl text-highlighted">3. Payment</h2>
         <p>
-          Payments are processed by Paddle.com Market Ltd, which acts as the merchant of record for
-          every purchase. Paddle handles billing, tax, and invoicing, and their
+          Payments are handled by Stripe, which sells {{ app }} to you through Link and is the
+          merchant of record for every purchase. Stripe handles billing, sales tax, receipts,
+          refunds, and payment disputes, and the payment terms shown at checkout apply to the
+          transaction itself. Your receipt comes from Link, and Link is the name on your card
+          statement.
+        </p>
+        <p>
+          For a question about a charge, a receipt, or a refund, you can write to us or go to
           <ULink
-            to="https://www.paddle.com/legal/checkout-buyer-terms"
+            to="https://support.link.com/topics/sold-through-link"
             target="_blank"
             class="text-primary underline underline-offset-2"
           >
-            buyer terms
-          </ULink>
-          apply to the transaction itself.
+            Link support</ULink
+          >.
         </p>
         <p>
           Subscriptions renew automatically at the interval you chose until you cancel. One-time

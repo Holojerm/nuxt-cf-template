@@ -73,21 +73,21 @@ export type DeleteAccountOutcome =
  * It lives with billing, which registers it as a DeletionGuard
  * (layers/billing/server/utils/billing-extensions.ts); the reasoning stays here because it is
  * the case for having a guard seam at all. Every other exit from this app is deliberately frictionless (see
- * layers/billing/app/utils/churn.ts) — but deleting the `users` row does not touch Paddle,
+ * layers/billing/app/utils/churn.ts) — but deleting the `users` row does not touch Stripe,
  * which owns the subscription's billing lifecycle independently of whether
  * that row still exists. Anonymizing it out from under a live subscription
- * would not stop the next renewal; Paddle would keep charging a card attached
+ * would not stop the next renewal; Stripe would keep charging a card attached
  * to an account nobody can look up anymore. Refusing up front, and pointing at
  * the portal cancellation path this app already has, is one extra step
  * against a customer getting billed after they believed they'd left — the one
  * case where adding friction protects the customer rather than the business.
- * Passes and comps (`txn_…`, `comp_…`) don't block: nothing renews them, so
+ * Passes and comps (`pi_…`, `comp_…`) don't block: nothing renews them, so
  * deleting the account simply forfeits whatever time was left.
  *
  * An app can instead have billing cancel the subscription for the person
  * (`billing.cancelOnDeletion`): billing then registers a DeletionResolver
  * rather than the guard, which runs here after the guards and refuses the same
- * way, with the same code, if Paddle will not confirm the cancel.
+ * way, with the same code, if Stripe will not confirm the cancel.
  *
  * ── Audit before act ─────────────────────────────────────────────────────────
  * Row counts are read FIRST — server/utils/audit.ts's policy is that an audit
@@ -110,7 +110,7 @@ export async function deleteAccount(
   }
 
   // Only once nothing refuses: a resolver may act (billing cancels the
-  // subscription at Paddle), and must not run for a request a guard turns away.
+  // subscription at Stripe), and must not run for a request a guard turns away.
   for (const resolver of getDeletionResolvers()) {
     const block = await resolver.resolve(db, userId, context)
     if (block) return { outcome: 'blocked', ...block, data: block.data ?? {} }

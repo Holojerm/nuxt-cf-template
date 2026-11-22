@@ -16,7 +16,7 @@ export const PRICING_FAQ: FaqItem[] = [
   {
     question: 'Who charges my card?',
     answer:
-      'Paddle. They are the merchant of record for every plan, so your receipt and any invoice come from Paddle rather than from us, and they handle sales tax and VAT in your country.',
+      'Stripe, selling as Link. Stripe is the merchant of record for every plan, so your receipt comes from Link and your card statement says Link rather than our name. Stripe also handles sales tax and VAT in your country, refunds, and payment disputes.',
   },
   {
     question: 'Can I cancel a subscription myself?',

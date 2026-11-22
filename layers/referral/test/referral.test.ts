@@ -5,7 +5,7 @@
 // fails silently in production if it regresses — an over-payment produces no
 // error, no log line anybody reads, and no symptom until a revenue chart bends.
 //
-//   1. A webhook redelivery must not pay twice. Paddle redelivers, routinely.
+//   1. A webhook redelivery must not pay twice. Stripe redelivers, routinely.
 //   2. A referrer must not exceed the cap, ever, whatever the referees do.
 //   3. Self-referral must pay nothing.
 //   4. A deleted (tombstoned) referrer must pay nothing.
@@ -165,7 +165,7 @@ describe('the code shape', () => {
   it('marks both grant refs as referral access', () => {
     expect(isReferralRef(referralRewardRef('someone'))).toBe(true)
     expect(isReferralRef(referralWelcomeRef('someone'))).toBe(true)
-    expect(isReferralRef('txn_paid')).toBe(false)
+    expect(isReferralRef('pi_paid')).toBe(false)
     expect(isReferralRef('comp_given')).toBe(false)
   })
 })
@@ -446,7 +446,7 @@ describe('rewardReferrerForFirstPurchase', () => {
   })
 
   it('pays once across a webhook redelivery', async () => {
-    // The property the whole design turns on. Paddle redelivers; there is no
+    // The property the whole design turns on. Stripe redelivers; there is no
     // ledger table and no flag — the ref is derived from the referee's id and
     // the unique index refuses the second write.
     const first = await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW })
@@ -516,12 +516,12 @@ describe('rewardReferrerForFirstPurchase', () => {
     // The property that makes the clawback worth having. If the cap only
     // counted live rows, buy → collect → refund would return the budget slot
     // and the ceiling would be unreachable by construction.
-    await grantPass(db, { userId: 'referee', transactionId: 'txn_churn', billedAt: NOW })
+    await grantPass(db, { userId: 'referee', transactionId: 'pi_churn', billedAt: NOW })
     await rewardReferrerForFirstPurchase(db, 'referee', {
       now: NOW,
-      earnedFromRef: 'txn_churn',
+      earnedFromRef: 'pi_churn',
     })
-    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'txn_churn' })
+    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'pi_churn' })
 
     // Spent is spent…
     expect(await countReferralRewards(db, 'referrer')).toBe(1)
@@ -629,15 +629,15 @@ describe('buildEntitlementView on referral access', () => {
   })
 
   it('distinguishes an EARNED reward from a welcome grant', async () => {
-    await grantPass(db, { userId: 'referee', transactionId: 'txn_paid', billedAt: NOW })
-    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW, earnedFromRef: 'txn_paid' })
+    await grantPass(db, { userId: 'referee', transactionId: 'pi_paid', billedAt: NOW })
+    await rewardReferrerForFirstPurchase(db, 'referee', { now: NOW, earnedFromRef: 'pi_paid' })
 
     const view = await buildEntitlementView(db, 'referrer')
     expect(view.referralKind).toBe('reward')
   })
 
   it('says nothing about referrals for ordinary paid access', async () => {
-    await grantPass(db, { userId: 'referee', transactionId: 'txn_paid', billedAt: NOW })
+    await grantPass(db, { userId: 'referee', transactionId: 'pi_paid', billedAt: NOW })
     const view = await buildEntitlementView(db, 'referee')
     expect(view.kind).toBe('pass')
     expect(view.referralKind).toBeNull()
@@ -649,8 +649,8 @@ describe('buildEntitlementView on referral access', () => {
   })
 
   it('never throws, whatever it is handed', async () => {
-    // The contract with the Paddle webhook: a throw here becomes a non-200 and
-    // Paddle replays a money event.
+    // The contract with the Stripe webhook: a throw here becomes a non-200 and
+    // Stripe replays a money event.
     await expect(rewardReferrerForFirstPurchase(db, 'nobody-at-all')).resolves.toMatchObject({
       outcome: 'no_referrer',
     })
@@ -683,7 +683,7 @@ describe('the refund cascade', () => {
     const purchases: string[] = []
     for (let i = 0; i < count; i++) {
       const referee = `referee-${i}`
-      const transactionId = `txn_${i}`
+      const transactionId = `pi_${i}`
       await makeUser(referee, { referredBy: REFERRER_CODE })
       await grantPass(db, { userId: referee, transactionId, billedAt: NOW })
       await rewardReferrerForFirstPurchase(db, referee, { now: NOW, earnedFromRef: transactionId })
@@ -769,7 +769,7 @@ describe('the refund cascade', () => {
   })
 
   it('takes only the days the reward had LEFT, never days the referrer paid for', async () => {
-    await grantPass(db, { userId: 'referee', transactionId: 'txn_first', billedAt: NOW })
+    await grantPass(db, { userId: 'referee', transactionId: 'pi_first', billedAt: NOW })
     // A reward granted 29 days ago: one free day left on it.
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
@@ -777,17 +777,17 @@ describe('the refund cascade', () => {
       status: 'active',
       periodStart: new Date(atSecond(NOW.getTime() - 29 * DAY_MS)),
       currentPeriodEnd: new Date(atSecond(NOW.getTime() + DAY_MS)),
-      earnedFromRef: 'txn_first',
+      earnedFromRef: 'pi_first',
     })
     // …and then the referrer bought a pass, which stacked on top of it.
-    await grantPass(db, { userId: 'referrer', transactionId: 'txn_referrer_pass', billedAt: NOW })
+    await grantPass(db, { userId: 'referrer', transactionId: 'pi_referrer_pass', billedAt: NOW })
     expect(await daysLeft('referrer')).toBe(PASS_DAYS + 1)
 
     const result = await revokeForAdjustment(db, {
       action: 'refund',
       status: 'approved',
       type: 'full',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     expect(result.derived).toHaveLength(1)
 
@@ -797,7 +797,7 @@ describe('the refund cascade', () => {
     // purchase taken out of their account.
     expect(await daysLeft('referrer')).toBe(PASS_DAYS)
     const pass = await db.query.entitlements.findFirst({
-      where: eq(schema.entitlements.billingRef, 'txn_referrer_pass'),
+      where: eq(schema.entitlements.billingRef, 'pi_referrer_pass'),
     })
     // The pass slid, it did not shrink: both ends moved together.
     const passEnd = pass!.currentPeriodEnd!.getTime()
@@ -813,12 +813,12 @@ describe('the refund cascade', () => {
       status: 'active',
       currentPeriodEnd: new Date(atSecond(NOW.getTime() + 20 * DAY_MS)),
     })
-    await purchaseAndReward('txn_first')
+    await purchaseAndReward('pi_first')
     await stackRewards(1)
     const before = await endOf('referrer')
     expect(await daysLeft('referrer')).toBe(20 + 2 * REFERRAL_REWARD_DAYS)
 
-    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'txn_first' })
+    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'pi_first' })
     expect(await daysLeft('referrer')).toBe(20 + REFERRAL_REWARD_DAYS)
 
     // Disputes take weeks. The subscription lapses while this one is open.
@@ -830,7 +830,7 @@ describe('the refund cascade', () => {
     const reversed = await revokeForAdjustment(db, {
       action: 'chargeback',
       status: 'reversed',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     expect(reversed.derived).toHaveLength(1)
     // Measured from the dates the REVOKE wrote down, not from whatever is
@@ -841,23 +841,23 @@ describe('the refund cascade', () => {
   })
 
   it('records which purchase earned the reward', async () => {
-    await purchaseAndReward('txn_first')
+    await purchaseAndReward('pi_first')
     const [row] = await db
       .select()
       .from(schema.entitlements)
       .where(eq(schema.entitlements.billingRef, referralRewardRef('referee')))
-    expect(row?.earnedFromRef).toBe('txn_first')
+    expect(row?.earnedFromRef).toBe('pi_first')
   })
 
   it('revokes the reward when that purchase is fully refunded', async () => {
-    await purchaseAndReward('txn_first')
+    await purchaseAndReward('pi_first')
     expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
 
     const result = await revokeForAdjustment(db, {
       action: 'refund',
       status: 'approved',
       type: 'full',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
 
     expect(result.outcome).toBe('revoked')
@@ -876,14 +876,14 @@ describe('the refund cascade', () => {
   it('leaves the reward alone when a LATER purchase is refunded', async () => {
     // The reward was earned by the first pass. Refunding the second reverses
     // money that bought nothing for anybody but the referee.
-    await purchaseAndReward('txn_first')
-    await grantPass(db, { userId: 'referee', transactionId: 'txn_second', billedAt: NOW })
+    await purchaseAndReward('pi_first')
+    await grantPass(db, { userId: 'referee', transactionId: 'pi_second', billedAt: NOW })
 
     const result = await revokeForAdjustment(db, {
       action: 'refund',
       status: 'approved',
       type: 'full',
-      transactionId: 'txn_second',
+      transactionId: 'pi_second',
     })
 
     expect(result.outcome).toBe('revoked')
@@ -891,19 +891,19 @@ describe('the refund cascade', () => {
     expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
   })
 
-  it('claws the reward back on a 100% refund Paddle labelled `partial`', async () => {
-    // Paddle labels an item-level refund `partial` even when it returns every
-    // cent of a single-item transaction. Keying the cascade on that word meant
+  it('claws the reward back on a 100% refund labelled `partial`', async () => {
+    // The label is the provider's word, not a fact about the buyer's access: a
+    // refund can arrive as `partial` and still return every cent. Keying the cascade on that word meant
     // the buyer lost every day they had while the referrer kept the reward it
     // paid for — the exact shape of the refund-churn loop the clawback exists
     // to close. The buyer's own row is the signal, not the label.
-    await purchaseAndReward('txn_first')
+    await purchaseAndReward('pi_first')
 
     const result = await revokeForAdjustment(db, {
       action: 'refund',
       status: 'approved',
       type: 'partial',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
 
     expect(result.outcome).toBe('revoked')
@@ -913,24 +913,24 @@ describe('the refund cascade', () => {
   })
 
   it('cascades on a refund that carries no type at all', async () => {
-    // `type` is optional in Paddle's payload and `.nullish()` in the schema, so
+    // `type` is optional on a billing event and `.nullish()` in the schema, so
     // any rule written on it fails OPEN — silently, on the money path.
-    await purchaseAndReward('txn_first')
+    await purchaseAndReward('pi_first')
 
     const result = await revokeForAdjustment(db, {
       action: 'refund',
       status: 'approved',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     expect(result.derived).toHaveLength(1)
     expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
   })
 
   it('revokes on a chargeback, whatever its type says', async () => {
-    await purchaseAndReward('txn_first')
+    await purchaseAndReward('pi_first')
     const result = await revokeForAdjustment(db, {
       action: 'chargeback',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     expect(result.derived).toHaveLength(1)
     expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
@@ -940,19 +940,19 @@ describe('the refund cascade', () => {
     // The merchant won the dispute. Nothing reached the old clawback on this
     // path — not a revoking action, not a final status — so the referrer stayed
     // punished for a chargeback that never stood.
-    await purchaseAndReward('txn_first')
+    await purchaseAndReward('pi_first')
     const [before] = await db
       .select()
       .from(schema.entitlements)
       .where(eq(schema.entitlements.billingRef, referralRewardRef('referee')))
 
-    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'txn_first' })
+    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'pi_first' })
     expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
 
     const reversal = await revokeForAdjustment(db, {
       action: 'chargeback',
       status: 'reversed',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
 
     expect(reversal.outcome).toBe('reversed')
@@ -971,32 +971,32 @@ describe('the refund cascade', () => {
   })
 
   it('handles the distinct chargeback_reverse action too', async () => {
-    await purchaseAndReward('txn_first')
-    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'txn_first' })
+    await purchaseAndReward('pi_first')
+    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'pi_first' })
 
     const reversal = await revokeForAdjustment(db, {
       action: 'chargeback_reverse',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     expect(reversal.outcome).toBe('reversed')
     expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
   })
 
   it('gives the BUYER back the days they paid for when they win the dispute', async () => {
-    await purchaseAndReward('txn_first')
+    await purchaseAndReward('pi_first')
     const paidUntil = await endOf('referee')
 
-    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'txn_first' })
+    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'pi_first' })
     expect(await findActiveEntitlement(db, 'referee')).toBeNull()
 
     const reversed = await revokeForAdjustment(db, {
       action: 'chargeback',
       status: 'reversed',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     expect(reversed.outcome).toBe('reversed')
 
-    // No `subscription.*` event will ever arrive for a `txn_` pass, so nothing
+    // No `subscription.*` event will ever arrive for a `pi_` pass, so nothing
     // else in this system would ever notice the dispute resolved: a customer
     // who WON simply lost 30 paid days, forever.
     const buyer = await findActiveEntitlement(db, 'referee')
@@ -1009,12 +1009,12 @@ describe('the refund cascade', () => {
   })
 
   it('does NOT resurrect a reward when the purchase was honestly refunded', async () => {
-    await purchaseAndReward('txn_first')
+    await purchaseAndReward('pi_first')
     await revokeForAdjustment(db, {
       action: 'refund',
       status: 'approved',
       type: 'full',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
 
     // A reversal landing on a REFUNDED transaction is not a dispute we won —
@@ -1023,7 +1023,7 @@ describe('the refund cascade', () => {
     // is the only thing that says whether the purchase stands.
     const reversed = await revokeForAdjustment(db, {
       action: 'chargeback_reverse',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     expect(reversed.outcome).toBe('reversed')
     expect(reversed.derived).toEqual([])
@@ -1031,12 +1031,12 @@ describe('the refund cascade', () => {
     expect((await rewardRow())?.status).toBe(DERIVED_REVOKED_STATUS)
 
     const purchase = await db.query.entitlements.findFirst({
-      where: eq(schema.entitlements.billingRef, 'txn_first'),
+      where: eq(schema.entitlements.billingRef, 'pi_first'),
     })
     expect(purchase?.status).toBe('refunded')
   })
 
-  it('restores a SUBSCRIPTION chargeback whatever Paddle wrote over the status', async () => {
+  it('restores a SUBSCRIPTION chargeback whatever Stripe wrote over the status', async () => {
     await db.insert(schema.entitlements).values({
       userId: 'referee',
       billingRef: 'sub_referee',
@@ -1083,7 +1083,7 @@ describe('the refund cascade', () => {
       status: 'approved',
       subscriptionId: 'sub_referee',
     })
-    // `refunded` is a word only we write — Paddle's lifecycle never produces it
+    // `refunded` is a word only we write — Stripe's lifecycle never produces it
     // — so it still means what it says: the money went back and stayed back.
     const reversed = await revokeForAdjustment(db, {
       action: 'chargeback_reverse',
@@ -1094,21 +1094,21 @@ describe('the refund cascade', () => {
   })
 
   it('is idempotent in both directions', async () => {
-    await purchaseAndReward('txn_first')
+    await purchaseAndReward('pi_first')
     await stackRewards(1)
     const before = await endOf('referrer')
 
     // Both halves are driven by a chargeback: a refunded purchase is
     // deliberately not reversible any more, so a refund here would leave the
     // restore direction untested rather than tested.
-    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'txn_first' })
+    await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'pi_first' })
     // A redelivered chargeback finds the row already non-granting and writes
     // nothing — which matters, because a second write would stamp the revoked
     // date into restore_period_end and make the row unrestorable, and a second
     // compaction would take a reward the referrer still holds.
     const again = await revokeForAdjustment(db, {
       action: 'chargeback',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     expect(again.derived).toEqual([])
     expect(await daysLeft('referrer')).toBe(REFERRAL_REWARD_DAYS)
@@ -1116,12 +1116,12 @@ describe('the refund cascade', () => {
     await revokeForAdjustment(db, {
       action: 'chargeback',
       status: 'reversed',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     const reversedAgain = await revokeForAdjustment(db, {
       action: 'chargeback',
       status: 'reversed',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     expect(reversedAgain.derived).toEqual([])
     // A redelivered reversal must not slide the stack a second time either.
@@ -1133,18 +1133,18 @@ describe('the refund cascade', () => {
     // would drag a past date FORWARD. It also gives the policy a sensible edge:
     // a chargeback on month seven does not punish the referrer for days long
     // since spent.
-    await grantPass(db, { userId: 'referee', transactionId: 'txn_old', billedAt: NOW })
+    await grantPass(db, { userId: 'referee', transactionId: 'pi_old', billedAt: NOW })
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
       billingRef: referralRewardRef('referee'),
       status: 'active',
       currentPeriodEnd: new Date(atSecond(NOW.getTime() - 200 * DAY_MS)),
-      earnedFromRef: 'txn_old',
+      earnedFromRef: 'pi_old',
     })
 
     const result = await revokeForAdjustment(db, {
       action: 'chargeback',
-      transactionId: 'txn_old',
+      transactionId: 'pi_old',
     })
     expect(result.derived).toEqual([])
 
@@ -1160,7 +1160,7 @@ describe('the refund cascade', () => {
     // A reward granted before `earned_from_ref` existed carries NULL, and a
     // missed clawback is recoverable while clawing back a legitimately earned
     // reward is a conversation with an honest customer.
-    await grantPass(db, { userId: 'referee', transactionId: 'txn_first', billedAt: NOW })
+    await grantPass(db, { userId: 'referee', transactionId: 'pi_first', billedAt: NOW })
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
       billingRef: referralRewardRef('referee'),
@@ -1170,24 +1170,24 @@ describe('the refund cascade', () => {
 
     const result = await revokeForAdjustment(db, {
       action: 'chargeback',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     expect(result.derived).toEqual([])
     expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()
   })
 
   it('writes an audit row for each side of the cascade', async () => {
-    await purchaseAndReward('txn_first')
+    await purchaseAndReward('pi_first')
     const revoked = await revokeForAdjustment(db, {
       action: 'chargeback',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     await recordReferralCascade(db, revoked)
 
     const restored = await revokeForAdjustment(db, {
       action: 'chargeback',
       status: 'reversed',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
     })
     await recordReferralCascade(db, restored)
 
@@ -1430,19 +1430,19 @@ describe('subscription rewards keyed on the first transaction', () => {
 
   it("stores the first transaction as the reward's provenance", async () => {
     await referredSubscriber()
-    await firstPayment('txn_first')
-    expect((await reward())?.earnedFromRef).toBe('txn_first')
+    await firstPayment('pi_first')
+    expect((await reward())?.earnedFromRef).toBe('pi_first')
   })
 
   it('a partial refund of a later renewal leaves the reward standing', async () => {
     await referredSubscriber()
-    await firstPayment('txn_first')
+    await firstPayment('pi_first')
 
     const result = await revokeForAdjustment(db, {
       action: 'refund',
       status: 'approved',
       type: 'partial',
-      transactionId: 'txn_renewal',
+      transactionId: 'pi_renewal',
       subscriptionId: 'sub_referee',
       occurredAt: new Date(NOW.getTime() + 60_000),
     })
@@ -1456,12 +1456,12 @@ describe('subscription rewards keyed on the first transaction', () => {
 
   it('a refund of the first transaction claws the reward back', async () => {
     await referredSubscriber()
-    await firstPayment('txn_first')
+    await firstPayment('pi_first')
 
     const result = await revokeForAdjustment(db, {
       action: 'refund',
       status: 'approved',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
       subscriptionId: 'sub_referee',
       occurredAt: new Date(NOW.getTime() + 60_000),
     })
@@ -1473,12 +1473,12 @@ describe('subscription rewards keyed on the first transaction', () => {
 
   it('a won chargeback on the first transaction restores the reward', async () => {
     await referredSubscriber()
-    await firstPayment('txn_first')
+    await firstPayment('pi_first')
     const at = (seconds: number) => new Date(NOW.getTime() + seconds * 1000)
 
     await revokeForAdjustment(db, {
       action: 'chargeback',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
       subscriptionId: 'sub_referee',
       occurredAt: at(60),
     })
@@ -1486,7 +1486,7 @@ describe('subscription rewards keyed on the first transaction', () => {
 
     const reversed = await revokeForAdjustment(db, {
       action: 'chargeback_reverse',
-      transactionId: 'txn_first',
+      transactionId: 'pi_first',
       subscriptionId: 'sub_referee',
       occurredAt: at(120),
     })
@@ -1495,7 +1495,7 @@ describe('subscription rewards keyed on the first transaction', () => {
     expect(await findActiveEntitlement(db, 'referee')).not.toBeNull()
   })
 
-  it('falls back to the subscription id when Paddle never sent a transaction', async () => {
+  it('falls back to the subscription id when Stripe named no first invoice', async () => {
     await referredSubscriber()
     await firstPayment(null)
     expect((await reward())?.earnedFromRef).toBe('sub_referee')

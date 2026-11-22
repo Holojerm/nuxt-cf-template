@@ -8,9 +8,9 @@
 //
 // The one place in this table where a ref is DERIVED rather than minted, and
 // that is the whole point. Every other prefix here randomises (`comp_` uses a
-// UUID) or copies an id Paddle issued; these two are a pure function of the
+// UUID) or copies an id Stripe issued; these two are a pure function of the
 // account the grant is about, so the unique index on `billing_ref`
-// becomes the idempotency guarantee itself. A Paddle webhook redelivered five
+// becomes the idempotency guarantee itself. A Stripe webhook redelivered five
 // times computes the same ref five times and writes one row — no ledger table,
 // no "have we already paid this out" flag that a race can read stale.
 //

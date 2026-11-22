@@ -171,7 +171,7 @@ export function createServer(env: Env): McpServer {
       //      deliberately absent: access is paused for the whole of dunning.
       //   2. `sub_` rows pass on status ALONE. Stripe owns their lifecycle and
       //      flips the status when they end, so their date is not a gate.
-      //   3. EVERYTHING ELSE must still be in its window. `txn_` passes and
+      //   3. EVERYTHING ELSE must still be in its window. `pi_` passes and
       //      `comp_` grants never receive a lifecycle event, so status stays
       //      'active' forever and the date is the only thing that ends them.
       //      Without this clause an expired pass granted MCP access for good.

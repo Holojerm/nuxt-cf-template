@@ -535,7 +535,7 @@ I would not spend a review cycle on these unless already editing the file.
 | S6 | `server/utils/rate-limit.ts:15-30` | TIGHTEN | 291 | ~91 | Caveat 2 (the quoted Cloudflare line) restates caveat 1; the per-colo trade-off keeps its point in two lines instead of six |
 | S7 | `server/db/schema.ts:176-192` | TIGHTEN | 279 | ~94 | The not-composite decision and the SQLite `LIKE`/`ESCAPE` interaction both stay; the justification narrows |
 | S8 | `scripts/seed.ts:33-42` | TIGHTEN | 176 | ~86 | Keep "reuses the webhook's own `upsertSubscription()` so the row shape can't drift"; the driver-agnosticism paragraph is inferable from the code |
-| S9 | `layers/billing/server/utils/admin-grants.ts:312-319` | TIGHTEN | 139 | ~84 | "A `comp_` row has no Paddle side, so nothing else can end one early" is the whole content; the hand-written-SQL anecdote is not |
+| S9 | `layers/billing/server/utils/admin-grants.ts:312-319` | TIGHTEN | 139 | ~84 | "A `comp_` row has no Stripe side, so nothing else can end one early" is the whole content; the hand-written-SQL anecdote is not |
 | S10 | `server/utils/session-guard.ts:3-15` | TIGHTEN | 224 | ~84 | The revocation mechanism stays; the pre-fix symptom list compresses |
 | S11 | `server/db/schema.ts:3-13` | TIGHTEN | 134 | ~74 | snake_case conventions are visible in the code below; the append-only `updated_at` rule is the only non-obvious line and stays |
 | S12 | `server/utils/session-guard.ts:68-75` | TIGHTEN | 149 | ~64 | The allowlist and the `GET /api/_auth/session` carve-out are untouched; three worked symptom examples become one |

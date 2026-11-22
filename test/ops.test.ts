@@ -79,7 +79,7 @@ describe('recordUnauthenticatedOpsEvent', () => {
 
   it('writes one row per kind and detail per interval, however many requests arrive', async () => {
     const event = {
-      kind: 'paddle_webhook_rejected',
+      kind: 'stripe_webhook_rejected',
       detail: 'signature rejected: signature_mismatch',
     }
     const t0 = 1_000_000

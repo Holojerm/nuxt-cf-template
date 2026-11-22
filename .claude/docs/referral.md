@@ -18,7 +18,7 @@ that reward if the payment reverses.
 | Codes: generate, collision, resolve a claimed code to its holder | `layers/referral/server/utils/referral-codes.ts` |
 | Ref vocabulary: `referral_<refereeId>`, `welcome_<salted mailbox hash>` | `layers/referral/server/utils/referral-refs.ts` |
 | Account creation: a code per account, `referred_by`, the welcome days | `layers/referral/server/utils/referral-signup.ts` |
-| Reactions to a Paddle event: reward, clawback paperwork | `layers/referral/server/utils/referral-billing.ts` |
+| Reactions to a billing event: reward, clawback paperwork | `layers/referral/server/utils/referral-billing.ts` |
 | `referral` / `referralKind` on the billing view | `layers/referral/server/utils/referral-view.ts` |
 | Optional durable "trial spent" record, for an app that hard-deletes entitlements | `layers/referral/server/utils/referral-ledger.ts` (`registerWelcomeLedger`) |
 | Registration with core | `layers/referral/server/plugins/referral.ts` |
@@ -53,18 +53,18 @@ from outside the building. Treat `layers/referral/server/utils/referral.ts` as b
   1. **The reward is revoked when the PURCHASE behind it reverses.** Keyed on
      `entitlements.earned_from_ref` — the transaction, never the person, or a
      refund of somebody's second pass claws back the reward their first earned.
-     For a subscription that means its **first transaction**
-     (`entitlements.first_transaction_id`, which Paddle sends once on
-     `subscription.created`), not the `sub_` id: a refund of a later renewal
-     names the renewal's transaction, finds no reward keyed on it, and claws
+     For a subscription that means its **first invoice**
+     (`entitlements.first_transaction_id`, which only Stripe's
+     `customer.subscription.created` can vouch for), not the `sub_` id: a refund of a later renewal
+     names the renewal's invoice, finds no reward keyed on it, and claws
      nothing back. It still closes the buyer's current period (any approved
      refund ends access), and the next paid period reopens it — see the
-     ordering bullet below. Only when Paddle never sent a transaction id does
+     ordering bullet below. Only when Stripe named no first invoice does
      the reward fall back to the subscription id, and then a renewal refund
      does cascade.
      The cascade follows the **buyer's own row**, never the adjustment's
-     `full`/`partial` label: that field is nullish in the schema and Paddle
-     labels an item-level 100% refund `partial`, so keying on it failed open.
+     `full`/`partial` label: that field is nullish in the schema and is the
+     provider's word, not a fact about the buyer's access, so keying on it fails open.
      Whenever the buyer's row is actually revoked, the reward goes with it.
      **Revoking the reward row alone takes nothing away** — rewards stack, so
      the rows above it still cover those days. The clawback measures the
@@ -72,9 +72,9 @@ from outside the building. Treat `layers/referral/server/utils/referral.ts` as b
      row stacked on top of it down by that much; a chargeback the merchant
      later **wins** restores the row from `restore_period_end` and slides the
      stack back up. A reversal restores only when the buyer's own row is being
-     reinstated (a `txn_` row still reading `chargeback`; a `sub_` row not
-     reading `refunded`), and it restores the buyer's `txn_` pass too, since no
-     Paddle lifecycle event ever will. The cascade lives inside
+     reinstated (a `pi_` row still reading `chargeback`; a `sub_` row not
+     reading `refunded`), and it restores the buyer's `pi_` pass too, since no
+     Stripe lifecycle event ever will. The cascade lives inside
      `revokeForAdjustment` (`layers/billing/server/utils/entitlements.ts` ›
      `revokeDerivedEntitlements`), not in the webhook route, so every caller
      gets it; the route only writes the audit rows.
@@ -122,7 +122,7 @@ from outside the building. Treat `layers/referral/server/utils/referral.ts` as b
 - **"First paid" for a subscription is a status transition, not money** —
   `previousStatus === null || 'trialing'`. `past_due → active` is a dunning
   recovery, not a first payment. It is not keyed on `transaction.completed` with
-  a `subscription_id` because `applyPaddleEvent` classifies that as `ignored`
+  a `subscription_id` because `applyBillingEvent` classifies that as `ignored`
   with no userId; see the reasoning at the webhook call site. The clawback is
   the backstop for what a status cannot distinguish.
 - A `?ref=` code lands in the existing **first-touch** attribution cookie

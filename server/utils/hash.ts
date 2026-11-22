@@ -52,7 +52,7 @@ export async function sha256Hex(value: string): Promise<string> {
  * non-constant-time on purpose — the length of a signature is not a secret, and
  * comparing unequal-length buffers byte-wise is meaningless anyway.
  *
- * One copy, shared by the Paddle webhook signature check and the unsubscribe
+ * One copy, shared by the Stripe webhook signature check and the unsubscribe
  * token check. Two copies of a timing-safe compare is one copy too many: the
  * second is where somebody "simplifies" the loop.
  */
