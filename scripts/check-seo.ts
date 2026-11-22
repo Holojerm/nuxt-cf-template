@@ -111,16 +111,18 @@ for (const { dir, file } of pageFiles) {
       problems.push({
         file: relativePath,
         rule: 'useSeo() beside useCollectionPage()',
-        detail: 'useCollectionSeo() is this page\'s useSeo() call',
+        detail: "useCollectionSeo() is this page's useSeo() call",
         remedy: 'drop the useSeo() call; the collection definition sets title and description',
       })
     }
     if (collectionSeoCalls !== 1) {
       problems.push({
         file: relativePath,
-        rule: collectionSeoCalls === 0 ? 'missing useCollectionSeo()' : 'duplicate useCollectionSeo()',
+        rule:
+          collectionSeoCalls === 0 ? 'missing useCollectionSeo()' : 'duplicate useCollectionSeo()',
         detail: `called ${collectionSeoCalls} times`,
-        remedy: 'call useCollectionSeo(page) once, right after `const page = await useCollectionPage(…)`',
+        remedy:
+          'call useCollectionSeo(page) once, right after `const page = await useCollectionPage(…)`',
       })
     }
     if (collection.kind === 'unreadable') {
