@@ -74,6 +74,9 @@ Resolve `<name>` (with or without the `<repo>-` prefix) to a trigger_id, then
 `RemoteTrigger {action: "update", trigger_id, body: {enabled: true|false}}`. Before enabling
 `daily-digest` or `support-inbox`, check that `routines.config.md` has a real owner email /
 support query (not placeholders) and that the needed connectors are connected — warn if not.
+If `routines.config.md` › Operator has Mode `grow`, say before enabling anything that the
+routine will act without drafts there (`support-inbox` sends mail, `growth-review` rolls out
+its own flags) and ask the user to confirm.
 Confirm the new state back to the user.
 
 ## run <name>
