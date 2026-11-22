@@ -118,6 +118,36 @@ and new data differ.
 If any item fails, it is a tier-1 PR left open. The fork decides which classes are mechanical.
 The template ships the table empty.
 
+## Tagged links
+
+Every link to the product's own site that a routine publishes or drafts for somewhere off the
+site (an X post or reply, a directory or community listing, an email, a social draft) carries
+three query parameters. An untagged link from X arrives as `t.co` and one from a mail client
+as `direct`, and then no bet about that source can be judged.
+
+| Parameter | Value |
+| --- | --- |
+| `utm_source` | Where the link is published: `x`, `linkedin`, `email`, or the directory's or community's own name. |
+| `utm_medium` | The kind of placement: `social`, `directory`, `community`; for email, `lifecycle` or `announcement`. |
+| `utm_campaign` | The `growth-bet` the link serves: the `<slug>` its issue declares, the same one as its `growth/<slug>` branch when it has one. A link that serves no bet carries the publishing routine's name (`x-post`, `x-replies`, `marketing-content`). |
+
+- **Shape.** Each value is lowercase, starts with a letter or digit, uses only `a-z`, `0-9`,
+  `.`, `_` and `-`, and is at most 40 characters. The funnel reports anything else as
+  `other` (`sourceKey` and `campaignKey` in `server/utils/fleet-funnel.ts`), so a tag outside
+  the shape is a tag lost.
+- **Where a tag ends up.** `app/plugins/attribution.client.ts` writes the visitor's first
+  landing to a cookie, and account creation copies it to `users.signup_source`,
+  `signup_medium` and `signup_campaign`. `/api/fleet` reports the 28-day counts as
+  `funnel.sources` (top 5) and `funnel.campaigns` (top 10). An explicit `utm_source` beats
+  the referrer, and the first touch wins: a visitor who had been here before keeps the tag
+  they first arrived with.
+- **Email.** The product's send path tags the button itself (`emailLink` in
+  `server/utils/lifecycle-definitions.ts`): source `email`, medium `lifecycle` or
+  `announcement`, campaign the step id. Give a link written into the body copy the same three.
+- **Only off-site, only ours.** Never tag a link on the product's own pages (it would count
+  an internal click as an arrival in analytics), and never add tags to someone else's URL.
+- **Nothing else in a tag.** No name, email address, user id or free text.
+
 ## The ops journal
 
 The journal is the shared memory between routines and the source for the daily digest email.

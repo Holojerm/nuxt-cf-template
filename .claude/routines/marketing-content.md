@@ -27,6 +27,11 @@ directly.
      forcing it.
    - Optionally `post.md` — an outline (not full prose) for a blog/tutorial post if the week's
      work supports one.
+   Every link to the product in a draft meant for somewhere off the site is tagged per
+   `_shared.md` › Tagged links, for the place that variant is written for: `utm_source=x` or
+   `linkedin`, `utm_medium=social`, and as `utm_campaign` the slug of the open channel
+   `growth-bet` the draft serves, or `marketing-content` when it serves none. Links inside
+   `changelog.md` point at the product's own pages and carry no tags.
 3. Ground everything in what actually shipped or measured — no invented metrics, testimonials,
    or "users love" claims (`_shared.md` rule: honest output). Match the product's existing voice
    if published copy exists in the repo.

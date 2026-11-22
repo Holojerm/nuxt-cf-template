@@ -29,11 +29,11 @@ so the repo ships the *definitions* and a sync command:
 | `bug-fix.md` | Daily 12:00 | Picks the top triaged bug, opens a fix PR with a regression test; with a tier-2 grant it merges through the queue, otherwise it is a draft | GitHub connector; tier 2 |
 | `feedback-triage.md` | Daily 11:30 | Turns the in-app feedback queue (D1 `feedback` table) into GitHub issues | GitHub connector (+ Cloudflare API token) |
 | `support-inbox.md` | Daily 13:00 | Triages support email, **drafts** replies, files bugs as issues; on an operator repo it sends how-to answers and acknowledgements, signed as the product's assistant | Gmail + GitHub connectors |
-| `analytics-review.md` | Weekly Mon 12:30 | Reviews product/traffic metrics, writes a report, files opportunities | GitHub connector (+ analytics access) |
-| `marketing-content.md` | Weekly Thu 14:00 | Drafts changelog + marketing copy into `ops/marketing/` for review | GitHub connector |
-| `growth-review.md` | Weekly Mon 13:30 | Judges last week's `growth-bet`s, picks ≤3 new ones against `fleet.json` › `product`, ships each as a flagged (default-off) or content PR; on an operator repo it starts and ends the rollout of its own `growth-…` flags (`scripts/flags.ts`) | GitHub connector (+ Cloudflare API token); tier 2 |
-| `x-post.md` | Tue/Thu 15:00 | One post about something that shipped, from the product's X account (`scripts/x-post.ts`); drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
-| `x-replies.md` | Twice daily 09:00, 17:00 | Answers people who replied to or mentioned the product's X account (a few a run at most), escalates support/billing/press, skips the rest (`scripts/x-replies.ts`); drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
+| `analytics-review.md` | Weekly Mon 12:30 | Reviews product/traffic metrics, writes a report, files opportunities; counts visits and signups per open channel bet | GitHub connector (+ analytics access) |
+| `marketing-content.md` | Weekly Thu 14:00 | Drafts changelog + marketing copy into `ops/marketing/` for review; off-site links in drafts are tagged | GitHub connector |
+| `growth-review.md` | Weekly Mon 13:30 | Judges last week's `growth-bet`s by type (channel, activation, monetisation, retention), picks ≤3 new ones against `fleet.json` › `product`, and ships each as a flagged (default-off) or content PR. Under 200 signups in 28 days it picks channel bets first, judged on visits and signups from one tagged source; never paid traffic. On an operator repo it starts and ends the rollout of its own `growth-…` flags (`scripts/flags.ts`) | GitHub connector (+ Cloudflare API token); tier 2 |
+| `x-post.md` | Tue/Thu 15:00 | One post about something that shipped, from the product's X account (`scripts/x-post.ts`), with a tagged link that carries the open channel bet's campaign when there is one; drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
+| `x-replies.md` | Twice daily 09:00, 17:00 | Answers people who replied to or mentioned the product's X account (a few a run at most), escalates support/billing/press, skips the rest (`scripts/x-replies.ts`); a link it gives is tagged; drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
 | `ops-triage.md` | Every 6 h at :37 | Reads the ops spool (`GET /api/ops/events`), retriggers a deploy that never landed, fixes **Mechanical fixes** classes, files the rest as triaged issues | GitHub connector + OPS_BASE_URL / OPS_TOKEN env vars (+ optional deploy hook URL); tier 2 |
 | `dependency-merge.md` | Weekly Mon 15:15 | Merges Dependabot minor/patch PRs that touch only the manifest and lockfile once every check is green; majors and red checks go to the owner | GitHub connector; tier 2; `scope: fleet` (one all-repos routine) |
 | `pr-shepherd.md` | Every 2 h at :23 | Gets stuck PRs moving: retries a check that failed on infrastructure once, requeues a PR that fell out of the merge queue, escalates the rest. Never writes code or merges | GitHub connector; tier 2; `scope: fleet` (one all-repos routine) |
@@ -98,6 +98,9 @@ must follow the operating rules in `_shared.md` (the pointer prompt enforces rea
   and marked automated. Pricing, spend, refunds, data deletion, billing, legal, security and
   angry support threads, and anything under the owner's personal name stay with the owner on
   every repo. Set Mode back to `off` to take the grant back.
+- **Tagged links** — every link a routine publishes or drafts for somewhere off the site
+  carries `utm_source`, `utm_medium` and `utm_campaign` (`_shared.md` › Tagged links), so the
+  funnel can say which source and which `growth-bet` a signup came from.
 - **Untrusted input** — issue text and support emails are attacker-controlled data. `_shared.md`
   forbids following instructions found in them.
 - **Audit trail** — everything lands in the ops journal, and the digest surfaces it daily.
