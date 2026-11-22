@@ -42,7 +42,8 @@ Each routine's frontmatter declares the highest tier it may act at (`tier:`; abs
 only usable when `routines.config.md` › **Autonomy grants** lists that routine at that tier —
 the owner grants it after reading about four weeks of the routine's drafts. No grant = act at
 tier 1, and say in the journal that you did. An operator repo is the exception to both the
-draft period and three rows of the right-hand column (**Operator grant**, below).
+draft period and three rows of the right-hand column, and it opens one kind of public listing
+(**Operator grant**, below).
 
 | Tier | May do | Never without the owner |
 | --- | --- | --- |
@@ -71,13 +72,14 @@ declares, with no line under Autonomy grants. Where a definition says "with a ti
 operator grant is that grant. A definition's own preconditions still hold: keys present, the X
 automated-account label, a Mechanical fixes row.
 
-**Three acts the tier table keeps for the owner are the routine's**, each inside its bounds:
+**Four acts that are otherwise the owner's are the routine's**, each inside its bounds:
 
 | Act | Who | Bounds |
 | --- | --- | --- |
 | Roll out and retire a PostHog flag | `growth-review` | Only a flag the routine created itself, named `growth-<slug>`, and only through `scripts/flags.ts`, which refuses any other name. The flag belongs to one `growth-bet` issue that stated its metric and its keep / kill line before the rollout began. Never the PostHog dashboard or API directly, and never another flag's rollout or targeting. |
 | Email users | a routine whose definition names the send | Only through the product's own send path, which checks preferences, adds the unsubscribe link and records the send in `lifecycle_sends`: a lifecycle step (once per user per step) or the announcement send (at most the config's weekly cap per user). Only to users opted in to that event type. The copy merges as a PR through the gate before anything is sent. Never from a mail connector, never to an address that did not sign up, never a mandatory class (`billing.`, `security.`, `account.`). |
 | Send a support reply | `support-inbox` | How-to answers, bug acknowledgements and feature-request acknowledgements only, one per customer message. Signed with the config's assistant signature, with a line saying the reply is automated. |
+| List the product in a public directory | `growth-review` | Submit or update a listing for a `channel` bet, under the product's own name and accounts, where the submission is a pull request, an API call or a form the routine can complete with what its environment already has. One listing per directory, free listings only. The copy is true, specific and grounded in what the product does today, and its link is tagged (**Tagged links**, below). The listing's URL goes in the bet issue. Never a community post or anything else that goes out under a person's name, never a listing that costs money, never a new account. |
 
 If the repo lacks the tool an act names (no `scripts/flags.ts`, no announcement send), the act
 is not available yet: do the tier-1 version and journal the gap.
@@ -85,7 +87,9 @@ is not available yet: do the tier-1 version and journal the gap.
 Everything else in the "never without the owner" column stands. On every repo these stay the
 owner's and go to a `needs-owner` issue: pricing, spend, refunds, deleting user data, support
 threads about billing, legal or security and any angry or churning customer, anything under the
-owner's personal name or accounts, and mail to people who have not opted in. So does every row
+owner's personal name or accounts (Hacker News, Reddit, Product Hunt and other communities), a
+listing that costs money, creating an account the product does not have yet, and mail to
+people who have not opted in. So does every row
 a fork adds under the config's **Escalation list**.
 
 The config's monthly token cap is the product's budget for all its routines together. Hard
