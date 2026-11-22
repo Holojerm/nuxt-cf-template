@@ -1,4 +1,4 @@
-// When the referral loop reacts to a Paddle event. The decision is the one the
+// When the referral loop reacts to a billing event. The decision is the one the
 // webhook route made inline before billing moved into a layer; the reward and
 // the cascade themselves are tested in test/referral.test.ts.
 
@@ -14,7 +14,7 @@ function setup() {
     reward: reward as never,
     cascade: cascade as never,
   })
-  const run = (outcome: unknown, dataId = 'txn_or_sub_1') =>
+  const run = (outcome: unknown, dataId = 'pi_or_sub_1') =>
     handler({
       db: {},
       event: { data: { id: dataId } },
@@ -26,8 +26,8 @@ function setup() {
 describe('referral reward', () => {
   it('pays on a pass, keyed on the transaction a refund will name', async () => {
     const { reward, run } = setup()
-    await run({ kind: 'pass', userId: 'u1', granted: true }, 'txn_1')
-    expect(reward).toHaveBeenCalledWith({}, 'u1', { earnedFromRef: 'txn_1' })
+    await run({ kind: 'pass', userId: 'u1', granted: true }, 'pi_1')
+    expect(reward).toHaveBeenCalledWith({}, 'u1', { earnedFromRef: 'pi_1' })
   })
 
   it.each([null, 'trialing'])(
@@ -40,15 +40,15 @@ describe('referral reward', () => {
           userId: 'u1',
           status: 'active',
           previousStatus,
-          firstTransactionId: 'txn_first',
+          firstTransactionId: 'pi_first',
         },
         'sub_1',
       )
-      expect(reward).toHaveBeenCalledWith({}, 'u1', { earnedFromRef: 'txn_first' })
+      expect(reward).toHaveBeenCalledWith({}, 'u1', { earnedFromRef: 'pi_first' })
     },
   )
 
-  it('falls back to the subscription id when Paddle never sent a first transaction', async () => {
+  it('falls back to the subscription id when Stripe named no first invoice', async () => {
     const { reward, run } = setup()
     await run(
       {

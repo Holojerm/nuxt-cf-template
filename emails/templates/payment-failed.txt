@@ -2,7 +2,7 @@ Your payment did not go through
 
 Hi {{name}} — the last charge for your {{appName}} subscription was declined.
 
-Paddle will retry it over the next few days. If it keeps failing, your access will stop. Updating your card now avoids that entirely.
+The charge will be retried over the next few days. If it keeps failing, your access will stop. Updating your card now avoids that entirely.
 
 Update payment method: {{appUrl}}/account
 

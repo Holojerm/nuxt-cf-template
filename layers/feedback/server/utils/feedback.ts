@@ -25,7 +25,7 @@ export type FeedbackDb = ReturnType<typeof drizzle<typeof tables>>
  *
  * `churn` is the exception to "the widget sends everything": it comes from the
  * cancellation prompt on /account (layers/billing/app/utils/churn.ts), which is the only
- * chance to ask, because cancelling itself happens on Paddle's hosted portal
+ * chance to ask, because cancelling itself happens on Stripe's hosted portal
  * where no survey of ours can run.
  */
 export const FEEDBACK_KINDS = ['bug', 'idea', 'praise', 'confusion', 'churn', 'other'] as const

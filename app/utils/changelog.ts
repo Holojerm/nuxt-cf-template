@@ -66,7 +66,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       { kind: 'added', text: 'GitHub and Google sign-in, wired end to end.' },
       {
         kind: 'added',
-        text: 'Paddle billing: checkout, entitlements, and self-serve cancellation.',
+        text: 'Billing: checkout, entitlements, and self-serve cancellation.',
       },
       { kind: 'fixed', text: 'Refunds and chargebacks now revoke access immediately.' },
     ],

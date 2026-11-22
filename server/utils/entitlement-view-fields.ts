@@ -52,7 +52,7 @@ export interface EntitlementHistoryFields {}
  * layer augments this with the whole row.
  */
 export interface EntitlementViewRow {
-  /** The ref: `sub_…`, `txn_…`, `comp_…`, or a derived grant's own prefix. */
+  /** The ref: `sub_…`, `pi_…`, `comp_…`, or a derived grant's own prefix. */
   billingRef: string
 }
 

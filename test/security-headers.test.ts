@@ -8,40 +8,17 @@ import { describe, expect, it } from 'vitest'
 
 import { contentSecurityPolicy, securityHeaders } from '../shared/security-headers'
 
-// A repo without the billing layer takes these assertions as they are, inverted:
-// a fork that dropped billing must also have dropped Paddle from the policy.
-const HAS_BILLING = Object.keys(import.meta.glob('../layers/billing/nuxt.config.ts')).length > 0
-const PADDLE_HOSTS = [
-  'https://cdn.paddle.com',
-  'https://sandbox-cdn.paddle.com',
-  'https://buy.paddle.com',
-  'https://sandbox-buy.paddle.com',
-  'https://api.paddle.com',
-  'https://sandbox-api.paddle.com',
-]
-
 // What production serves; dev differs by one frame-src source.
-const csp = contentSecurityPolicy(false, { billing: HAS_BILLING })
+const csp = contentSecurityPolicy(false)
 const directive = (name: string): string =>
   new RegExp(`(?:^|; )${name} ([^;]+)`).exec(csp)?.[1] ?? ''
 
 describe('the policy still permits what the vendors need', () => {
-  it.skipIf(!HAS_BILLING)('allowlists the Paddle checkout hosts in both environments', () => {
-    // The hosts come from the env table inside Paddle's own bundle
-    // (checkoutFrontEndBase / apiBase); see shared/security-headers.ts.
-    expect(directive('frame-src')).toContain('https://buy.paddle.com')
-    expect(
-      directive('frame-src'),
-      'sandbox is the template default — breaking it breaks first-run',
-    ).toContain('https://sandbox-buy.paddle.com')
-    expect(directive('connect-src')).toContain('https://api.paddle.com')
-    expect(directive('connect-src')).toContain('https://sandbox-api.paddle.com')
-  })
-
-  it.skipIf(HAS_BILLING)('names no Paddle host without the billing layer', () => {
-    // TEARDOWN.md ("Remove billing entirely"): a stale entry is a silently
-    // over-permissive policy.
-    expect(PADDLE_HOSTS.filter((host) => csp.includes(host))).toEqual([])
+  it('names no payment host, with or without the billing layer', () => {
+    // Stripe's hosted Checkout and customer portal are full-page navigations,
+    // which CSP does not govern. An entry nothing needs is a silently
+    // over-permissive policy; embedding a checkout is the day to add one.
+    expect(csp).not.toMatch(/stripe|link\.com/)
   })
 
   it('has both directives Turnstile needs, before anyone configures it', () => {
@@ -87,26 +64,17 @@ describe('the directives that make the policy worth having', () => {
       .filter((source) => source.startsWith('http') || source.startsWith('//'))
 
     expect(externalHosts.sort()).toEqual(
-      [
-        ...(HAS_BILLING ? ['https://cdn.paddle.com', 'https://sandbox-cdn.paddle.com'] : []),
-        'https://challenges.cloudflare.com',
-        'https://static.cloudflareinsights.com',
-      ].sort(),
+      ['https://challenges.cloudflare.com', 'https://static.cloudflareinsights.com'].sort(),
     )
   })
 
   it('differs between dev and production by the DevTools frame source only', () => {
-    expect(
-      contentSecurityPolicy(true, { billing: HAS_BILLING }).replace(
-        " 'self'; worker-src",
-        '; worker-src',
-      ),
-    ).toBe(csp)
+    expect(contentSecurityPolicy(true).replace(" 'self'; worker-src", '; worker-src')).toBe(csp)
   })
 })
 
 describe('the other security headers', () => {
-  const headers = securityHeaders(false, { billing: HAS_BILLING })
+  const headers = securityHeaders(false)
 
   it('sets HSTS without preload (a registry submission is the owner’s call)', () => {
     expect(headers['Strict-Transport-Security']).toBe('max-age=31536000; includeSubDomains')

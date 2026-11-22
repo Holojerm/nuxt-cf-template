@@ -14,7 +14,7 @@ This is a one-time pass{{#ends}}, good through {{ends}}{{/ends}}. It won't renew
 Your subscription renews automatically{{#ends}}, next on {{ends}}{{/ends}}. You can cancel any time from your account page — no email required.
 {{/isPass}}
 
-Paddle handles the payment, so your receipt and invoice come from them in a separate email.
+Stripe handles the payment and sells through Link, so your receipt comes from Link in a separate email, and Link is the name on your card statement.
 
 Go to your account: {{appUrl}}/account
 

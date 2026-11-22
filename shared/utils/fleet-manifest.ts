@@ -161,7 +161,7 @@ export const FleetManifestSchema = z.strictObject({
   features: z.strictObject({
     /** Has a `users` table and sign-in; false for a single-user tool. */
     auth: z.boolean(),
-    /** Paddle billing and the `entitlements` table. */
+    /** Stripe billing and the `entitlements` table. */
     billing: z.boolean(),
     /** PostHog project, or null when analytics is not wired up. */
     posthog: z.strictObject({ projectId: z.number().int().positive() }).nullable(),

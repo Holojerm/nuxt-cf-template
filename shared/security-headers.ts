@@ -2,9 +2,9 @@
 // the config, so test/security-headers.test.ts can assert on the policy without a browser.
 // `isDev` is the one dev/prod delta (see frame-src); the vitest side checks the shipped one.
 
-// A CSP that silently breaks analytics or checkout is worse than no CSP: the
-// failure is invisible in dev (both vendors no-op without keys), invisible in
-// tests, and shows up as "revenue stopped" in production. So every host below
+// A CSP that silently breaks analytics or sign-up is worse than no CSP: the
+// failure is invisible in dev (the vendors no-op without keys), invisible in
+// tests, and shows up as "sign-ups stopped" in production. So every host below
 // was derived from something checkable rather than from a blog post, and the
 // provenance is recorded next to it. `test/csp/` re-checks the browser half in
 // a real Chromium on every `bun run ci`.
@@ -14,19 +14,11 @@
 // it costs is a handler invocation on every request, including the static assets
 // Cloudflare would otherwise serve without waking the Worker.
 
-/** Paddle's hosts, read out of the live bundle rather than guessed — see below. */
-const PADDLE = {
-  cdn: ['https://cdn.paddle.com', 'https://sandbox-cdn.paddle.com'],
-  // `checkoutFrontEndBase` + `checkoutBase` from the bundle's env table.
-  checkout: [
-    'https://buy.paddle.com',
-    'https://sandbox-buy.paddle.com',
-    'https://create-checkout.paddle.com',
-    'https://sandbox-create-checkout.paddle.com',
-  ],
-  // `apiBase` — fetched by Paddle.js for /pricing-preview and /transactions/preview.
-  api: ['https://api.paddle.com', 'https://sandbox-api.paddle.com'],
-} as const
+// No payment host appears below, with or without layers/billing. Stripe's hosted
+// Checkout and its customer portal are full-page navigations away from this
+// origin, and CSP does not govern where a document navigates: no script, frame
+// or fetch to Stripe ever runs on our pages. A fork that embeds a checkout adds
+// that checkout's hosts then, from Stripe's own CSP page, and not before.
 
 /**
  * Cloudflare Turnstile. One host, doing two jobs: `script-src` for the
@@ -69,11 +61,7 @@ const CF_WEB_ANALYTICS = {
 // Everything else Vite dev was assumed to need turned out to be unnecessary —
 // see connect-src.
 
-/** Which optional layers shipped. Billing alone adds origins: without it the policy names no Paddle host. */
-export type PolicyLayers = { billing: boolean }
-
-const cspSources = (isDev: boolean, { billing }: PolicyLayers): Record<string, string[]> => {
-  const paddle = billing ? PADDLE : { cdn: [], checkout: [], api: [] }
+const cspSources = (isDev: boolean): Record<string, string[]> => {
   return {
     'default-src': ["'self'"],
 
@@ -99,32 +87,22 @@ const cspSources = (isDev: boolean, { billing }: PolicyLayers): Record<string, s
     // after a routine `bun update`.
     //
     // What survives: script-src still refuses every *external* origin except
-    // Paddle's CDN, Turnstile's and the Web Analytics beacon, so an injected
+    // Turnstile's and the Web Analytics beacon, so an injected
     // `<script src="//evil.tld/x.js">` does not load. Paired with object-src/
     // base-uri below, the classic bypasses stay shut. test/security-headers.test.ts pins that list.
-    'script-src': [
-      "'self'",
-      "'unsafe-inline'",
-      ...paddle.cdn,
-      ...TURNSTILE,
-      ...CF_WEB_ANALYTICS.script,
-    ],
+    'script-src': ["'self'", "'unsafe-inline'", ...TURNSTILE, ...CF_WEB_ANALYTICS.script],
 
     // Vue SSR emits inline style attributes and Vite dev injects <style> blocks;
-    // there is no build flag that stops either. Paddle's overlay pulls
-    // assets/css/paddle.css from its CDN (verified: that file has no @font-face
-    // and no url(), so it drags nothing else in with it).
-    'style-src': ["'self'", "'unsafe-inline'", ...paddle.cdn],
+    // there is no build flag that stops either.
+    'style-src': ["'self'", "'unsafe-inline'"],
 
     // data: because the @nuxt/icon client bundle inlines icons as
     // `mask-image: url("data:image/svg+xml,…")`, which is img-src, not style-src.
     // The two avatar hosts are where `users.avatar_url` comes from — GitHub's
     // profile CDN and Google's, which shards across *.googleusercontent.com.
-    // Paddle's CDN serves the overlay's images plus a health-check.gif.
     'img-src': [
       "'self'",
       'data:',
-      ...paddle.cdn,
       'https://avatars.githubusercontent.com',
       'https://*.googleusercontent.com',
     ],
@@ -145,9 +123,9 @@ const cspSources = (isDev: boolean, { billing }: PolicyLayers): Record<string, s
     // host, and dropping it changed nothing in test/csp. It is also not a cheap
     // addition — `ws:` is a bare scheme source, so it would permit a socket to
     // *any* host, which is a strange thing to hand a dev server.
-    'connect-src': ["'self'", ...paddle.api, ...CF_WEB_ANALYTICS.connect],
+    'connect-src': ["'self'", ...CF_WEB_ANALYTICS.connect],
 
-    // The overlay checkout is an iframe into this page, which is frame-src.
+    // The Turnstile challenge is an iframe into this page, which is frame-src.
     // X-Frame-Options / frame-ancestors govern the opposite direction and do not
     // conflict with it — a common reason people delete one of the two.
     //
@@ -158,8 +136,8 @@ const cspSources = (isDev: boolean, { billing }: PolicyLayers): Record<string, s
     // Worse, a refused iframe still fires `load`, so the panel renders *blank*: it
     // reads as a broken DevTools, not as a CSP decision, and the natural next move
     // is to rip the header out. DevTools does not exist in a production build, so
-    // the shipped policy keeps frame-src to Paddle and Turnstile alone.
-    'frame-src': [...paddle.cdn, ...paddle.checkout, ...TURNSTILE, ...(isDev ? ["'self'"] : [])],
+    // the shipped policy keeps frame-src to Turnstile alone.
+    'frame-src': [...TURNSTILE, ...(isDev ? ["'self'"] : [])],
 
     // PostHog session replay runs rrweb's packer in a worker built from a Blob
     // (`new Worker(URL.createObjectURL(...))` in posthog-js/dist/recorder.js), so
@@ -185,18 +163,13 @@ const cspSources = (isDev: boolean, { billing }: PolicyLayers): Record<string, s
   }
 }
 
-// `layers` defaults to the template's own shape. nuxt.config.ts passes what is actually on disk,
-// so a fork that removes layers/billing loses the Paddle origins with it — no hand edit to forget.
-export const contentSecurityPolicy = (
-  isDev: boolean,
-  layers: PolicyLayers = { billing: true },
-): string =>
-  Object.entries(cspSources(isDev, layers))
+export const contentSecurityPolicy = (isDev: boolean): string =>
+  Object.entries(cspSources(isDev))
     .map(([directive, sources]) => `${directive} ${sources.join(' ')}`)
     .join('; ')
 
-export const securityHeaders = (isDev: boolean, layers: PolicyLayers = { billing: true }) => ({
-  'Content-Security-Policy': contentSecurityPolicy(isDev, layers),
+export const securityHeaders = (isDev: boolean) => ({
+  'Content-Security-Policy': contentSecurityPolicy(isDev),
   // Two years is the preload-list minimum, but `preload` itself is deliberately
   // absent: it is a submission to a browser-vendor registry that ships in binary
   // releases and takes months to reverse. That is the app owner's call to make
@@ -204,19 +177,17 @@ export const securityHeaders = (isDev: boolean, layers: PolicyLayers = { billing
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
   // Full URL to our own origin, origin-only to third parties, nothing at all on
   // an HTTPS→HTTP downgrade. Keeps internal referrers useful in PostHog without
-  // leaking gated paths or query strings to Paddle.
+  // leaking gated paths or query strings to the checkout we redirect to.
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   // Redundant with frame-ancestors for modern browsers, kept for the ones that
-  // only understand this. Note it says nothing about the Paddle overlay, which
-  // is an iframe *into* this page.
+  // only understand this.
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
-  // Deliberately short. `payment` is the conspicuous omission: Paddle's overlay
-  // delegates Apple Pay / Google Pay into its own iframe, and the lazily-loaded
-  // checkout chunk (cdn.paddle.com/paddle/v2/paddle.js is only a loader) is what
-  // sets that iframe's `allow` attribute — so we cannot verify what it needs
-  // from here. `payment=()` is an empty allowlist that an iframe's `allow`
-  // cannot re-open, so guessing wrong silently removes the wallet buttons and
-  // nothing logs. The default (`payment=self`, delegable) is already correct.
+  // Deliberately short. `payment` is the conspicuous omission. Checkout is
+  // Stripe's own page today, which this header does not reach, so `payment=()`
+  // would cost nothing now. It is left out for the fork that later embeds a
+  // payment form: an empty allowlist is one an iframe's `allow` cannot re-open,
+  // so the wallet buttons would silently vanish and nothing would log. The
+  // default (`payment=self`, delegable) is already correct.
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
 })

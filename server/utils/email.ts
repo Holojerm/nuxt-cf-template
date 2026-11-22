@@ -8,8 +8,8 @@
 //
 // ── Never throws ─────────────────────────────────────────────────────────────
 // Every call site is something more important than the email: a sign-in, a
-// Paddle webhook that must return 200 or get retried forever. A bounced welcome
-// email must not 500 a login, and a flaky mail API must not make Paddle replay a
+// Stripe webhook that must return 200 or get retried forever. A bounced welcome
+// email must not 500 a login, and a flaky mail API must not make Stripe replay a
 // subscription event. Failures are logged and reported; the return value tells
 // you what happened if you care.
 //

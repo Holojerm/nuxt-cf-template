@@ -1,12 +1,12 @@
 <script setup lang="ts">
 // ── A STARTING POINT, NOT LEGAL ADVICE ───────────────────────────────────────
 // Same caveat as /terms. What makes this one worth keeping rather than pasting
-// from a generator is that it's accurate about THIS codebase: it names the three
-// processors the template actually ships with (Cloudflare, Paddle, PostHog),
-// and it describes the data those pieces really collect — the OAuth profile
-// fields in server/utils/users.ts, the session cookie, the entitlement rows.
+// from a generator is that it's accurate about THIS codebase: it names the
+// processors the template actually ships with (Cloudflare, Stripe, PostHog,
+// Resend), and it describes the data those pieces really collect — the OAuth
+// profile fields in server/utils/users.ts, the session cookie, the entitlement rows.
 //
-// If you remove PostHog or swap Paddle, fix the table below. A privacy policy
+// If you remove PostHog or swap Stripe, fix the table below. A privacy policy
 // that lists a processor you don't use is as wrong as one that omits one.
 
 definePageMeta({
@@ -21,7 +21,7 @@ definePageMeta({
 
 const config = useRuntimeConfig()
 
-const LAST_UPDATED = '2026-11-01'
+const LAST_UPDATED = '2026-11-22'
 
 const app = computed(() => config.public.appName)
 const entity = computed(() => config.public.legalEntity)
@@ -34,9 +34,9 @@ const processors = [
     data: 'Everything the app stores, plus request logs and page-load timings',
   },
   {
-    name: 'Paddle',
-    purpose: 'Payments, tax, and invoicing as merchant of record',
-    data: 'Your email, billing address, and payment details',
+    name: 'Stripe (selling as Link)',
+    purpose: 'Payments, tax, receipts, refunds, and disputes as merchant of record',
+    data: 'Your name, email, billing address, and payment details',
   },
   {
     name: 'PostHog',
@@ -90,9 +90,9 @@ useSeo({
           never receive your password for that provider.
         </p>
         <p>
-          <strong class="text-highlighted">Billing data.</strong> Paddle holds your payment details;
-          we never see a card number. We store a customer reference, which plan you have, its
-          status, and when the period ends.
+          <strong class="text-highlighted">Billing data.</strong> Stripe, which sells to you through
+          Link, holds your payment details; we never see a card number. We store a customer
+          reference, which plan you have, its status, and when the period ends.
         </p>
         <p>
           <strong class="text-highlighted">Usage data.</strong> Pages visited, features used, and

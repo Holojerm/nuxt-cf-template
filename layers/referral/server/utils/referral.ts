@@ -5,8 +5,8 @@
 // code, and it is written like billing code: the db comes in as the first
 // argument so test/referral.test.ts can drive real grants against a real D1
 // inside workerd, every refusal is a named outcome rather than a silent return,
-// and nothing here throws at its callers — one of which is the Paddle webhook,
-// which must answer 200 or Paddle replays the money event behind it.
+// and nothing here throws at its callers — one of which is the Stripe webhook,
+// which must answer 200 or Stripe replays the money event behind it.
 //
 // ── The loop, and where each half can be gamed ───────────────────────────────
 //   1. Every account gets a code (server/utils/users.ts, at provisioning) and a
@@ -368,10 +368,10 @@ export async function grantRefereeWelcome(
 /**
  * The referrer's reward — REFERRAL_REWARD_DAYS, the first time their referee pays.
  *
- * Called from the Paddle webhook next to notifyBillingOutcome(), and bound by
+ * Called from the Stripe webhook next to notifyBillingOutcome(), and bound by
  * the same contract: it never throws, and nothing it does may stop that handler
- * returning 200. A thrown error here would make Paddle replay a completed
- * transaction; a swallowed one costs a reward that the very next redelivery
+ * returning 200. A thrown error here would make Stripe replay a completed
+ * payment; a swallowed one costs a reward that the very next redelivery
  * repairs, because the whole function is idempotent and safe to re-run.
  *
  * Deliberately called on EVERY qualifying event rather than only on the first
@@ -390,8 +390,9 @@ export async function rewardReferrerForFirstPurchase(
   refereeId: string,
   options: {
     /**
-     * The Paddle ref of the purchase being rewarded — the transaction id for a
-     * pass, the subscription id for a subscription. Stored on the reward row so
+     * The Stripe ref of the purchase being rewarded: the PaymentIntent for a
+     * pass, the first invoice for a subscription (its `sub_` id when no first
+     * invoice was recorded). Stored on the reward row so
      * a later refund of THAT purchase can find it (server/db/schema.ts ›
      * earned_from_ref). Omitting it grants a reward nothing can ever claw back,
      * so callers on the money path must pass it.
@@ -487,7 +488,7 @@ export async function rewardReferrerForFirstPurchase(
  * revoked row with `restore_period_end` set. Failing the clawback to save its
  * audit row would leave the money wrong to keep the paperwork tidy.
  *
- * Never throws — its caller is the Paddle webhook.
+ * Never throws — its caller is the Stripe webhook.
  */
 export async function recordReferralCascade(
   db: ExtensionDb,

@@ -841,7 +841,7 @@ export async function restoreDerivedEntitlements(
 
 /**
  * A chargeback the merchant WON. Restores the buyer's own row from
- * `restorePeriodEnd` (a `txn_` pass or a `sub_` period still reading
+ * `restorePeriodEnd` (a `pi_` pass or a `sub_` period still reading
  * `chargeback`) and every reward the refs earned. A subscription that was
  * REFUNDED reverses nothing: `refunded` is a word only we write, so it still
  * means the money went back and stayed back.
@@ -901,7 +901,7 @@ async function reverseAdjustment(
         // own `restore_period_end` still says whether there is anything to put back.
         billingRef ??= ref
       } else {
-        // A `txn_` row is ours alone — nothing overwrites its status, so it is
+        // A `pi_` row is ours alone — nothing overwrites its status, so it is
         // trustworthy evidence: not `chargeback` means not a dispute we won.
         continue
       }
@@ -980,7 +980,7 @@ export async function revokeForAdjustment(
     if (!row) continue
     if (isStale(row, adjustment.occurredAt)) return { outcome: 'stale', billingRef: ref }
 
-    // A chargeback can be reversed, and for a `txn_` row this write is the only
+    // A chargeback can be reversed, and for a `pi_` row this write is the only
     // record of the window it destroys — so keep it, once. Only while the row
     // is still granting: a redelivery would otherwise stamp `now` over the
     // original date and make the row unrestorable, which is the same hazard

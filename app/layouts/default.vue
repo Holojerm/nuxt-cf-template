@@ -155,9 +155,9 @@ watch(
       <slot />
     </UContainer>
 
-    <!-- Footer. The legal links are not optional decoration: Paddle's onboarding
-         review checks for reachable terms and privacy pages before approving an
-         account, and so do most payment processors. -->
+    <!-- Footer. The legal links are not optional decoration: a payment
+         processor's account review looks for reachable terms and privacy pages
+         before approving an account, Stripe's included. -->
     <footer class="mt-16 border-t border-default">
       <UContainer>
         <div class="flex flex-col gap-4 py-8 sm:flex-row sm:items-center sm:justify-between">

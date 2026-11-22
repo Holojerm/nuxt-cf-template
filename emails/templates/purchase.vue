@@ -16,7 +16,8 @@
       email required.<Raw>{{/isPass}}</Raw>
     </EmailParagraph>
     <EmailParagraph>
-      Paddle handles the payment, so your receipt and invoice come from them in a separate email.
+      Stripe handles the payment and sells through Link, so your receipt comes from Link in a
+      separate email, and Link is the name on your card statement.
     </EmailParagraph>
     <EmailButton href="{{appUrl}}/account">Go to your account</EmailButton>
     <template #footnote>Questions about the charge? Reply to this email.</template>

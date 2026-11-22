@@ -55,8 +55,8 @@ export const REFERRAL_WELCOME_DAYS = 7
  * Days the *referrer* earns, once, when their referee first pays.
  *
  * A full pass — the thing they would have bought — because unlike the welcome
- * grant this one is not free to obtain: somebody had to complete a real Paddle
- * transaction, and KEEP it, for these days to exist. Rewarding on signup would
+ * grant this one is not free to obtain: somebody had to complete a real Stripe
+ * payment, and KEEP it, for these days to exist. Rewarding on signup would
  * make N throwaway accounts an unlimited supply of days for one attacker.
  * Rewarding on payment alone was not enough either — the purchase could simply
  * be refunded, which is why the reward is revoked when the referee's money goes

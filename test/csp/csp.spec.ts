@@ -3,31 +3,27 @@
 // A Content-Security-Policy is a promise about what the app loads, and the
 // expensive failure is not "the policy is too weak" — it is "the policy is
 // slightly too strong and something stopped working six weeks ago". PostHog and
-// Paddle both fail *quietly* under a bad CSP: replay simply never appears in the
-// dashboard, checkout simply never opens. Neither throws anything a user reports
-// and neither shows up in a unit test.
+// Turnstile both fail *quietly* under a bad CSP: replay simply never appears in
+// the dashboard, the sign-up challenge is an empty box. Neither throws anything
+// a user reports and neither shows up in a unit test.
 //
 // So this suite runs a real browser against the real header and fails on any
 // violation. It is the reason the policy can be tightened later by someone who
 // wasn't here for the original reconnaissance.
 //
 // ── What this file can and cannot prove ─────────────────────────────────────
-// PostHog no-ops without `posthogKey` and Paddle no-ops without
-// `paddleClientToken`, and this template ships both empty — so no amount of
-// clicking here produces genuine analytics or checkout traffic. Rather than
-// claim coverage it does not have, this file verifies the two vendor
-// *mechanisms* directly instead of the vendors:
+// PostHog no-ops without `posthogKey`, and this template ships it empty — so no
+// amount of clicking here produces genuine analytics traffic. Rather than claim
+// coverage it does not have, this file verifies the vendor *mechanism* directly
+// instead of the vendor:
 //
 //   * `worker-src blob:` — by constructing a Blob worker exactly the way
 //     posthog-js/dist/recorder.js does. Fully offline, fully deterministic.
-//   * `script-src https://cdn.paddle.com` — by actually loading paddle.js and
-//     distinguishing a CSP refusal from a network failure, so a flaky CDN
-//     cannot turn into a red build.
 //
-// Everything beyond that (which Paddle host serves the overlay iframe, which
-// host the checkout fetches) is asserted against the policy string in
-// test/security-headers.test.ts, having been read out of Paddle's shipped
-// bundle. See shared/security-headers.ts for that derivation.
+// Checkout needs nothing from the policy: Stripe's hosted Checkout is a
+// full-page navigation, so /pricing is scanned like any other page and no
+// payment host is allowed. test/security-headers.test.ts asserts that against
+// the policy string; see shared/security-headers.ts.
 
 import { expect, test } from '@playwright/test'
 
@@ -52,14 +48,10 @@ import { hasLayer, hasPage, SIGN_IN_PATH } from '../lib/layers'
  */
 const DUMMY_TOKEN = 'A'.repeat(43)
 
-// Billing's page, its Paddle.js and the hosts nuxt.config.ts allows for them exist
-// only where the layer does. Without it the same assertions invert (below): a
-// fork that dropped billing must also have dropped Paddle from the policy.
-const HAS_BILLING = hasLayer('billing')
-
 const ROUTES = [
   '/',
-  ...(HAS_BILLING ? ['/pricing'] : []),
+  // Billing's page exists only where the layer does.
+  ...(hasLayer('billing') ? ['/pricing'] : []),
   SIGN_IN_PATH,
   ...(hasPage('auth/verify') ? [`/auth/verify#token=${DUMMY_TOKEN}`] : []),
 ]
@@ -201,52 +193,13 @@ test.describe('the policy still permits what the vendors need', () => {
 
     expect(outcome, 'a Blob worker was refused — check worker-src/child-src').toBe('ok')
   })
-
-  test('script-src does not block Paddle.js', async ({ page }) => {
-    test.skip(!HAS_BILLING, 'no billing layer, no Paddle.js')
-    const recorder = recordConsole(page)
-    await recorder.ready
-    await page.goto('/')
-
-    // Distinguishing a CSP refusal from a flaky CDN matters: only the first is
-    // this repo's bug. A refusal fires securitypolicyviolation; a network
-    // failure fires onerror with no violation recorded.
-    const outcome = await page.evaluate(async () => {
-      const src = 'https://cdn.paddle.com/paddle/v2/paddle.js'
-      const blocked = () =>
-        (window.__cspViolations ?? []).some((v) => v.blockedURI.includes('cdn.paddle.com'))
-
-      return await new Promise<string>((resolve) => {
-        const script = document.createElement('script')
-        script.src = src
-        script.onload = () => resolve('loaded')
-        script.onerror = () => resolve(blocked() ? 'csp-blocked' : 'network-error')
-        document.head.appendChild(script)
-        setTimeout(() => resolve(blocked() ? 'csp-blocked' : 'timeout'), 15000)
-      })
-    })
-
-    expect(outcome, 'script-src refused Paddle.js — checkout would never open').not.toBe(
-      'csp-blocked',
-    )
-    // A CDN outage is not this repo's failure, but it does mean this run proved
-    // less than it looks like it did, so say so in the report rather than pass silently.
-    if (outcome !== 'loaded') {
-      test.info().annotations.push({
-        type: 'warning',
-        description: `paddle.js did not load (${outcome}); CSP was not the cause, but this assertion was not exercised.`,
-      })
-    }
-  })
 })
 
-// The policy-text assertions (Paddle, Turnstile and beacon hosts, anti-bypass
+// The policy-text assertions (Turnstile and beacon hosts, no payment host, anti-bypass
 // directives, no 'unsafe-eval', the script-src host list) are in
 // test/security-headers.test.ts. This pins the one thing they cannot see: that
 // the server really sends that policy.
 test('the policy on the wire is the one the config defines', async ({ page }) => {
   const response = await page.goto('/')
-  expect(response!.headers()['content-security-policy']).toBe(
-    contentSecurityPolicy(true, { billing: HAS_BILLING }),
-  )
+  expect(response!.headers()['content-security-policy']).toBe(contentSecurityPolicy(true))
 })

@@ -58,7 +58,7 @@ export const attributionSchema = z.object({
    * It is still only a *claim*. Resolving it to a real, non-tombstoned account
    * that isn't the new user happens server-side at provisioning
    * (layers/referral/server/utils/referral-codes.ts › findReferrerByCode), and nothing is ever paid out
-   * on it until that account's referee completes a Paddle transaction.
+   * on it until that account's referee completes a Stripe payment.
    */
   referralCode: z
     .string()

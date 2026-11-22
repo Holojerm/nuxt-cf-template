@@ -40,7 +40,7 @@ beforeEach(async () => {
   })
   await db
     .insert(schema.entitlements)
-    .values([row('welcome_a', 7), row('referral_b', 14), row('txn_c', 30)])
+    .values([row('welcome_a', 7), row('referral_b', 14), row('pi_c', 30)])
 })
 
 afterEach(() => clearEntitlementViewFieldsForTest())
@@ -52,9 +52,9 @@ describe('the referral fields on history rows', () => {
     const view = await buildEntitlementView(db, USER)
 
     const kinds = Object.fromEntries(view.history.map((row) => [row.ref, row.referralKind]))
-    expect(kinds).toEqual({ welcome_a: 'welcome', referral_b: 'reward', txn_c: null })
+    expect(kinds).toEqual({ welcome_a: 'welcome', referral_b: 'reward', pi_c: null })
     const flags = Object.fromEntries(view.history.map((row) => [row.ref, row.referral]))
-    expect(flags).toEqual({ welcome_a: true, referral_b: true, txn_c: false })
+    expect(flags).toEqual({ welcome_a: true, referral_b: true, pi_c: false })
   })
 
   it('are absent until the plugin registers them', async () => {

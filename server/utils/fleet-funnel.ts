@@ -60,7 +60,7 @@ export async function collectFleetFunnel(db: FleetDb, now = new Date()): Promise
       ),
     )
 
-  // Only a feature knows what "paid" means (billing counts Paddle-minted
+  // Only a feature knows what "paid" means (billing counts Stripe-minted
   // entitlements); with none registered the stage reads 0 and the shape holds.
   const paid = (await getFunnelStageContributor('paid')?.count(db, cohort)) ?? 0
 

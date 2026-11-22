@@ -41,7 +41,7 @@
 // ── Feature sweeps ──────────────────────────────────────────────────────────
 // Optional features register their own sweeps (server/utils/extensions.ts ›
 // PurgeContributor); the files layer collects abandoned uploads that way and
-// billing the applied Paddle event ids (`billingEvents`), and
+// billing the applied Stripe event ids (`billingEvents`), and
 // server/tasks/purge-expired-tokens.ts runs them after these passes.
 
 import { and, inArray, isNotNull, lt, or } from 'drizzle-orm'
