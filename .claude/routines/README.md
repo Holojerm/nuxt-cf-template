@@ -31,7 +31,7 @@ so the repo ships the *definitions* and a sync command:
 | `support-inbox.md` | Daily 13:00 | Triages support email, **drafts** replies, files bugs as issues; on an operator repo it sends how-to answers and acknowledgements, signed as the product's assistant | Gmail + GitHub connectors |
 | `analytics-review.md` | Weekly Mon 12:30 | Reviews product/traffic metrics, writes a report, files opportunities; counts visits and signups per open channel bet | GitHub connector (+ analytics access) |
 | `marketing-content.md` | Weekly Thu 14:00 | Drafts changelog + marketing copy into `ops/marketing/` for review; off-site links in drafts are tagged | GitHub connector |
-| `growth-review.md` | Weekly Mon 13:30 | Judges last week's `growth-bet`s by type (channel, activation, monetisation, retention), picks ≤3 new ones against `fleet.json` › `product`, and ships each as a flagged (default-off) or content PR. Under 200 signups in 28 days it picks channel bets first, judged on visits and signups from one tagged source; never paid traffic. On an operator repo it starts and ends the rollout of its own `growth-…` flags (`scripts/flags.ts`) | GitHub connector (+ Cloudflare API token); tier 2 |
+| `growth-review.md` | Weekly Mon 13:30 | Judges last week's `growth-bet`s by type (channel, activation, monetisation, retention), picks ≤3 new ones against `fleet.json` › `product`, and ships each as a flagged (default-off) or content PR. Under 200 signups in 28 days it picks channel bets first, judged on visits and signups from one tagged source; never paid traffic. On an operator repo it starts and ends the rollout of its own `growth-…` flags (`scripts/flags.ts`) and submits free directory listings under the product's own name | GitHub connector (+ Cloudflare API token); tier 2 |
 | `x-post.md` | Tue/Thu 15:00 | One post about something that shipped, from the product's X account (`scripts/x-post.ts`), with a tagged link that carries the open channel bet's campaign when there is one; drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
 | `x-replies.md` | Twice daily 09:00, 17:00 | Answers people who replied to or mentioned the product's X account (a few a run at most), escalates support/billing/press, skips the rest (`scripts/x-replies.ts`); a link it gives is tagged; drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
 | `ops-triage.md` | Every 6 h at :37 | Reads the ops spool (`GET /api/ops/events`), retriggers a deploy that never landed, fixes **Mechanical fixes** classes, files the rest as triaged issues | GitHub connector + OPS_BASE_URL / OPS_TOKEN env vars (+ optional deploy hook URL); tier 2 |
@@ -90,14 +90,16 @@ must follow the operating rules in `_shared.md` (the pointer prompt enforces rea
   the owner; with one, `growth-review` may merge flag-off or content PRs, `x-post` may post, and `x-replies` may answer people who addressed the X account.
 - **Operator grant** — off in the template. A fork the owner hands to its routines sets
   `routines.config.md` › Operator to Mode `grow` and fills in its caps. On that repo there is no
-  draft period (each routine acts at the tier its frontmatter declares), and three acts that are
+  draft period (each routine acts at the tier its frontmatter declares), and four acts that are
   otherwise the owner's open up, each bounded in `_shared.md` › Operator grant: `growth-review`
   rolls out and retires the `growth-…` flags it created, through `scripts/flags.ts` only; the
-  product mails opted-in users through its own send path, inside the weekly cap; and
+  product mails opted-in users through its own send path, inside the weekly cap;
   `support-inbox` sends how-to answers and acknowledgements, signed as the product's assistant
-  and marked automated. Pricing, spend, refunds, data deletion, billing, legal, security and
-  angry support threads, and anything under the owner's personal name stay with the owner on
-  every repo. Set Mode back to `off` to take the grant back.
+  and marked automated; and `growth-review` submits a free listing in a public directory under
+  the product's own name and existing accounts, one per directory. Pricing, spend (paid
+  listings included), refunds, data deletion, billing, legal, security and angry support
+  threads, new accounts, and anything under the owner's personal name (community posts
+  included) stay with the owner on every repo. Set Mode back to `off` to take the grant back.
 - **Tagged links** — every link a routine publishes or drafts for somewhere off the site
   carries `utm_source`, `utm_medium` and `utm_campaign` (`_shared.md` › Tagged links), so the
   funnel can say which source and which `growth-bet` a signup came from.

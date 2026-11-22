@@ -95,9 +95,19 @@ conversion rate, so its bets are channel bets: which source sends people at all.
        in the issue; `x-post` uses the bet's campaign and comments each post's URL there.
      - An announcement email, on an operator repo only, goes out through the product's send
        path, which tags its own links: the campaign is the step id, `announcement.<id>`.
-     - A directory or community listing is not in any tier. Write the listing text and its
-       tagged link in the issue, label it `needs-owner`, and start the run when the owner
-       says it is live. Anything under the owner's personal name stays theirs to post.
+     - A listing in a public directory, under the product's own name, is yours on an
+       operator repo (`_shared.md` › Operator grant): a pull request, an API call or a form
+       you can complete with what the environment already has, free, one per directory,
+       with the tagged link. Write the listing's URL in the issue; the run starts when the
+       listing is live, which may be a later run than the submission. How the product's MCP
+       server is listed is in `.claude/docs/mcp.md`.
+     - A listing you cannot make that way goes to the owner: it costs money, needs an
+       account the product does not have or a sign-in the environment lacks, or the repo is
+       not an operator repo. Write the listing text and its tagged link in the issue, label
+       it `needs-owner`, and start the run when the owner says it is live.
+     - A community post (Hacker News, Reddit, Product Hunt, a forum) goes out under a
+       person's name, so it is the owner's on every repo. Draft it with its tagged link in a
+       `needs-owner` issue, the same way.
      - Never paid: no ads, sponsored placements, paid listings or boosted posts. Spend is the
        owner's (`_shared.md` hard rule 5).
    - Stay inside tier 2 as `_shared.md` defines it. Pricing, billing, auth, emails to users, and
@@ -141,13 +151,15 @@ size. That is why it can be judged at a few visits a week.
   keep line. Stop publishing there for this product and say so in the issue. Pages already
   published stay.
 - **Inconclusive**: only when the bet did not run as declared: fewer publications went out
-  than planned, a link went out untagged or broken, or a `needs-owner` listing never went
-  live. Run it once more as declared; a second inconclusive is a kill.
+  than planned, a link went out untagged or broken, or a listing never went live. Run it once more as declared; a second inconclusive is a kill.
 
 ## Never
 
 - Claim a result the data does not show, or pick a decision metric after seeing the numbers.
 - Buy traffic, or file a bet that needs spend. A paid test is a `needs-owner` issue.
+- Submit a listing that costs money, create an account to submit one, list the product twice
+  in one directory, or post anywhere under the owner's name. Without the operator grant,
+  submit no listing at all.
 - Judge a channel bet on a conversion rate, or a flagged bet on fewer than ~100 users per arm.
 - Give two live bets the same tag, or change a bet's tag after its first publication.
 - Stack more than three live bets on the same funnel step. They confound each other.
