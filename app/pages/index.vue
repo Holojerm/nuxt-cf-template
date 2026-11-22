@@ -137,5 +137,9 @@ useSeo({
         {{ loggedIn ? 'Open the app' : 'Get started' }}
       </UButton>
     </section>
+
+    <!-- For the visitor who is not ready for an account: product updates by
+         email, double opt-in. Renders nothing for someone signed in. -->
+    <UpdatesForm class="mx-auto w-full max-w-2xl" />
   </div>
 </template>

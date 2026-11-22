@@ -276,6 +276,63 @@ export const lifecycleSends = sqliteTable(
   ],
 )
 
+// Email subscribers — visitors with no account who asked for product news
+// (server/utils/subscribers.ts). Double opt-in: a row with no `confirmed_at` has
+// been sent one confirmation email and nothing else, and the daily purge removes
+// it after a week. Unsubscribing deletes the row, so there is no "unsubscribed"
+// state to keep. An address that has an account is never mailed from here: the
+// account's own preference decides.
+export const emailSubscribers = sqliteTable(
+  'email_subscribers',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    email: text('email').notNull().unique(),
+    confirmedAt: integer('confirmed_at', { mode: 'timestamp' }),
+    ...timestamps,
+  },
+  (table) => [index('email_subscribers_confirmed_idx').on(table.confirmedAt)],
+)
+
+// What a subscriber was sent: the `lifecycle_sends` of people with no account,
+// claimed before the send through the same kind of unique index. No foreign key,
+// so the row outlives the subscriber (it names an id, never an address) and the
+// counts in GET /api/fleet do not move when someone unsubscribes.
+export const subscriberSends = sqliteTable(
+  'subscriber_sends',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    subscriberId: text('subscriber_id').notNull(),
+    stepId: text('step_id').notNull(),
+    sentAt: integer('sent_at', { mode: 'timestamp' })
+      .$defaultFn(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex('subscriber_sends_subscriber_step_idx').on(table.subscriberId, table.stepId),
+    index('subscriber_sends_step_idx').on(table.stepId),
+  ],
+)
+
+// Announcement runs — one row per announcement, created when its send starts
+// (server/utils/announcements.ts). The cursor is what makes the send a single
+// pass: each recipient is visited once, so one skipped by the weekly cap is
+// counted in `capped` and never queued for a later day. `stage` is `users`, then
+// `subscribers`; `finished_at` set means the pass is over.
+export const announcementRuns = sqliteTable('announcement_runs', {
+  announcementId: text('announcement_id').primaryKey(),
+  stage: text('stage').notNull().default('users'),
+  cursor: text('cursor').notNull().default(''),
+  sent: integer('sent').notNull().default(0),
+  capped: integer('capped').notNull().default(0),
+  optedOut: integer('opted_out').notNull().default(0),
+  finishedAt: integer('finished_at', { mode: 'timestamp' }),
+  ...timestamps,
+})
+
 // Instance secrets — server-generated derivation salts, one row each.
 //
 // Not another env var: a new secret is a human gate every fork would have to
@@ -331,6 +388,8 @@ export const rateLimits = sqliteTable(
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type LifecycleSend = typeof lifecycleSends.$inferSelect
+export type EmailSubscriber = typeof emailSubscribers.$inferSelect
+export type AnnouncementRun = typeof announcementRuns.$inferSelect
 export type McpConnectCode = typeof mcpConnectCodes.$inferSelect
 export type MagicLinkToken = typeof magicLinkTokens.$inferSelect
 export type NewMagicLinkToken = typeof magicLinkTokens.$inferInsert

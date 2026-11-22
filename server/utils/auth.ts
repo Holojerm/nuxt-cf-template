@@ -62,7 +62,7 @@ export const SESSION_PAYLOAD_KEYS = ['user', 'issuedAt'] as const
  * it fail the sign-in. Once `replaceUserSession` has run the user IS signed in,
  * but the caller is still inside `completeOAuthSignIn`'s try/catch, which turns
  * a throw into `sign_in_failed`; on magic-link the token is already spent. Even
- * the welcome email can throw around `sendEmail` (`isNotificationEnabled` is a
+ * a welcome email can throw around `sendEmail` (`isNotificationEnabled` is a
  * D1 read, `buildUnsubscribeUrl` throws on a missing session password). Put
  * anything added to that tail inside this.
  */
@@ -163,30 +163,9 @@ export async function establishSession(
     },
   })
 
-  // Nothing past the session write may fail the sign-in (see afterSignIn).
-  if (created) {
-    await afterSignIn('welcome_email', async () => {
-      // Always true for a brand-new user; kept so the next optional email added here wires the same check.
-      if (await isNotificationEnabled(db, user.id, 'welcome')) {
-        const config = useRuntimeConfig(event)
-        const unsubscribeUrl = await buildUnsubscribeUrl(
-          config.sessionPassword,
-          config.public.appUrl,
-          user.id,
-          'welcome',
-        )
-        // Awaited: Workers can tear down the isolate once the response is sent.
-        await sendEmail({
-          to: user.email,
-          ...welcomeEmail(emailBranding(), { name: user.name }),
-          unsubscribe: { eventType: 'welcome', url: unsubscribeUrl },
-        })
-      }
-    })
-  }
-
   // What features add to a new account (server/utils/signup-contributors.ts), each
-  // inside afterSignIn for the reason that helper exists.
+  // inside afterSignIn: nothing past the session write may fail the sign-in. The
+  // welcome email is one of them, registered by server/plugins/lifecycle.ts.
   if (created) {
     for (const contributor of getSignupContributors()) {
       const afterSignUp = contributor.afterSignUp

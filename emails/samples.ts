@@ -13,7 +13,6 @@ const brand = { appName: 'My App', appUrl: 'https://my-app.example' }
 export const SAMPLES: Record<string, EmailSample> = {
   'access-ended': { ...brand, name: 'Ada', canceled: true },
   'account-deleted': { ...brand, name: 'Ada' },
-  'activation-nudge': { ...brand, name: 'Ada' },
   'feedback-reply': {
     ...brand,
     reply: 'Fixed in this morning’s release — thanks for the report.',
@@ -24,6 +23,16 @@ export const SAMPLES: Record<string, EmailSample> = {
     url: `${brand.appUrl}/auth/confirm?token=2f9c1d`,
     expiresMinutes: 15,
   },
+  note: {
+    ...brand,
+    heading: 'Exports are here',
+    paragraphs: [
+      'You can now export everything in your account as a single file.',
+      'It is on your account page, under Your data.',
+    ],
+    button: { label: 'See what changed', url: `${brand.appUrl}/changelog` },
+    footnote: 'You’re receiving this because you have an account at My App.',
+  },
   'pass-expiring': { ...brand, name: 'Ada', date: 'October 7' },
   'password-reset': {
     ...brand,
@@ -32,10 +41,14 @@ export const SAMPLES: Record<string, EmailSample> = {
   },
   'payment-failed': { ...brand, name: 'Ada' },
   purchase: { ...brand, name: 'Ada', isPass: false, ends: 'November 4, 2026' },
+  'subscribe-confirm': {
+    ...brand,
+    url: `${brand.appUrl}/updates/confirm#t=9e2f`,
+    days: 7,
+  },
   'verify-email': {
     ...brand,
     url: `${brand.appUrl}/auth/verify-email#token=5d7e9f`,
     expiresMinutes: 60,
   },
-  welcome: { ...brand, name: 'Ada' },
 }

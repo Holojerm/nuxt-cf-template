@@ -95,6 +95,12 @@ useSeo({
           reference, which plan you have, its status, and when the period ends.
         </p>
         <p>
+          <strong class="text-highlighted">Product updates.</strong> If you ask for product updates
+          by email without an account, we store that email address and nothing else. It is used only
+          after you confirm it, an address that is never confirmed is deleted after a week, and the
+          unsubscribe link in every email deletes it.
+        </p>
+        <p>
           <strong class="text-highlighted">Usage data.</strong> Pages visited, features used, and
           errors encountered, tied to your account ID so we can debug a problem you report.
         </p>

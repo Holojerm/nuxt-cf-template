@@ -12,7 +12,13 @@ import {
   getRegisteredLifecycleSteps,
   registerLifecycleStep,
 } from '../server/utils/extensions'
-import { TEMPLATE_LIFECYCLE_STEPS, activationNudgeStep } from '../server/utils/lifecycle-steps'
+import { sendSignupSteps } from '../server/utils/lifecycle-runtime'
+import { TEMPLATE_LIFECYCLE_STEPS } from '../server/utils/lifecycle-steps'
+
+const stepNamed = (id: string) => TEMPLATE_LIFECYCLE_STEPS.find((step) => step.id === id)!
+const activationNudgeStep = stepNamed('activation_nudge')
+const welcomeStep = stepNamed('welcome')
+const winBackStep = stepNamed('win_back')
 
 const db = drizzle(env.DB, { schema })
 
@@ -20,9 +26,17 @@ const NOW = new Date('2026-09-26T04:00:00.000Z')
 const DAY_MS = 24 * 60 * 60 * 1000
 const daysFromNow = (days: number) => new Date(NOW.getTime() + days * DAY_MS)
 
-async function addUser(id: string, createdDaysAgo = 30, email = `${id}@example.com`) {
+async function addUser(
+  id: string,
+  createdDaysAgo = 30,
+  email = `${id}@example.com`,
+  lastLoginDaysAgo?: number,
+) {
   const at = daysFromNow(-createdDaysAgo)
-  await db.insert(schema.users).values({ id, email, name: id, createdAt: at, updatedAt: at })
+  const lastLoginAt = lastLoginDaysAgo === undefined ? null : daysFromNow(-lastLoginDaysAgo)
+  await db
+    .insert(schema.users)
+    .values({ id, email, name: id, createdAt: at, updatedAt: at, lastLoginAt })
 }
 
 async function activate(userId: string) {
@@ -76,11 +90,68 @@ describe('activationNudgeStep.due', () => {
   })
 })
 
+describe('welcome step', () => {
+  it('is due on the first day only, as the daily retry of the sign-up send', async () => {
+    await addUser('new', 0.2)
+    await addUser('yesterday', 1.5)
+    expect((await welcomeStep.due(db, NOW, 100)).map((r) => r.userId)).toEqual(['new'])
+  })
+
+  it('goes out at sign-up, once, with its own unsubscribe link', async () => {
+    await addUser('new', 0)
+    const { deps, sent } = fakeDeps()
+    const user = { id: 'new', email: 'new@example.com', name: 'Ada' }
+
+    await sendSignupSteps(db, user, deps)
+    await sendSignupSteps(db, user, deps)
+    await runLifecycle(db, [welcomeStep], deps, NOW)
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.subject).toBe('Welcome to My App')
+    expect(sent[0]?.text).toContain('Hi Ada')
+    expect(sent[0]?.unsubscribe?.eventType).toBe('welcome')
+    const rows = await db.select().from(schema.lifecycleSends)
+    expect(rows.map((row) => row.stepId)).toEqual(['welcome'])
+  })
+
+  it('is retried by the daily run when the sign-up send failed', async () => {
+    await addUser('new', 0.1)
+    const down = fakeDeps({ sent: false, reason: 'error' })
+    await sendSignupSteps(db, { id: 'new', email: 'new@example.com', name: 'Ada' }, down.deps)
+    expect(await db.select().from(schema.lifecycleSends)).toEqual([])
+
+    const { deps, sent } = fakeDeps()
+    await runLifecycle(db, [welcomeStep], deps, NOW)
+    expect(sent).toHaveLength(1)
+  })
+})
+
+describe('win-back step', () => {
+  it('picks accounts last signed in 45 to 59 days ago, once', async () => {
+    await addUser('recent', 200, undefined, 10)
+    await addUser('lapsed', 200, undefined, 50)
+    await addUser('long_gone', 200, undefined, 90)
+    await addUser('never', 200)
+    expect((await winBackStep.due(db, NOW, 100)).map((r) => r.userId)).toEqual(['lapsed'])
+
+    const { deps, sent } = fakeDeps()
+    await runLifecycle(db, [winBackStep], deps, NOW)
+    await runLifecycle(db, [winBackStep], deps, NOW)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.unsubscribe?.eventType).toBe('tips')
+    expect(sent[0]?.html).toContain('utm_campaign=win_back')
+  })
+})
+
 describe('lifecycle step registry', () => {
   afterEach(() => clearExtensionsForTest())
 
-  it('keeps feature steps out of core: the template ships only the activation nudge', () => {
-    expect(TEMPLATE_LIFECYCLE_STEPS.map((step) => step.id)).toEqual(['activation_nudge'])
+  it('keeps feature steps out of core: the template ships only its own sequence', () => {
+    expect(TEMPLATE_LIFECYCLE_STEPS.map((step) => step.id)).toEqual([
+      'welcome',
+      'activation_nudge',
+      'win_back',
+    ])
     expect(getRegisteredLifecycleSteps()).toEqual([])
   })
 

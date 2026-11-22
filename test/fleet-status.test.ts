@@ -151,7 +151,13 @@ describe('collectFleetCounters', () => {
           '2026-08-17',
         ].map((weekStart) => ({ weekStart, signups: 0, activated: 0, paid: 0 })),
       },
-      email: { windowDays: 28, sent: 0, steps: {} },
+      email: {
+        windowDays: 28,
+        sent: 0,
+        steps: {},
+        capped: 0,
+        subscribers: { confirmed: 0, pending: 0 },
+      },
       extra: {},
     })
   })

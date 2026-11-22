@@ -45,11 +45,6 @@ export function composeEmail(
 const longDate = (date: Date) =>
   date.toLocaleDateString('en-US', { dateStyle: 'long', timeZone: 'UTC' })
 
-/** First sign-in. Short on purpose — nobody reads a welcome tour. */
-export function welcomeEmail(brand: Branding, opts: { name: string }): EmailContent {
-  return composeEmail('welcome', `Welcome to ${brand.appName}`, brand, { name: opts.name })
-}
-
 /** Money changed hands. Stripe sends the receipt, as Link; this confirms access. */
 export function purchaseEmail(
   brand: Branding,

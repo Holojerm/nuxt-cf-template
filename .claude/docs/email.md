@@ -19,8 +19,8 @@ At send time `renderEmail(name, data)` in
 
 ```
 emails/
-  templates/welcome.vue     the HTML — content only
-  templates/welcome.txt     the plain-text alternative, same tags
+  templates/purchase.vue    the HTML — content only
+  templates/purchase.txt    the plain-text alternative, same tags
   components/Email*.vue     the chrome: EmailLayout, EmailParagraph, EmailButton
   samples.ts                sample data per template — previews and tests
   theme.generated.css       GENERATED from DESIGN.md — see Branding
@@ -173,16 +173,99 @@ plus a template; the runner owns preferences, undeliverable addresses, the per-r
 cap, the `lifecycle_email_sent` event, and once-only delivery through a
 `lifecycle_sends` row claimed before the send.
 
-- **Template steps** (`lifecycle-steps.ts`): `activation_nudge` (optional `tips`
-  preference; signed up 1–7 days ago, never activated) and `pass_expiring`
-  (mandatory `billing.pass_expiring`; a paid pass ends within 3 days with no
-  subscription or later pass behind it — with auto-renew off by default, this is
-  the only warning a customer gets).
-- **Fork steps** go in `lifecycle-app-steps.ts`, which the template ships empty.
-  A win-back belongs there, keyed on whatever "used the product" means.
+- **The sequence is data, in one file: `server/utils/lifecycle-sequence.ts`.** Each
+  entry is one email: an `id`, the preference it obeys, a clock (`since: 'signup'` or
+  `'last_sign_in'`), `afterDays`, `forDays`, an optional `when` (`activated`,
+  `not_activated`), and its copy (`subject`, `heading`, `paragraphs`, `button`,
+  `footnote`). To change wording, a delay or who gets a step, or to add one, edit
+  that file and nothing else; `lifecycle-definitions.ts` builds the query and
+  renders the copy through the shared `note` email. The app owns the file
+  (`app-owned.json`), so a template sync never overwrites it. It ships `welcome`
+  (at sign-up), `activation_nudge` (1–7 days after sign-up, never activated) and
+  `win_back` (45–59 days after the last sign-in).
+- **`test/lifecycle-sequence.test.ts` is the gate on that file**: a mandatory
+  notification class, an unbounded window, an unknown `{{tag}}` (only `{{appName}}`
+  and `{{name}}` exist), an off-site button or urgency wording fails the build.
+- **A zero-day sign-up step is sent at sign-up**, by `server/plugins/lifecycle.ts`
+  through the same claim and checks; the daily run retries it inside its window.
+- **Feature steps** register with `registerLifecycleStep()`: billing's
+  `pass_expiring` (mandatory `billing.pass_expiring`; a paid pass ends within 3
+  days with nothing behind it).
+- **A step that needs its own query** is code, in `lifecycle-app-steps.ts`, which
+  the template ships empty.
 - **Bound every window on both sides.** "Signed up more than a day ago" mails the
-  whole user table the day Resend is first configured.
+  whole user table the day Resend is first configured. `forDays` is that bound.
 - **Never rename a step id.** The id is the dedup key; a rename re-sends to everyone.
 - With Resend unconfigured the task logs `lifecycle_skipped` and does nothing.
+- Every button link carries `utm_source=email`, `utm_medium=lifecycle` and
+  `utm_campaign=<step id>`, so a click is attributable to the step.
+
+## Announcements
+
+An announcement is one markdown file, `content/announcements/<id>.md`. Merging it
+is what sends it: the daily task (`server/utils/announcements.ts`) sends each
+announcement that has no finished run, once, to everyone who allows product mail.
+
+```
+---
+subject: Exports are here
+date: 2026-11-25
+audience: everyone
+button_label: See what changed
+button_path: /changelog
+---
+
+Plain paragraphs, separated by blank lines.
+```
+
+- **Fields.** `subject` and `date` are required. `date` is the first day the send
+  may start; a file found more than 14 days after it is closed unsent, so an old
+  announcement never goes out late. `audience` is `everyone` (the default:
+  accounts, then confirmed subscribers), `users`, `activated` or `subscribers`.
+  `heading` defaults to the subject. The button is optional and its path is on
+  this app. The body is plain text: no markdown, no `{{tags}}`.
+- **The filename is the id**, stored as the step `announcement.<id>` (lowercase,
+  digits, hyphens, 27 characters at most). Never rename a sent one.
+- **CI gates it.** `bun run email:build` (in `bun run ci`) parses every file with
+  `scripts/announcement-source.ts` and fails on a missing field, an unknown one,
+  markdown in the body or urgency wording (`shared/utils/announcements.ts` ›
+  `findUrgency`).
+- **Who gets it.** Accounts with the `product_updates` preference on (the default;
+  its switch is on `/account` and its unsubscribe link in every send), and
+  confirmed subscribers. Never an unconfirmed address, a deleted account, or
+  anyone who arrived after the send started.
+- **The weekly cap** is `ANNOUNCEMENTS_PER_WEEK` in `lifecycle-sequence.ts`: the
+  announcements one person may get in seven days. A send over it is skipped and
+  counted (`announcement_runs.capped`, `email.capped` on `/api/fleet`), not held
+  for later: the run moves its cursor past that person and never returns.
+- **Once.** Each send is claimed first, in `lifecycle_sends` for an account and
+  `subscriber_sends` for a subscriber. A send that fails for a passing reason
+  stops the run there, and the next day resumes at the same person.
+- 100 people per run across all announcements; a longer list continues the next day, and a
+  run still open after 14 days is closed. A list past about 1,400 needs a different sender.
 
 <!-- forkless:lifecycle:end -->
+
+## Product updates for visitors
+
+`<UpdatesForm />` (`app/components/Updates/Form.vue`) lets a visitor with no account
+ask for product news; `server/utils/subscribers.ts` is the whole of it.
+
+- **Double opt-in.** `POST /api/email/updates` stores the address unconfirmed and
+  sends the `subscribe-confirm` email, the only mail an unconfirmed address ever
+  gets. Its link opens `/updates/confirm`, whose button POSTs the confirmation
+  (a GET confirms nothing: mail gateways fetch links). An address not confirmed
+  within 7 days is deleted by the daily purge.
+- **Guarded like the sign-in form**: a per-IP rate limit, Turnstile when
+  configured, and a budget of 3 confirmation emails per address per day, charged
+  silently. The route answers `{ ok: true }` whatever happened to the address.
+- **Unsubscribing deletes the row.** Every announcement to a subscriber carries
+  `List-Unsubscribe` (one-click POST) and a footer link to `/unsubscribe`. No
+  address is kept on a suppression list, so a deletion request is the same link.
+- **Accounts win.** An address with an account is never mailed as a subscriber.
+  Confirming for one switches that account's `product_updates` on and drops the
+  row; signing up drops the row too.
+- Links are HMACs under the key `unsubscribe.ts` derives (`subscriber-tokens.ts`);
+  there is no secret to set.
+- `/api/fleet` reports `email.subscribers: { confirmed, pending }`. Counts only.
+

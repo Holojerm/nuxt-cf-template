@@ -55,6 +55,8 @@ const ROUTES = [
     ? ['/auth/sign-in', '/auth/sign-up', '/auth/verify-email', '/auth/reset']
     : []),
   '/unsubscribe',
+  // Scanned with no parameters, like /unsubscribe: the cut-link state.
+  '/updates/confirm',
   '/terms',
   '/privacy',
 ]
