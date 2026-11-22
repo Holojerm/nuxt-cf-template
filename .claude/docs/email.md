@@ -181,8 +181,13 @@ cap, the `lifecycle_email_sent` event, and once-only delivery through a
   that file and nothing else; `lifecycle-definitions.ts` builds the query and
   renders the copy through the shared `note` email. The app owns the file
   (`app-owned.json`), so a template sync never overwrites it. It ships `welcome`
-  (at sign-up), `activation_nudge` (1–7 days after sign-up, never activated) and
-  `win_back` (45–59 days after the last sign-in).
+  (at sign-up) and `activation_nudge` (1–7 days after sign-up, never activated)
+  switched on, and `win_back` (45–59 days after the last sign-in) switched off.
+- **`enabled: false` holds a step back without deleting it.** `win_back` ships that
+  way so that syncing the template never starts mailing dormant accounts. To send
+  it, delete the `enabled: false` line from the `win_back` entry in your copy of
+  the file. The first run after that mails every account whose last sign-in was
+  45 to 59 days ago, so read the copy first.
 - **`test/lifecycle-sequence.test.ts` is the gate on that file**: a mandatory
   notification class, an unbounded window, an unknown `{{tag}}` (only `{{appName}}`
   and `{{name}}` exist), an off-site button or urgency wording fails the build.
