@@ -44,6 +44,7 @@ beforeEach(async () => {
     signupMedium: 'social',
     signupCampaign: 'launch',
     signupReferrer: 'https://twitter.com',
+    signupLanding: '/pricing',
     referralCode: 'ABC12345',
     // Another person's attribution — deleting THIS account must not erase it.
     referredBy: 'XYZ99999',
@@ -68,6 +69,7 @@ describe('deleteAccount', () => {
     expect(row?.signupMedium).toBeNull()
     expect(row?.signupCampaign).toBeNull()
     expect(row?.signupReferrer).toBeNull()
+    expect(row?.signupLanding).toBeNull()
     expect(row?.referralCode).toBeNull()
     // Not this account's to erase — it names where somebody ELSE's signup
     // came from.

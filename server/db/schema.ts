@@ -50,6 +50,9 @@ export const users = sqliteTable(
     signupMedium: text('signup_medium'),
     signupCampaign: text('signup_campaign'),
     signupReferrer: text('signup_referrer'),
+    // Route shape of the first page seen (shared/utils/landing-path.ts): no
+    // query string, ids and tokens collapsed to `:id`. NULL before 0026.
+    signupLanding: text('signup_landing'),
     // The user's own code, minted at provisioning (server/utils/users.ts).
     // Nullable: legacy accounts have none and backfilling would hand codes to
     // dormant accounts. Nullable-unique is right: SQLite treats NULLs as distinct
@@ -120,11 +123,12 @@ export const magicLinkTokens = sqliteTable(
     // passed through safeRedirectPath() before it is written; it comes from a
     // query string, so unfiltered it would be an open-redirect store.
     redirectTo: text('redirect_to'),
-    // First-touch attribution, same four columns as `users`.
+    // First-touch attribution, same five columns as `users`.
     signupSource: text('signup_source'),
     signupMedium: text('signup_medium'),
     signupCampaign: text('signup_campaign'),
     signupReferrer: text('signup_referrer'),
+    signupLanding: text('signup_landing'),
     // The fifth field of the same cookie, and the one worth money: a lost
     // `signup_source` reads `direct`, a lost referral code silently denies
     // someone promised days, and cross-device (no `attr` cookie on the phone) is

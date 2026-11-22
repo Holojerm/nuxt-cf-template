@@ -151,6 +151,27 @@ describe('parseAttribution with a referral code', () => {
   })
 })
 
+describe('parseAttribution landing', () => {
+  it('records the landing path on every branch, without the query string', () => {
+    const urls = [
+      `${ORIGIN}/pricing?utm_source=newsletter`,
+      `${ORIGIN}/pricing?gclid=abc123`,
+      `${ORIGIN}/pricing?ref=${CODE}`,
+      `${ORIGIN}/pricing`,
+    ]
+    for (const url of urls) {
+      expect(parseAttribution({ url, origin: ORIGIN }).landing).toBe('/pricing')
+    }
+    expect(
+      parseAttribution({
+        url: `${ORIGIN}/pricing`,
+        referrer: 'https://news.ycombinator.com/',
+        origin: ORIGIN,
+      }).landing,
+    ).toBe('/pricing')
+  })
+})
+
 describe('nextAttributionCookie', () => {
   // The decision the client plugin makes on every landing. First touch owns the
   // channel; the referral code is the one field an existing cookie may be
@@ -244,6 +265,17 @@ describe('readAttributionCookie', () => {
       medium: undefined,
       campaign: undefined,
       referrer: undefined,
+      landing: undefined,
     })
+  })
+
+  it('keeps a landing path only in the shape landingPath() writes', () => {
+    const read = (landing: string) =>
+      readAttributionCookie(JSON.stringify({ source: 'x', landing }))?.landing
+    expect(read('/blog/rate-limits')).toBe('/blog/rate-limits')
+    expect(read('/invite/:id')).toBe('/invite/:id')
+    expect(read('/Blog')).toBeUndefined()
+    expect(read('/search?q=someone@example.com')).toBeUndefined()
+    expect(read('https://evil.example/')).toBeUndefined()
   })
 })

@@ -13,17 +13,25 @@
 // A user who signed up 40 days ago and paid yesterday is not in it; that is
 // what makes "activated / signups" a rate.
 
-import { and, count, countDistinct, desc, eq, gt, inArray, sql } from 'drizzle-orm'
+import { and, count, countDistinct, desc, eq, gt, inArray, isNotNull, sql } from 'drizzle-orm'
+import type { SQL } from 'drizzle-orm'
+
+import { LANDING_MAX, LANDING_PATTERN } from '#shared/utils/landing-path'
 
 import * as tables from '../db/schema'
 import { getFunnelStageContributor } from './extensions'
+import { collectFleetWeeks, type FleetCohortWeek } from './fleet-cohorts'
 import type { FleetDb } from './fleet-status'
 
 export const FUNNEL_COHORT_DAYS = 28
 /** Enough to see which channel works; more is a table, not a card. */
 export const FUNNEL_TOP_SOURCES = 5
+/** Landing pages and campaigns are what a growth bet is judged on, so a few more. */
+export const FUNNEL_TOP_LANDINGS = 10
+export const FUNNEL_TOP_CAMPAIGNS = 10
 
 const DAY_MS = 24 * 60 * 60 * 1000
+const SLUG = /^[a-z0-9][a-z0-9._-]{0,39}$/
 
 export interface FleetFunnel {
   cohortDays: number
@@ -36,6 +44,15 @@ export interface FleetFunnel {
   paid: number
   /** Signups by first-touch source, top few; `direct` when none was recorded. */
   sources: Record<string, number>
+  /**
+   * Signups by first-touch landing path, top few. `unknown` when none was
+   * recorded: accounts older than the column, or a visitor with no cookie.
+   */
+  landings: Record<string, number>
+  /** Signups by `utm_campaign`, top few; users with no campaign are left out. */
+  campaigns: Record<string, number>
+  /** The same three steps per signup week, oldest first (fleet-cohorts.ts). */
+  weeks: FleetCohortWeek[]
 }
 
 export async function collectFleetFunnel(db: FleetDb, now = new Date()): Promise<FleetFunnel> {
@@ -64,28 +81,61 @@ export async function collectFleetFunnel(db: FleetDb, now = new Date()): Promise
   // entitlements); with none registered the stage reads 0 and the shape holds.
   const paid = (await getFunnelStageContributor('paid')?.count(db, cohort)) ?? 0
 
-  const source = sql<string | null>`lower(${tables.users.signupSource})`
-  const sourceRows = await db
-    .select({ source, total: count() })
-    .from(tables.users)
-    .where(gt(tables.users.createdAt, since))
-    .groupBy(source)
-    .orderBy(desc(count()))
-    .limit(FUNNEL_TOP_SOURCES)
-
-  const sources: Record<string, number> = {}
-  for (const row of sourceRows) {
-    const key = sourceKey(row.source)
-    sources[key] = (sources[key] ?? 0) + row.total
-  }
+  const inCohort = gt(tables.users.createdAt, since)
+  const campaign = sql<string | null>`lower(${tables.users.signupCampaign})`
 
   return {
     cohortDays: FUNNEL_COHORT_DAYS,
     signups: signups?.total ?? 0,
     activated: activated?.total ?? 0,
     paid,
-    sources,
+    sources: await signupsBy(
+      db,
+      sql<string | null>`lower(${tables.users.signupSource})`,
+      inCohort,
+      FUNNEL_TOP_SOURCES,
+      sourceKey,
+    ),
+    landings: await signupsBy(
+      db,
+      sql<string | null>`${tables.users.signupLanding}`,
+      inCohort,
+      FUNNEL_TOP_LANDINGS,
+      landingKey,
+    ),
+    campaigns: await signupsBy(
+      db,
+      campaign,
+      and(inCohort, isNotNull(tables.users.signupCampaign)),
+      FUNNEL_TOP_CAMPAIGNS,
+      campaignKey,
+    ),
+    weeks: await collectFleetWeeks(db, now),
   }
+}
+
+/** Signups grouped by one first-touch column: the top `limit` groups, re-keyed. */
+async function signupsBy(
+  db: FleetDb,
+  column: SQL<string | null>,
+  where: SQL | undefined,
+  limit: number,
+  toKey: (raw: string | null) => string,
+): Promise<Record<string, number>> {
+  const rows = await db
+    .select({ value: column, total: count() })
+    .from(tables.users)
+    .where(where)
+    .groupBy(column)
+    .orderBy(desc(count()))
+    .limit(limit)
+
+  const result: Record<string, number> = {}
+  for (const row of rows) {
+    const key = toKey(row.value)
+    result[key] = (result[key] ?? 0) + row.total
+  }
+  return result
 }
 
 /**
@@ -95,5 +145,20 @@ export async function collectFleetFunnel(db: FleetDb, now = new Date()): Promise
  */
 export function sourceKey(raw: string | null): string {
   if (!raw) return 'direct'
-  return /^[a-z0-9][a-z0-9._-]{0,39}$/.test(raw) ? raw : 'other'
+  return SLUG.test(raw) ? raw : 'other'
+}
+
+/** Same rule as sourceKey for `utm_campaign`; the query never passes null. */
+export function campaignKey(raw: string | null): string {
+  return raw && SLUG.test(raw) ? raw : 'other'
+}
+
+/**
+ * The stored value is already a route shape (shared/utils/landing-path.ts);
+ * this re-checks it on the way out, since the column is also written from a
+ * cookie.
+ */
+export function landingKey(raw: string | null): string {
+  if (!raw) return 'unknown'
+  return raw.length <= LANDING_MAX && LANDING_PATTERN.test(raw) ? raw : 'other'
 }

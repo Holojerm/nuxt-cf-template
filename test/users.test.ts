@@ -208,12 +208,14 @@ describe('upsertOAuthUser attribution', () => {
       medium: 'email',
       campaign: 'launch',
       referrer: 'https://news.example.com/post',
+      landing: '/blog/rate-limits',
     })
 
     expect(user.signupSource).toBe('newsletter')
     expect(user.signupMedium).toBe('email')
     expect(user.signupCampaign).toBe('launch')
     expect(user.signupReferrer).toBe('https://news.example.com/post')
+    expect(user.signupLanding).toBe('/blog/rate-limits')
   })
 
   it('never overwrites it on a later sign-in', async () => {

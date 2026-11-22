@@ -5,7 +5,13 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../server/db/schema'
-import { collectFleetFunnel, sourceKey } from '../server/utils/fleet-funnel'
+import {
+  campaignKey,
+  collectFleetFunnel,
+  FUNNEL_TOP_LANDINGS,
+  landingKey,
+  sourceKey,
+} from '../server/utils/fleet-funnel'
 
 const db = drizzle(env.DB, { schema })
 
@@ -13,10 +19,49 @@ const NOW = new Date('2026-09-26T12:00:00.000Z')
 const DAY_MS = 24 * 60 * 60 * 1000
 const daysAgo = (days: number) => new Date(NOW.getTime() - days * DAY_MS)
 
-function user(id: string, createdDaysAgo: number, signupSource: string | null = null) {
-  const at = daysAgo(createdDaysAgo)
-  return { id, email: `${id}@example.com`, name: id, createdAt: at, updatedAt: at, signupSource }
+interface Touch {
+  signupLanding?: string | null
+  signupCampaign?: string | null
 }
+
+function user(
+  id: string,
+  createdDaysAgo: number,
+  signupSource: string | null = null,
+  touch: Touch = {},
+) {
+  const at = daysAgo(createdDaysAgo)
+  return {
+    id,
+    email: `${id}@example.com`,
+    name: id,
+    createdAt: at,
+    updatedAt: at,
+    signupSource,
+    signupLanding: touch.signupLanding ?? null,
+    signupCampaign: touch.signupCampaign ?? null,
+  }
+}
+
+// NOW is a Saturday; its week began Monday 2026-09-21.
+const WEEK_STARTS = [
+  '2026-08-03',
+  '2026-08-10',
+  '2026-08-17',
+  '2026-08-24',
+  '2026-08-31',
+  '2026-09-07',
+  '2026-09-14',
+  '2026-09-21',
+]
+const weeks = (counts: Record<string, { signups: number; activated: number }> = {}) =>
+  WEEK_STARTS.map((weekStart) => ({
+    weekStart,
+    signups: 0,
+    activated: 0,
+    paid: 0,
+    ...counts[weekStart],
+  }))
 
 describe('collectFleetFunnel', () => {
   beforeEach(async () => {
@@ -50,6 +95,75 @@ describe('collectFleetFunnel', () => {
       // (layers/billing/test/billing-fleet.test.ts).
       paid: 0,
       sources: { google: 2, direct: 1 },
+      landings: { unknown: 3 },
+      campaigns: {},
+      // `old` is outside the 28 days but inside the eight weeks.
+      weeks: weeks({
+        '2026-08-17': { signups: 1, activated: 1 },
+        '2026-09-14': { signups: 1, activated: 0 },
+        '2026-09-21': { signups: 2, activated: 2 },
+      }),
+    })
+  })
+
+  it('is zeros and empty groups on an empty database', async () => {
+    expect(await collectFleetFunnel(db, NOW)).toEqual({
+      cohortDays: 28,
+      signups: 0,
+      activated: 0,
+      paid: 0,
+      sources: {},
+      landings: {},
+      campaigns: {},
+      weeks: weeks(),
+    })
+  })
+
+  it('groups the cohort by landing page, with `unknown` for none recorded', async () => {
+    await db
+      .insert(schema.users)
+      .values([
+        user('a', 1, null, { signupLanding: '/pricing' }),
+        user('b', 2, null, { signupLanding: '/pricing' }),
+        user('c', 3, null, { signupLanding: '/blog/rate-limits' }),
+        user('d', 4),
+        user('junk', 5, null, { signupLanding: '/search?q=ada@example.com' }),
+        user('old', 40, null, { signupLanding: '/pricing' }),
+      ])
+    expect((await collectFleetFunnel(db, NOW)).landings).toEqual({
+      '/pricing': 2,
+      '/blog/rate-limits': 1,
+      unknown: 1,
+      other: 1,
+    })
+  })
+
+  it('caps the landing pages it reports', async () => {
+    const rows = Array.from({ length: FUNNEL_TOP_LANDINGS + 3 }, (_, index) =>
+      user(`u${index}`, 1, null, { signupLanding: `/page-${index}` }),
+    )
+    // Two statements: D1 allows 100 bound values in one.
+    await db.insert(schema.users).values(rows.slice(0, 7))
+    await db.insert(schema.users).values(rows.slice(7))
+    const { landings } = await collectFleetFunnel(db, NOW)
+    expect(Object.keys(landings)).toHaveLength(FUNNEL_TOP_LANDINGS)
+  })
+
+  it('groups by campaign, leaving out signups that had none', async () => {
+    await db
+      .insert(schema.users)
+      .values([
+        user('a', 1, 'newsletter', { signupCampaign: 'Launch' }),
+        user('b', 2, 'newsletter', { signupCampaign: 'launch' }),
+        user('c', 3, 'x', { signupCampaign: 'spring_sale' }),
+        user('d', 4, 'x', { signupCampaign: 'not a slug' }),
+        user('e', 5, 'google'),
+        user('old', 40, 'newsletter', { signupCampaign: 'launch' }),
+      ])
+    expect((await collectFleetFunnel(db, NOW)).campaigns).toEqual({
+      launch: 2,
+      spring_sale: 1,
+      other: 1,
     })
   })
 })
@@ -61,5 +175,24 @@ describe('sourceKey', () => {
     expect(sourceKey('x')).toBe('x')
     expect(sourceKey('hello world')).toBe('other')
     expect(sourceKey('a'.repeat(41))).toBe('other')
+  })
+})
+
+describe('campaignKey', () => {
+  it('passes short slugs and buckets everything else', () => {
+    expect(campaignKey('launch-2026')).toBe('launch-2026')
+    expect(campaignKey('ada@example.com')).toBe('other')
+    expect(campaignKey(null)).toBe('other')
+  })
+})
+
+describe('landingKey', () => {
+  it('passes route shapes, names a missing one, and buckets the rest', () => {
+    expect(landingKey(null)).toBe('unknown')
+    expect(landingKey('/')).toBe('/')
+    expect(landingKey('/invite/:id')).toBe('/invite/:id')
+    expect(landingKey('/Blog')).toBe('other')
+    expect(landingKey('/a?token=secret')).toBe('other')
+    expect(landingKey(`/${'a'.repeat(120)}`)).toBe('other')
   })
 })
