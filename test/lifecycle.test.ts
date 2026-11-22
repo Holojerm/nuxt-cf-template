@@ -12,10 +12,15 @@ import {
   getRegisteredLifecycleSteps,
   registerLifecycleStep,
 } from '../server/utils/extensions'
+import { defineLifecycleStep } from '../server/utils/lifecycle-definitions'
 import { sendSignupSteps } from '../server/utils/lifecycle-runtime'
+import { LIFECYCLE_SEQUENCE } from '../server/utils/lifecycle-sequence'
 import { TEMPLATE_LIFECYCLE_STEPS } from '../server/utils/lifecycle-steps'
 
-const stepNamed = (id: string) => TEMPLATE_LIFECYCLE_STEPS.find((step) => step.id === id)!
+// Built from the definition, not from the running steps, so a step that is
+// switched off (`win_back` ships that way) keeps its query and copy under test.
+const stepNamed = (id: string) =>
+  defineLifecycleStep(LIFECYCLE_SEQUENCE.find((definition) => definition.id === id)!)
 const activationNudgeStep = stepNamed('activation_nudge')
 const welcomeStep = stepNamed('welcome')
 const winBackStep = stepNamed('win_back')
@@ -146,12 +151,11 @@ describe('win-back step', () => {
 describe('lifecycle step registry', () => {
   afterEach(() => clearExtensionsForTest())
 
-  it('keeps feature steps out of core: the template ships only its own sequence', () => {
-    expect(TEMPLATE_LIFECYCLE_STEPS.map((step) => step.id)).toEqual([
-      'welcome',
-      'activation_nudge',
-      'win_back',
-    ])
+  it('keeps feature steps out of core: the template runs only its own sequence', () => {
+    const switchedOn = LIFECYCLE_SEQUENCE.filter((definition) => definition.enabled !== false)
+    expect(TEMPLATE_LIFECYCLE_STEPS.map((step) => step.id)).toEqual(
+      switchedOn.map((definition) => definition.id),
+    )
     expect(getRegisteredLifecycleSteps()).toEqual([])
   })
 
