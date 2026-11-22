@@ -17,8 +17,8 @@
 //      fetches /api/status relative to it.
 //   6. No binding id is a template placeholder unless `stage` is "unreleased".
 //   7. If mcp/wrangler.jsonc exists, its Worker is listed in `workers`.
-//   8. Every event the `product` block names is registered in
-//      shared/utils/analytics-events.ts or app-events.ts.
+//   8. Every event the `product` block names (its `target.metric` included) is
+//      registered in shared/utils/analytics-events.ts or app-events.ts.
 //
 // Reads the TOML with Bun's built-in parser, so this runs with no dependency
 // the app does not already have. It is a Bun script rather than a vitest case
@@ -195,11 +195,12 @@ if (manifest) {
 
   // ── 8. product events are real ──────────────────────────────────────────
   if (manifest.product) {
-    const named = {
+    const named: Record<string, string> = {
       'product.northStar': manifest.product.northStar,
       'product.activation.event': manifest.product.activation.event,
       'product.retention.event': manifest.product.retention.event,
     }
+    if (manifest.product.target) named['product.target.metric'] = manifest.product.target.metric
     for (const [where, event] of Object.entries(named)) {
       if (!isAnalyticsEvent(event)) {
         report(

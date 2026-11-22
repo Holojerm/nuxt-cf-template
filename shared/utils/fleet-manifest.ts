@@ -190,6 +190,24 @@ export const FleetManifestSchema = z.strictObject({
         event: eventName,
         window: z.enum(RETENTION_WINDOWS),
       }),
+      // The goals an operated product is run against. The scoreboard and the
+      // growth routines read the same fields, so a target set here is the one
+      // the agent is judged on rather than one it picks for itself. All
+      // optional: a product gets them after a baseline, not at fork time.
+      /** What the routines are running this product to do, in one or two sentences. */
+      charter: z.string().min(1).max(400).optional(),
+      /** One number by one date. `metric` is an event the dashboard counts. */
+      target: z
+        .strictObject({
+          metric: eventName,
+          value: z.number().positive(),
+          by: z.iso.date(),
+        })
+        .optional(),
+      /** The result that sends the product back to maintenance, in one sentence. */
+      stopRule: z.string().min(1).max(400).optional(),
+      /** Dollars a month the routines may spend. Absent means none: $0 is the standing budget. */
+      budgetUsd: z.number().nonnegative().optional(),
     })
     .nullable()
     .default(null),
