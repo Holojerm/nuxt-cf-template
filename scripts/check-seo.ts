@@ -26,6 +26,12 @@
 //      post is a page whose copy lives in markdown rather than in a .vue file,
 //      and rules 4 and 5 have to follow it there or they stop applying to the
 //      pages most likely to be written in a hurry. See the second walk below.
+//   7. Generated pages (page collections) meet rules 1 to 4 per row, plus the
+//      three guards: no thin page, no repeated title or description (against
+//      each other and the hand-written pages above), no near-copy. A page file
+//      at a collection's route fetches it with useCollectionPage() and calls
+//      useCollectionSeo(page), which is its useSeo() call. There is no escape hatch for these: a row that fails
+//      is fixed from the product data or left out.
 //
 // Escape hatch: `seo-check-ignore` in a comment on the same line or the line
 // above, matching the design-token gate's convention.
@@ -38,10 +44,17 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
+import type { PageCollection } from '../shared/utils/page-collections'
 import { DESCRIPTION_MAX, DESCRIPTION_MIN, TITLE_MAX } from '../shared/utils/seo-bounds'
 import { readFrontmatter } from './lib/frontmatter'
 import { ownLayerDirs } from './lib/layers'
-import { seoDescription, useSeoArgument } from './lib/seo-source'
+import {
+  type CollectionPageFile,
+  checkPageCollections,
+  collectionCall,
+  pageRouteOfFile,
+} from './lib/page-collections-check'
+import { seoDescription, seoTitle, useSeoArgument } from './lib/seo-source'
 import { walk } from './lib/walk'
 
 const ROOT = resolve(import.meta.dir, '..')
@@ -71,14 +84,59 @@ function ignored(source: string, needle: string): boolean {
 
 const problems: Problem[] = []
 
-for (const file of PAGES_DIRS.flatMap((dir) => walk(dir, { extensions: ['.vue'] }))) {
+// Literal titles and descriptions of indexable hand-written pages, which a
+// generated page may not repeat (rule 7).
+const taken = { titles: [] as string[], descriptions: [] as string[] }
+const collectionPages: CollectionPageFile[] = []
+
+const pageFiles = PAGES_DIRS.flatMap((dir) =>
+  walk(dir, { extensions: ['.vue'] }).map((file) => ({ dir, file })),
+)
+
+for (const { dir, file } of pageFiles) {
   const relativePath = relative(ROOT, file)
   const raw = readFileSync(file, 'utf8')
   const source = stripComments(raw)
 
   // ── 1. exactly one useSeo() ────────────────────────────────────────────────
+  //
+  // A generated page's one call is useCollectionSeo(page), which hands the
+  // row's built page to useSeo(). Its title and description are held to rule 4
+  // per row, by rule 7 below, rather than read from here.
   const seoCalls = source.match(/\buseSeo\s*\(/g)?.length ?? 0
-  if (seoCalls === 0) {
+  const collection = collectionCall(source)
+  if (collection.kind !== 'none') {
+    const collectionSeoCalls = source.match(/\buseCollectionSeo\s*\(/g)?.length ?? 0
+    if (seoCalls > 0) {
+      problems.push({
+        file: relativePath,
+        rule: 'useSeo() beside useCollectionPage()',
+        detail: "useCollectionSeo() is this page's useSeo() call",
+        remedy: 'drop the useSeo() call; the collection definition sets title and description',
+      })
+    }
+    if (collectionSeoCalls !== 1) {
+      problems.push({
+        file: relativePath,
+        rule:
+          collectionSeoCalls === 0 ? 'missing useCollectionSeo()' : 'duplicate useCollectionSeo()',
+        detail: `called ${collectionSeoCalls} times`,
+        remedy:
+          'call useCollectionSeo(page) once, right after `const page = await useCollectionPage(…)`',
+      })
+    }
+    if (collection.kind === 'unreadable') {
+      problems.push({
+        file: relativePath,
+        rule: 'unreadable useCollectionPage()',
+        detail: collection.detail,
+        remedy: "call it once with the collection key as a literal: useCollectionPage('glossary')",
+      })
+    } else {
+      const route = pageRouteOfFile(relative(dir, file))
+      collectionPages.push({ file: relativePath, route, key: collection.key })
+    }
+  } else if (seoCalls === 0) {
     problems.push({
       file: relativePath,
       rule: 'missing useSeo()',
@@ -167,6 +225,16 @@ for (const file of PAGES_DIRS.flatMap((dir) => walk(dir, { extensions: ['.vue'] 
     argument.kind === 'object'
       ? seoDescription(argument.text, source)
       : { present: false, literal: null }
+
+  if (argument.kind === 'object' && !noindex) {
+    const title = seoTitle(argument.text, source).literal
+    const literal = (value: { quote: string; text: string } | null) =>
+      value && !(value.quote === '`' && value.text.includes('${')) ? value.text : null
+    const titleText = literal(title)
+    const descriptionText = literal(description.literal)
+    if (titleText) taken.titles.push(titleText)
+    if (descriptionText) taken.descriptions.push(descriptionText)
+  }
 
   // An unreadable argument has already been reported; do not also claim the
   // description is missing, which would be a guess.
@@ -353,6 +421,37 @@ if (existsSync(POSTS_DIR)) {
       )
     }
   }
+}
+
+// ── 7. page collections ──────────────────────────────────────────────────────
+//
+// One page per row of product data (shared/utils/page-collections.ts). The
+// list is the same module the Worker registers, so the gate builds exactly the
+// collections production serves. See scripts/lib/page-collections-check.ts.
+
+const COLLECTIONS_FILE = 'server/utils/page-collections-app.ts'
+let collections: readonly PageCollection[] | null = null
+try {
+  collections = (await import('../server/utils/page-collections-app')).APP_PAGE_COLLECTIONS
+} catch (error) {
+  problems.push({
+    file: COLLECTIONS_FILE,
+    rule: 'page collections unloadable',
+    detail: String(error),
+    remedy:
+      'keep collection modules alias-free (relative imports only): this gate loads them outside Nuxt',
+  })
+}
+if (collections) {
+  problems.push(
+    ...(await checkPageCollections({
+      collections,
+      listFile: COLLECTIONS_FILE,
+      pageFiles: collectionPages,
+      taken,
+      today: TODAY,
+    })),
+  )
 }
 
 if (problems.length === 0) {

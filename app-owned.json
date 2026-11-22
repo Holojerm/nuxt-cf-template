@@ -11,6 +11,8 @@
     "server/db/schema.ts",
     "server/utils/lifecycle-app-steps.ts",
     "server/utils/lifecycle-sequence.ts",
+    "server/utils/page-collections-app.ts",
+    "shared/page-collections/glossary-terms.ts",
     "shared/utils/app-events.ts",
     "shared/utils/brand-colors.generated.ts"
   ]

@@ -166,7 +166,19 @@ export interface SeoDescription {
  * which is the honest limit of reading source rather than running it.
  */
 export function seoDescription(argument: string, source: string): SeoDescription {
-  const field = topLevelFields(argument).find((entry) => entry.key === 'description')
+  return seoField(argument, source, 'description')
+}
+
+/**
+ * The `title` field, read the same way. The gate collects the literal titles
+ * and descriptions of hand-written pages so a generated page cannot repeat one.
+ */
+export function seoTitle(argument: string, source: string): SeoDescription {
+  return seoField(argument, source, 'title')
+}
+
+function seoField(argument: string, source: string, key: string): SeoDescription {
+  const field = topLevelFields(argument).find((entry) => entry.key === key)
   if (!field) return { present: false, literal: null }
 
   const asLiteral = (text: string | undefined) => {
@@ -178,8 +190,7 @@ export function seoDescription(argument: string, source: string): SeoDescription
   if (direct) return { present: true, literal: direct }
 
   // `{ description }` or `description: someIdentifier`.
-  const identifier =
-    field.value === null ? 'description' : /^([A-Za-z_$][\w$]*)$/.exec(field.value)?.[1]
+  const identifier = field.value === null ? key : /^([A-Za-z_$][\w$]*)$/.exec(field.value)?.[1]
 
   if (identifier) {
     const declared = new RegExp(`\\bconst\\s+${identifier}\\s*=\\s*(['"\`])([\\s\\S]*?)\\1`).exec(
