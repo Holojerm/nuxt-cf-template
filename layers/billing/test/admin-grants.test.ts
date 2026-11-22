@@ -19,7 +19,7 @@ import * as schema from '~~/server/db/schema'
 import { MAX_COMP_PASSES } from '../shared/utils/comps'
 import { COMP_REVOKED_STATUS, grantCompPasses, revokeCompPass } from '../server/utils/admin-grants'
 import { PASS_DAYS, findActiveEntitlement, getBillingOverview } from '../server/utils/entitlements'
-import { COMP_REF_PREFIX, compRef, isCompRef, isPass } from '../server/utils/paddle-refs'
+import { COMP_REF_PREFIX, compRef, isCompRef, isPass } from '../server/utils/billing-refs'
 import { deriveBillingState } from '../server/utils/billing-state'
 
 const db = drizzle(env.DB, { schema })
@@ -71,9 +71,9 @@ describe('the comp ref', () => {
       // The load-bearing assertion in this file. findActiveEntitlement() grants
       // access to a `sub_` row on status alone, ignoring current_period_end.
       expect(ref.startsWith('sub_')).toBe(false)
-      // Nor does it claim a Paddle transaction that revenue reconciliation
+      // Nor does it claim a Stripe payment that revenue reconciliation
       // would go looking for and never find.
-      expect(ref.startsWith('txn_')).toBe(false)
+      expect(ref.startsWith('pi_')).toBe(false)
     }
 
     expect(new Set(refs).size).toBe(refs.length)
@@ -98,7 +98,7 @@ describe('granting', () => {
     expect(result.endsAt!.getTime()).toBe(daysFrom(NOW, PASS_DAYS))
 
     const active = await findActiveEntitlement(db, USER)
-    expect(active?.paddleSubscriptionId).toBe(result.refs[0])
+    expect(active?.billingRef).toBe(result.refs[0])
     expect(active?.status).toBe('active')
   })
 
@@ -129,7 +129,7 @@ describe('granting', () => {
     const paidUntil = new Date(daysFrom(NOW, 10))
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: 'txn_paid',
+      billingRef: 'pi_paid',
       status: 'active',
       currentPeriodEnd: paidUntil,
     })
@@ -143,7 +143,7 @@ describe('granting', () => {
   it('starts from today when the previous access has already lapsed', async () => {
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: 'txn_expired',
+      billingRef: 'pi_expired',
       status: 'active',
       currentPeriodEnd: new Date(NOW.getTime() - 5 * DAY_MS),
     })
@@ -172,11 +172,11 @@ describe('how a comp reads back', () => {
     const ref = refs[0]!
 
     const overview = await getBillingOverview(db, USER)
-    const row = overview.history.find((entry) => entry.paddleSubscriptionId === ref)
+    const row = overview.history.find((entry) => entry.billingRef === ref)
 
     expect(row).toBeDefined()
     expect(row?.status).toBe('active')
-    // The regression this guards: keyed on `txn_`, isPass() called a comp a
+    // The regression this guards: keyed on `pi_`, isPass() called a comp a
     // subscription, and /account told the customer it renews automatically.
     expect(isPass(ref)).toBe(true)
     // Nothing to cancel — a comp is not an auto-renewing subscription, so it
@@ -205,7 +205,7 @@ describe('a live subscriber is refused, not silently served', () => {
   async function liveSubscription(status = 'active') {
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: 'sub_live',
+      billingRef: 'sub_live',
       status,
       currentPeriodEnd: new Date(daysFrom(NOW, 20)),
     })
@@ -228,7 +228,7 @@ describe('a live subscriber is refused, not silently served', () => {
     await grantCompPasses(db, { userId: USER, passes: 3, now: NOW })
 
     const { history } = await getBillingOverview(db, USER)
-    expect(history.filter((row) => isCompRef(row.paddleSubscriptionId))).toHaveLength(0)
+    expect(history.filter((row) => isCompRef(row.billingRef))).toHaveLength(0)
   })
 
   it('sees the subscription even when an older comp outranks it by date', async () => {
@@ -238,7 +238,7 @@ describe('a live subscriber is refused, not silently served', () => {
     await liveSubscription()
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: compRef(),
+      billingRef: compRef(),
       status: 'active',
       currentPeriodEnd: new Date(daysFrom(NOW, 400)),
     })
@@ -305,7 +305,7 @@ describe('the sub_ fast path is not reachable by a lookalike ref', () => {
     // checking the expiry. Expired a year ago and still granting, forever.
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: 'subs_fake',
+      billingRef: 'subs_fake',
       status: 'active',
       currentPeriodEnd: new Date(NOW.getTime() - 365 * DAY_MS),
     })
@@ -318,13 +318,13 @@ describe('the sub_ fast path is not reachable by a lookalike ref', () => {
     // A live `sub_` row has no meaningful date here and must still grant.
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: 'sub_real',
+      billingRef: 'sub_real',
       status: 'active',
       currentPeriodEnd: new Date(NOW.getTime() - 5 * DAY_MS),
     })
 
     const active = await findActiveEntitlement(db, USER)
-    expect(active?.paddleSubscriptionId).toBe('sub_real')
+    expect(active?.billingRef).toBe('sub_real')
   })
 })
 
@@ -332,7 +332,7 @@ describe('revoking a comp', () => {
   /** The row as the table holds it, for asserting what a revoke did to it. */
   async function rowFor(ref: string) {
     return db.query.entitlements.findFirst({
-      where: eq(schema.entitlements.paddleSubscriptionId, ref),
+      where: eq(schema.entitlements.billingRef, ref),
     })
   }
 
@@ -361,7 +361,7 @@ describe('revoking a comp', () => {
     // a revoke of everything the account has.
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: 'txn_paid',
+      billingRef: 'pi_paid',
       status: 'active',
       currentPeriodEnd: new Date(daysFrom(NOW, 10)),
     })
@@ -374,19 +374,19 @@ describe('revoking a comp', () => {
 
     expect((await rowFor(drop))?.status).toBe(COMP_REVOKED_STATUS)
     expect((await rowFor(keep))?.status).toBe('active')
-    expect((await rowFor('txn_paid'))?.status).toBe('active')
+    expect((await rowFor('pi_paid'))?.status).toBe('active')
 
     // Access survives, from the rows that were not targeted.
     const active = await findActiveEntitlement(db, USER)
     expect(active).not.toBeNull()
-    expect(active?.paddleSubscriptionId).toBe(keep)
+    expect(active?.billingRef).toBe(keep)
   })
 
-  it('refuses a subscription or a paid pass — Paddle owns those', async () => {
-    for (const ref of ['sub_live', 'txn_paid']) {
+  it('refuses a subscription or a paid pass — Stripe owns those', async () => {
+    for (const ref of ['sub_live', 'pi_paid']) {
       await db.insert(schema.entitlements).values({
         userId: USER,
-        paddleSubscriptionId: ref,
+        billingRef: ref,
         status: 'active',
         currentPeriodEnd: new Date(daysFrom(NOW, 10)),
       })
@@ -395,7 +395,7 @@ describe('revoking a comp', () => {
 
       expect(result.outcome).toBe('not_comp')
       // Untouched: revoking money-backed access locally would either be
-      // overwritten by the next Paddle event or take away something the
+      // overwritten by the next Stripe event or take away something the
       // customer actually bought, with no refund attached.
       expect((await rowFor(ref))?.status).toBe('active')
     }
@@ -467,7 +467,7 @@ describe('revoking a comp', () => {
     const paidUntil = new Date(daysFrom(NOW, 10))
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: 'txn_paid',
+      billingRef: 'pi_paid',
       status: 'active',
       currentPeriodEnd: paidUntil,
     })
@@ -488,7 +488,7 @@ describe('revoking a comp', () => {
 
     // It happened, so it stays visible — as a comp that was granted and
     // withdrawn, which is what the customer's history should show.
-    expect(history.map((row) => row.paddleSubscriptionId)).toContain(ref)
+    expect(history.map((row) => row.billingRef)).toContain(ref)
     expect(active).toBeNull()
   })
 

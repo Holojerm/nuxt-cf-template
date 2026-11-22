@@ -24,8 +24,9 @@
 //               route list. Core's specs are the sign-in ones; each optional
 //               layer's own specs live in layers/<name>/test/e2e/ and run as
 //               their own `e2e-<name>` project (billing: buy → access,
-//               cancel → lose access, with signed Paddle webhooks, so it
-//               adds its webhook secret to the shared server below).
+//               cancel → lose access, with signed Stripe webhooks, so it
+//               adds its webhook secret and a Stripe stub's address to the
+//               shared server below).
 
 import { defineConfig, devices } from '@playwright/test'
 

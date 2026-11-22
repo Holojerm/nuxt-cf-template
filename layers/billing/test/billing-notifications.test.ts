@@ -6,9 +6,9 @@
 
 import { describe, expect, it } from 'vitest'
 import { decideNotification } from '../server/utils/billing-notifications'
-import type { PaddleEventOutcome } from '../server/utils/entitlements'
+import type { BillingEventOutcome } from '../server/utils/entitlements'
 
-function subscription(status: string, previousStatus: string | null): PaddleEventOutcome {
+function subscription(status: string, previousStatus: string | null): BillingEventOutcome {
   return { kind: 'subscription', userId: 'user-1', status, previousStatus }
 }
 
@@ -30,7 +30,7 @@ describe('decideNotification — subscriptions', () => {
   })
 
   it('stays quiet when nothing changed', () => {
-    // Paddle sends subscription.updated for a card edit or a metadata tweak.
+    // Stripe sends subscription.updated for a card edit or a metadata tweak.
     expect(decideNotification(subscription('active', 'active'))).toMatchObject({
       email: 'none',
       reason: 'no_status_change',
@@ -73,7 +73,7 @@ describe('decideNotification — one-time passes', () => {
   const endsAt = new Date('2026-09-20T00:00:00Z')
 
   it('emails a granted pass', () => {
-    const outcome: PaddleEventOutcome = {
+    const outcome: BillingEventOutcome = {
       kind: 'pass',
       userId: 'user-1',
       granted: true,
@@ -84,9 +84,9 @@ describe('decideNotification — one-time passes', () => {
   })
 
   it('stays quiet on a webhook redelivery', () => {
-    // granted: false means we already recorded this transaction. Paddle
+    // granted: false means we already recorded this transaction. Stripe
     // redelivers freely; a second "thanks for your purchase" is alarming.
-    const outcome: PaddleEventOutcome = {
+    const outcome: BillingEventOutcome = {
       kind: 'pass',
       userId: 'user-1',
       granted: false,
@@ -99,10 +99,10 @@ describe('decideNotification — one-time passes', () => {
 
 describe('decideNotification — refunds and chargebacks', () => {
   it('emails when a refund actually revoked access', () => {
-    const outcome: PaddleEventOutcome = {
+    const outcome: BillingEventOutcome = {
       kind: 'adjustment',
       action: 'refund',
-      result: { outcome: 'revoked', userId: 'user-1', paddleRef: 'txn_1' },
+      result: { outcome: 'revoked', userId: 'user-1', billingRef: 'pi_1' },
     }
     expect(decideNotification(outcome)).toMatchObject({
       email: 'access_ended',
@@ -111,16 +111,16 @@ describe('decideNotification — refunds and chargebacks', () => {
   })
 
   it('uses the chargeback wording for chargebacks', () => {
-    const outcome: PaddleEventOutcome = {
+    const outcome: BillingEventOutcome = {
       kind: 'adjustment',
       action: 'chargeback',
-      result: { outcome: 'revoked', userId: 'user-1', paddleRef: 'txn_1' },
+      result: { outcome: 'revoked', userId: 'user-1', billingRef: 'pi_1' },
     }
     expect(decideNotification(outcome)).toMatchObject({ reason: 'chargeback' })
   })
 
   it('stays quiet when the adjustment matched nothing', () => {
-    const outcome: PaddleEventOutcome = {
+    const outcome: BillingEventOutcome = {
       kind: 'adjustment',
       action: 'refund',
       result: { outcome: 'no_matching_entitlement' },
@@ -129,7 +129,7 @@ describe('decideNotification — refunds and chargebacks', () => {
   })
 
   it('stays quiet on a refund still awaiting approval', () => {
-    const outcome: PaddleEventOutcome = {
+    const outcome: BillingEventOutcome = {
       kind: 'adjustment',
       action: 'refund',
       result: { outcome: 'status_not_final' },
@@ -140,7 +140,7 @@ describe('decideNotification — refunds and chargebacks', () => {
 
 describe('decideNotification — ignored events', () => {
   it('sends nothing for an event we deliberately skipped', () => {
-    const outcome: PaddleEventOutcome = { kind: 'ignored', reason: 'unhandled_event' }
+    const outcome: BillingEventOutcome = { kind: 'ignored', reason: 'unhandled_event' }
     expect(decideNotification(outcome)).toMatchObject({ email: 'none' })
   })
 })

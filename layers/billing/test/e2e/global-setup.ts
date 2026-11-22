@@ -1,34 +1,32 @@
-// Warm /paddle/webhook, the route layers/billing/test/e2e/fixtures.ts races
-// against a clock.
+// Start the Stripe stub, and warm /stripe/webhook.
 //
-// layers/billing/server/utils/paddle.ts verifies a Paddle webhook's `ts` against
-// a 5-second tolerance — production's value, left alone here (see
-// signPaddleWebhook's timing contract in fixtures.ts). Nitro's dev server
-// compiles each route handler lazily, on its first hit, and the Playwright
-// projects share one single-threaded dev server with `retries: 0`. A cold
-// compile of the route can easily eat that whole 5-second budget on a slow run,
-// and layers/billing/server/routes/paddle/webhook.post.ts collapses every
-// rejection reason (stale timestamp, bad signature, malformed header) into the
-// same 401 "Invalid signature", so a compile-time flake reads exactly like a
-// real HMAC bug.
+// The stub (stripe-stub.ts) is what the dev server's NUXT_STRIPE_API_BASE points
+// at, so the webhook's lookups never leave the machine. It has to be up before
+// any spec runs; this file is where the runner process starts it.
 //
-// It is hit with NO `paddle-signature` header at all, which paddle.ts rejects
-// before it ever reads a clock: a deterministic, instant 401 that still pulls
-// the whole route module (and its imports: entitlements, referral,
-// notifications) through Nitro's compiler. Neither request needs to succeed;
-// this is a performance measure, not a check.
+// Nitro's dev server compiles each route handler lazily, on its first hit, and
+// the Playwright projects share one single-threaded dev server with
+// `retries: 0`. A cold compile of the webhook route (and its imports:
+// entitlements, referral, notifications) can eat a slow run's whole timeout
+// budget and read like a real failure, so it is hit once here. The request has
+// no `stripe-signature` header, which is refused instantly with a 401 before any
+// clock is read. It need not succeed: this is a performance measure, not a check.
 
 import { request } from '@playwright/test'
 import type { FullConfig } from '@playwright/test'
 
+import { startStripeStub } from './stripe-stub'
+
 export default async function globalSetup(config: FullConfig): Promise<void> {
+  await startStripeStub()
+
   const baseURL = config.projects[0]?.use?.baseURL
   if (!baseURL) return
 
   const context = await request.newContext({ baseURL })
   try {
     await context
-      .post('/paddle/webhook', {
+      .post('/stripe/webhook', {
         data: '{}',
         headers: { 'content-type': 'application/json' },
       })

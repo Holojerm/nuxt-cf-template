@@ -22,7 +22,7 @@ import {
   setPassDays,
   setStackAtBilled,
 } from '../server/utils/entitlements'
-import { isForeignProduct } from '../server/utils/paddle-prices'
+import { isForeignProduct } from '../server/utils/stripe-prices'
 import {
   notifyBillingOutcome,
   notifyCompGranted,
@@ -53,7 +53,7 @@ describe('findActiveEntitlement(…, now)', () => {
   const billed = new Date('2030-01-01T00:00:00Z')
 
   beforeEach(async () => {
-    await grantPass(db, { userId: USER, transactionId: 'txn_a', billedAt: billed })
+    await grantPass(db, { userId: USER, transactionId: 'pi_a', billedAt: billed })
   })
 
   it('judges a pass’s expiry at the moment asked, not at the wall clock', async () => {
@@ -72,13 +72,12 @@ describe('findActiveEntitlement(…, now)', () => {
   it('ignores `now` for a subscription: those are status-driven', async () => {
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: 'sub_a',
+      billingRef: 'sub_a',
       status: 'active',
       currentPeriodEnd: new Date('2020-01-01'),
     })
     expect(
-      (await findActiveEntitlement(db, USER, 'default', new Date('2090-01-01')))
-        ?.paddleSubscriptionId,
+      (await findActiveEntitlement(db, USER, 'default', new Date('2090-01-01')))?.billingRef,
     ).toBe('sub_a')
   })
 })
@@ -91,7 +90,7 @@ describe('pass length', () => {
   it('is applied to new passes once set', async () => {
     expect(setPassDays(14)).toBe(true)
     const billed = new Date('2030-01-01T00:00:00Z')
-    const result = await grantPass(db, { userId: USER, transactionId: 'txn_b', billedAt: billed })
+    const result = await grantPass(db, { userId: USER, transactionId: 'pi_b', billedAt: billed })
     expect(result.endsAt.getTime() - billed.getTime()).toBe(14 * DAY)
   })
 
@@ -104,27 +103,27 @@ describe('pass length', () => {
 
 describe('isForeignProduct', () => {
   const item = (productId: string | null | undefined) => ({
-    price: { id: 'pri_x', product_id: productId },
+    price: { id: 'price_x', product_id: productId },
   })
 
   it('is true only when every item is on a different, known product', () => {
-    expect(isForeignProduct([item('pro_b')], 'pro_a')).toBe(true)
-    expect(isForeignProduct([item('pro_b'), item('pro_c')], 'pro_a')).toBe(true)
+    expect(isForeignProduct([item('prod_b')], 'prod_a')).toBe(true)
+    expect(isForeignProduct([item('prod_b'), item('prod_c')], 'prod_a')).toBe(true)
   })
 
   it.each([
-    ['our own product', [item('pro_a')]],
-    ['a basket that includes ours', [item('pro_b'), item('pro_a')]],
+    ['our own product', [item('prod_a')]],
+    ['a basket that includes ours', [item('prod_b'), item('prod_a')]],
     ['an item with no product', [item(null)]],
     ['an item with an empty product', [item('')]],
     ['no items', []],
   ])('is false for %s', (_name, items) => {
-    expect(isForeignProduct(items, 'pro_a')).toBe(false)
+    expect(isForeignProduct(items, 'prod_a')).toBe(false)
   })
 
   it('is false when no product id is configured, so the alert stays', () => {
-    expect(isForeignProduct([item('pro_b')], undefined)).toBe(false)
-    expect(isForeignProduct([item('pro_b')], '')).toBe(false)
+    expect(isForeignProduct([item('prod_b')], undefined)).toBe(false)
+    expect(isForeignProduct([item('prod_b')], '')).toBe(false)
   })
 })
 
@@ -132,7 +131,7 @@ describe('adjustmentMatchedNothing', () => {
   it('is true only for no_matching_entitlement; a reversal has no user by design', () => {
     expect(adjustmentMatchedNothing({ outcome: 'no_matching_entitlement' })).toBe(true)
     expect(adjustmentMatchedNothing({ outcome: 'reversed' })).toBe(false)
-    expect(adjustmentMatchedNothing({ outcome: 'revoked', userId: USER, paddleRef: 'txn_a' })).toBe(
+    expect(adjustmentMatchedNothing({ outcome: 'revoked', userId: USER, billingRef: 'pi_a' })).toBe(
       false,
     )
   })
@@ -208,13 +207,13 @@ describe('billing.stackAtBilledAt', () => {
   const sec = (ms: number) => Math.floor(ms / 1000) * 1000
 
   beforeEach(async () => {
-    await grantPass(db, { userId: USER, transactionId: 'txn_old', billedAt: oldBilled })
+    await grantPass(db, { userId: USER, transactionId: 'pi_old', billedAt: oldBilled })
   })
 
   it('defaults to the wall clock: nothing is running now, so the new pass starts at its billing date', async () => {
     const result = await grantPass(db, {
       userId: USER,
-      transactionId: 'txn_new',
+      transactionId: 'pi_new',
       billedAt: newBilled,
     })
     expect(result.stackedOn).toBeNull()
@@ -225,7 +224,7 @@ describe('billing.stackAtBilledAt', () => {
     setStackAtBilled(true)
     const result = await grantPass(db, {
       userId: USER,
-      transactionId: 'txn_new',
+      transactionId: 'pi_new',
       billedAt: newBilled,
     })
     expect(result.stackedOn?.getTime()).toBe(sec(oldEnds.getTime()))
@@ -236,16 +235,14 @@ describe('billing.stackAtBilledAt', () => {
     const billed = new Date()
     const promptOff = await grantPass(db, {
       userId: USER,
-      transactionId: 'txn_p1',
+      transactionId: 'pi_p1',
       billedAt: billed,
     })
-    await db
-      .delete(schema.entitlements)
-      .where(eq(schema.entitlements.paddleSubscriptionId, 'txn_p1'))
+    await db.delete(schema.entitlements).where(eq(schema.entitlements.billingRef, 'pi_p1'))
     setStackAtBilled(true)
     const promptOn = await grantPass(db, {
       userId: USER,
-      transactionId: 'txn_p1',
+      transactionId: 'pi_p1',
       billedAt: billed,
     })
     expect(promptOn).toEqual(promptOff)
@@ -255,7 +252,7 @@ describe('billing.stackAtBilledAt', () => {
     registerBillingExtensions({ stackAtBilledAt: true })
     const result = await grantPass(db, {
       userId: USER,
-      transactionId: 'txn_new',
+      transactionId: 'pi_new',
       billedAt: newBilled,
     })
     expect(result.stackedOn).not.toBeNull()

@@ -1,5 +1,5 @@
 // Is an optional layer part of this checkout? The browser suites assert on pages
-// and policy that only exist with a layer (billing's /pricing and Paddle hosts);
+// and policy that only exist with a layer (billing's /pricing and Stripe hosts);
 // a fork that did not vendor it takes those suites as they are, and the
 // assertions follow the layer instead of being deleted by hand.
 

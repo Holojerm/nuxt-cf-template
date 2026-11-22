@@ -32,16 +32,16 @@ beforeEach(async () => {
   await db.insert(schema.entitlements).values([
     {
       userId: USER,
-      paddleCustomerId: 'ctm_1',
-      paddleSubscriptionId: 'sub_1',
+      providerCustomerId: 'cus_1',
+      billingRef: 'sub_1',
       productKey: 'default',
       status: 'active',
       currentPeriodEnd: new Date(Date.now() + 5 * DAY),
     },
     {
       userId: USER,
-      paddleCustomerId: 'ctm_1',
-      paddleSubscriptionId: 'txn_1',
+      providerCustomerId: 'cus_1',
+      billingRef: 'pi_1',
       productKey: 'default',
       status: 'active',
       currentPeriodEnd: new Date(Date.now() - 5 * DAY),
@@ -87,15 +87,15 @@ describe('entitlement view fields', () => {
     registerEntitlementViewFields({
       key: 'test',
       view: ({ describing, userId }) => ({
-        seamTestPlan: `${userId}:${describing?.paddleSubscriptionId ?? 'none'}`,
+        seamTestPlan: `${userId}:${describing?.billingRef ?? 'none'}`,
       }),
-      history: (row) => ({ seamTestTag: row.paddleSubscriptionId.slice(0, 3) }),
+      history: (row) => ({ seamTestTag: row.billingRef.slice(0, 3) }),
     })
 
     const view = await buildEntitlementView(db, USER)
 
     expect(view.seamTestPlan).toBe(`${USER}:sub_1`)
-    expect(view.history.map((row) => row.seamTestTag).toSorted()).toEqual(['sub', 'txn'])
+    expect(view.history.map((row) => row.seamTestTag).toSorted()).toEqual(['pi_', 'sub'])
     // Everything that was there is still there, in the same order, with the same values.
     const { seamTestPlan: _plan, history, ...rest } = JSON.parse(JSON.stringify(view))
     const { history: beforeHistory, ...beforeRest } = before

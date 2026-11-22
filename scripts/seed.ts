@@ -5,7 +5,7 @@
 // the dev server will not read it. Reach NuxtHub's file directly via bun:sqlite.
 //
 // Idempotent: re-running won't duplicate rows, on users (by email) and on
-// entitlements (by the unique Paddle ref).
+// entitlements (by the unique billing ref).
 //
 // ── One user per entitlement status (Findings 18 + 20) ───────────────────────
 // The first version of this script seeded two users, neither entitled — every
@@ -26,14 +26,14 @@
 //
 // These rows are for eyeballing the UI by hand. test/e2e/**'s specs
 // deliberately do NOT sign in as any of them — each of those mints its own
-// fresh user and drives it through a real Paddle webhook, because the whole
+// fresh user and drives it through a real Stripe webhook, because the whole
 // point there is proving the purchase/cancellation path works starting from
 // nothing, not asserting on state this script happened to insert.
 //
 // ── Subscription rows reuse upsertSubscription(); pass/comp rows don't ──────
 // The five `sub_…` rows below are written through
 // layers/billing/server/utils/entitlements.ts's own upsertSubscription() — the exact
-// function the Paddle webhook calls — rather than a hand-built insert, so
+// function the Stripe webhook calls — rather than a hand-built insert, so
 // the row shape can't drift from what a real subscription.* event produces.
 // It's driver-agnostic (plain Drizzle query-builder calls: `.query.findFirst`,
 // `.insert().values().onConflictDoUpdate()`), which is what makes it safe to
@@ -41,7 +41,7 @@
 // `EntitlementDb` type is pinned to drizzle-orm/d1 — same SQL dialect, same
 // generated statements, different transport.
 //
-// grantPass() and grantCompPasses() were considered for the `txn_…`/`comp_…`
+// grantPass() and grantCompPasses() were considered for the `pi_…`/`comp_…`
 // rows and rejected, not reused:
 //   - grantPass() hardcodes PASS_DAYS (30) forward from `billedAt` — it has
 //     no way to produce the ALREADY-EXPIRED row `seed-pass-expired@` needs
@@ -136,7 +136,7 @@ const seedUsers: SeedUser[] = [
     name: 'Past-Due Subscriber',
     role: 'user',
     // Recent, so layers/billing/server/utils/billing-state.ts's PAST_DUE_STALE_AFTER_DAYS
-    // window reads this as live dunning rather than a subscription Paddle
+    // window reads this as live dunning rather than a subscription Stripe
     // already gave up on and no webhook ever closed out.
     entitlement: {
       kind: 'subscription',
@@ -173,7 +173,7 @@ const seedUsers: SeedUser[] = [
     role: 'user',
     entitlement: {
       kind: 'pass',
-      ref: 'txn_seed_pass_active',
+      ref: 'pi_seed_pass_active',
       status: 'active',
       currentPeriodEnd: new Date(now.getTime() + 20 * DAY_MS),
     },
@@ -182,13 +182,13 @@ const seedUsers: SeedUser[] = [
     email: 'seed-pass-expired@example.com',
     name: 'Lapsed Pass Holder',
     role: 'user',
-    // Status stays 'active' — a txn_ row has no lifecycle event that ever
-    // flips it (see layers/billing/server/utils/paddle-refs.ts). It grants nothing once
+    // Status stays 'active' — a pi_ row has no lifecycle event that ever
+    // flips it (see layers/billing/server/utils/billing-refs.ts). It grants nothing once
     // current_period_end is in the past; that date, not the status, is what
     // makes this one expired.
     entitlement: {
       kind: 'pass',
-      ref: 'txn_seed_pass_expired',
+      ref: 'pi_seed_pass_expired',
       status: 'active',
       currentPeriodEnd: new Date(now.getTime() - 5 * DAY_MS),
     },
@@ -255,7 +255,7 @@ for (const seedUser of seedUsers) {
   }
 
   const existingEntitlement = await db.query.entitlements.findFirst({
-    where: eq(schema.entitlements.paddleSubscriptionId, entitlement.ref),
+    where: eq(schema.entitlements.billingRef, entitlement.ref),
   })
   if (existingEntitlement) {
     console.info(`  = entitlement ${entitlement.ref} already exists, skipping`)
@@ -264,7 +264,7 @@ for (const seedUser of seedUsers) {
 
   await db.insert(schema.entitlements).values({
     userId,
-    paddleSubscriptionId: entitlement.ref,
+    billingRef: entitlement.ref,
     productKey: 'default',
     status: entitlement.status,
     currentPeriodEnd: entitlement.currentPeriodEnd,

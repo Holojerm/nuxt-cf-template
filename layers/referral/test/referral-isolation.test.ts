@@ -131,7 +131,7 @@ describe('billing without referral', () => {
   it('has no referral fields on the billing view', async () => {
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
-      paddleSubscriptionId: 'txn_1',
+      billingRef: 'txn_1',
       productKey: 'default',
       status: 'active',
       currentPeriodEnd: new Date(Date.now() + 86_400_000),

@@ -1,69 +1,25 @@
-// Checkout funnel event mapping.
+// The checkout funnel's names and the return from Stripe.
 //
-// Paddle's overlay is a cross-origin iframe, so PostHog's autocapture cannot
-// see a single thing that happens inside it. Without the `eventCallback` these
-// names come from, the funnel reads:
-//
-//   user_signed_up → ( nothing at all ) → paddle_subscription_created
-//
-// which makes checkout abandonment — usually the highest-leverage conversion
-// number a SaaS has — literally uncomputable. These events fill that gap.
+// Stripe's hosted Checkout is a full-page redirect, so PostHog sees the whole
+// journey on our pages except the payment itself. `checkout_started` fires
+// when the button is pressed, and the redirect back to /pricing says how it
+// ended: `?checkout=success` or `?checkout=canceled`.
 //
 // ── These are signals, not revenue ───────────────────────────────────────────
-// They fire from the browser, so an ad blocker can drop them. That is fine for
-// what they're for: `checkout_completed` here is a UX signal, and the Paddle
-// webhook (layers/billing/server/routes/paddle/webhook.post.ts) remains the only thing that
-// decides whether anybody actually paid. Never reconcile money against these.
+// They fire from the browser, so an ad blocker can drop them, and the return
+// URL can be typed by anyone. That is fine for a UX funnel; the Stripe webhook
+// (layers/billing/server/routes/stripe/webhook.post.ts) remains the only thing
+// that decides whether anybody paid. Never reconcile money against these.
 
-/** Paddle.js v2 event names → the names we record. */
-export const CHECKOUT_EVENT_NAMES: Record<string, string> = {
-  'checkout.loaded': 'checkout_loaded',
-  'checkout.customer.created': 'checkout_customer_created',
-  'checkout.payment.initiated': 'checkout_payment_initiated',
-  'checkout.payment.failed': 'checkout_payment_failed',
-  'checkout.completed': 'checkout_completed',
-  'checkout.error': 'checkout_error',
-}
-
-/** Emitted when the overlay closes without a completed payment. */
+export const CHECKOUT_STARTED = 'checkout_started'
+export const CHECKOUT_UNAVAILABLE = 'checkout_unavailable'
+export const CHECKOUT_COMPLETED = 'checkout_completed'
 export const CHECKOUT_ABANDONED = 'checkout_abandoned'
 
-/**
- * Which event (if any) a Paddle event should produce.
- *
- * The one piece of real logic: `checkout.closed` fires both when someone gives
- * up AND immediately after a successful payment. Reporting those as one event
- * makes the abandonment rate meaningless, so a close that follows a completion
- * is dropped — `checkout_completed` already told that story.
- *
- * Pure, for layers/billing/test/checkout.test.ts.
- */
-export function resolveCheckoutEvent(paddleEvent: string, hasCompleted: boolean): string | null {
-  if (paddleEvent === 'checkout.closed') {
-    return hasCompleted ? null : CHECKOUT_ABANDONED
-  }
-  return CHECKOUT_EVENT_NAMES[paddleEvent] ?? null
-}
+export type CheckoutReturn = 'success' | 'canceled'
 
-/**
- * The subset of Paddle's event payload that is safe to send to analytics.
- *
- * Allowlisted, never spread. Paddle's `data` carries the customer's email and
- * billing address, and forwarding the object wholesale would quietly copy
- * personal data into a third party on every checkout — the kind of leak that
- * passes code review because it looks like one line of plumbing.
- */
-export function checkoutEventProperties(data: unknown): Record<string, unknown> {
-  if (!data || typeof data !== 'object') return {}
-  const d = data as {
-    items?: { price_id?: string; quantity?: number }[]
-    currency_code?: string
-    totals?: { total?: string | number }
-  }
-  return {
-    price_ids: Array.isArray(d.items) ? d.items.map((i) => i.price_id).filter(Boolean) : [],
-    item_count: Array.isArray(d.items) ? d.items.length : 0,
-    currency: d.currency_code,
-    total: d.totals?.total,
-  }
+/** What the `checkout` query parameter on /pricing says, or null for any other value. */
+export function checkoutReturnState(query: Record<string, unknown>): CheckoutReturn | null {
+  const value = Array.isArray(query.checkout) ? query.checkout[0] : query.checkout
+  return value === 'success' || value === 'canceled' ? value : null
 }

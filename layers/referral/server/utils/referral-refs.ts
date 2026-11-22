@@ -1,15 +1,15 @@
 // What the referral loop's refs mean.
 //
 // The loop writes its grants into the billing layer's `entitlements` table, in
-// the same `paddle_subscription_id` column as every other ref (billing's
-// server/utils/paddle-refs.ts explains the column). Billing treats these two
+// the same `billing_ref` column as every other ref (billing's
+// server/utils/billing-refs.ts explains the column). Billing treats these two
 // prefixes as any other date-expiring ref and never reads them; everything that
 // knows what they mean lives here.
 //
 // The one place in this table where a ref is DERIVED rather than minted, and
 // that is the whole point. Every other prefix here randomises (`comp_` uses a
 // UUID) or copies an id Paddle issued; these two are a pure function of the
-// account the grant is about, so the unique index on `paddle_subscription_id`
+// account the grant is about, so the unique index on `billing_ref`
 // becomes the idempotency guarantee itself. A Paddle webhook redelivered five
 // times computes the same ref five times and writes one row — no ledger table,
 // no "have we already paid this out" flag that a race can read stale.
@@ -46,7 +46,7 @@ export function referralRewardRef(refereeId: string): string {
  * precisely the arithmetic REFERRAL_WELCOME_DAYS is sized against.
  *
  * The argument is a SALTED HASH of the canonical mailbox, never the address
- * itself: this string lands in `entitlements.paddle_subscription_id`, which is
+ * itself: this string lands in `entitlements.billing_ref`, which is
  * rendered in the admin console and exported in "download your data". An email
  * frozen there would outlive the account it belongs to. Salted rather than bare
  * SHA-256 for the reason server/utils/hash.ts gives — an unsalted digest of an
@@ -61,9 +61,9 @@ export function referralWelcomeRef(mailboxHash: string): string {
 }
 
 /** Is this row access somebody earned through the referral loop? Labels history. */
-export function isReferralRef(paddleRef: string): boolean {
+export function isReferralRef(billingRef: string): boolean {
   return (
-    paddleRef.startsWith(REFERRAL_REF_PREFIX) || paddleRef.startsWith(REFERRAL_WELCOME_REF_PREFIX)
+    billingRef.startsWith(REFERRAL_REF_PREFIX) || billingRef.startsWith(REFERRAL_WELCOME_REF_PREFIX)
   )
 }
 
@@ -75,8 +75,8 @@ export function isReferralRef(paddleRef: string): boolean {
  * somebody. Telling a brand-new user they "earned" days for an invite they
  * received reads as a mistake, which is what /account said before this existed.
  */
-export function referralRefKind(paddleRef: string): 'welcome' | 'reward' | null {
-  if (paddleRef.startsWith(REFERRAL_WELCOME_REF_PREFIX)) return 'welcome'
-  if (paddleRef.startsWith(REFERRAL_REF_PREFIX)) return 'reward'
+export function referralRefKind(billingRef: string): 'welcome' | 'reward' | null {
+  if (billingRef.startsWith(REFERRAL_WELCOME_REF_PREFIX)) return 'welcome'
+  if (billingRef.startsWith(REFERRAL_REF_PREFIX)) return 'reward'
   return null
 }

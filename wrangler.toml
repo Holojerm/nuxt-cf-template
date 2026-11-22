@@ -202,10 +202,10 @@ NUXT_PUBLIC_MCP_URL = ""
 # Named on /terms and /privacy, and used as Reply-To on transactional email.
 NUXT_PUBLIC_SUPPORT_EMAIL = "support@example.com"
 NUXT_PUBLIC_LEGAL_ENTITY = "My Company Ltd"
-# Paddle price IDs for /pricing. Sandbox and production have DIFFERENT ids —
+# Stripe price IDs for /pricing. Test mode and live mode have DIFFERENT ids —
 # override these per environment rather than hardcoding them in app code.
-# NUXT_PUBLIC_PADDLE_PRICE_MONTHLY = "pri_..."
-# NUXT_PUBLIC_PADDLE_PRICE_PASS = "pri_..."
+# NUXT_PUBLIC_STRIPE_PRICE_MONTHLY = "price_..."
+# NUXT_PUBLIC_STRIPE_PRICE_PASS = "price_..."
 # Cloudflare Turnstile site key (public by design — it names the widget, it
 # authorises nothing). Empty = no widget renders and no challenge script loads.
 # Its partner, NUXT_TURNSTILE_SECRET_KEY, is a secret — see the list below.
@@ -375,9 +375,14 @@ NUXT_PUBLIC_TURNSTILE_SITE_KEY = ""
 #                                (instance_secrets; see server/utils/identity.ts).
 #   NUXT_OAUTH_GITHUB_CLIENT_ID / _SECRET    GitHub sign-in
 #   NUXT_OAUTH_GOOGLE_CLIENT_ID / _SECRET    Google sign-in
-#   NUXT_PADDLE_WEBHOOK_SECRET   Paddle → Developer tools → Notifications
-#   NUXT_PADDLE_API_KEY          REQUIRED once billing is on: the cancel button on
-#                                /account mints portal links with it; unset = 503
+#   NUXT_STRIPE_WEBHOOK_SECRET   Stripe → Developers → Webhooks → the endpoint's signing secret
+#   NUXT_STRIPE_SECRET_KEY       REQUIRED once billing is on: checkout, the cancel button on
+#                                /account and the webhook's lookups use it; unset = 503.
+#                                Its prefix (sk_test_ or sk_live_) picks test or live mode.
+#                                A restricted key needs write on Checkout Sessions, Customer
+#                                portal and Subscriptions, and read on Invoices
+#   NUXT_STRIPE_PRODUCT_ID       optional: the product this app sells, set when one Stripe
+#                                account sells several apps
 #   NUXT_RESEND_API_KEY          transactional email; unset = emails no-op
 #   NUXT_RESEND_FROM             e.g. "My App <hello@myapp.com>" (verified domain)
 #   NUXT_TURNSTILE_SECRET_KEY    bot check on the public forms; unset = skipped.

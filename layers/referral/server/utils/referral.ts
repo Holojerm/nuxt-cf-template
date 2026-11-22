@@ -59,7 +59,7 @@
 // There is no ledger table and no "already paid?" column, because both would
 // need a read-then-write that a webhook redelivery can race. Instead each grant
 // derives a DETERMINISTIC ref (layers/referral/server/utils/referral-refs.ts) from the account it
-// concerns, and the unique index on `entitlements.paddle_subscription_id`
+// concerns, and the unique index on `entitlements.billing_ref`
 // refuses the second one. Five redeliveries compute one ref and write one row.
 
 import { and, count, eq, isNull } from 'drizzle-orm'
@@ -380,7 +380,7 @@ export async function grantRefereeWelcome(
  * path rather than a double payout, and a customer's second pass pays nothing.
  *
  * What "paid" can and cannot mean here is the caller's problem and is written
- * out at the call site (layers/billing/server/routes/paddle/webhook.post.ts). The backstop for
+ * out at the call site (layers/billing/server/routes/stripe/webhook.post.ts). The backstop for
  * everything a status transition cannot distinguish — a refunded pass, a
  * charged-back invoice — is the derived-entitlement cascade in
  * layers/billing/server/utils/entitlements.ts, which needs `earnedFromRef` to find this row.
@@ -507,7 +507,7 @@ export async function recordReferralCascade(
         targetId: change.userId,
         metadata: {
           ref: change.ref,
-          earnedFromRef: result.paddleRef ?? null,
+          earnedFromRef: result.billingRef ?? null,
           periodEnd: change.periodEnd?.toISOString() ?? null,
         },
       })
@@ -518,7 +518,7 @@ export async function recordReferralCascade(
 
   logReferral(
     result.outcome === 'reversed' ? 'referral_rewards_restored' : 'referral_rewards_revoked',
-    { count: derived.length, earnedFromRef: result.paddleRef },
+    { count: derived.length, earnedFromRef: result.billingRef },
   )
 }
 

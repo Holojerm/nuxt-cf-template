@@ -11,7 +11,7 @@
 //   }
 //   registerEntitlementViewFields({
 //     key: 'referral',
-//     history: (row) => ({ referralKind: referralRefKind(row.paddleSubscriptionId) }),
+//     history: (row) => ({ referralKind: referralRefKind(row.billingRef) }),
 //   })
 //
 // The augmentation types the field all the way to the page that reads it.
@@ -19,7 +19,7 @@
 // ── Why this is core's file, not billing's ───────────────────────────────────
 // The referral loop adds fields to this view and must not import the billing
 // layer to do it. The registry therefore lives here, typed against the one fact
-// a contributor can always rely on (the ref in `paddleSubscriptionId`); the
+// a contributor can always rely on (the ref in `billingRef`); the
 // billing layer widens `EntitlementViewRow` and the context with its own types
 // by augmentation (layers/billing/server/utils/entitlement-view.ts), which is
 // how billing's own code and tests see the full row and the overview.
@@ -53,7 +53,7 @@ export interface EntitlementHistoryFields {}
  */
 export interface EntitlementViewRow {
   /** The ref: `sub_…`, `txn_…`, `comp_…`, or a derived grant's own prefix. */
-  paddleSubscriptionId: string
+  billingRef: string
 }
 
 export interface EntitlementViewFieldsContext {

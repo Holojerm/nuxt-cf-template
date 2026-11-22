@@ -9,7 +9,7 @@
 //
 // One function, two callers, no drift by construction.
 
-import { isCompRef, isPass, isSubscriptionRef } from './paddle-refs'
+import { isCompRef, isPass, isSubscriptionRef } from './billing-refs'
 import { deriveBillingState } from './billing-state'
 import type { BillingState } from './billing-state'
 import { ACTIVE_STATUSES, getBillingOverview } from './entitlements'
@@ -67,7 +67,7 @@ interface EntitlementViewBase {
   /**
    * When an already-requested cancellation takes effect, ISO, or null.
    *
-   * Surfaced because without it the page is actively misleading: Paddle keeps a
+   * Surfaced because without it the page is actively misleading: Stripe keeps a
    * cancelled subscription at `status: 'active'` for the whole notice period,
    * so /account said "Active — renews on <date>" to someone who had cancelled
    * weeks earlier, and `cancellable` now reads 0 for the same row, leaving them
@@ -77,8 +77,8 @@ interface EntitlementViewBase {
   /** Live subscriptions the user could cancel (usually 0 or 1). */
   cancellable: number
   /**
-   * Whether there is a Paddle customer to open the portal for. NOT whether
-   * NUXT_PADDLE_API_KEY is set: that key is required, the button always shows
+   * Whether there is a Stripe customer to open the portal for. NOT whether
+   * NUXT_STRIPE_SECRET_KEY is set: that key is required, the button always shows
    * for a paying customer, and a missing key surfaces as a 503 toast rather
    * than a hidden button and "email us" copy (the dark pattern /account exists
    * to avoid).
@@ -126,7 +126,7 @@ export async function buildEntitlementView(
   // and collapsing them would revert the bug the paragraph above documents.
   const liveSubscription =
     overview.history.find(
-      (row) => isSubscriptionRef(row.paddleSubscriptionId) && ACTIVE_STATUSES.includes(row.status),
+      (row) => isSubscriptionRef(row.billingRef) && ACTIVE_STATUSES.includes(row.status),
     ) ?? null
   const describing = liveSubscription ?? overview.active
 
@@ -137,20 +137,20 @@ export async function buildEntitlementView(
     state: deriveBillingState(overview.active, overview.history),
     status: describing?.status ?? null,
     currentPeriodEnd: describing?.currentPeriodEnd?.toISOString() ?? null,
-    kind: describing ? (isPass(describing.paddleSubscriptionId) ? 'pass' : 'subscription') : null,
-    comped: describing ? isCompRef(describing.paddleSubscriptionId) : false,
+    kind: describing ? (isPass(describing.billingRef) ? 'pass' : 'subscription') : null,
+    comped: describing ? isCompRef(describing.billingRef) : false,
     cancelsAt:
       describing?.scheduledChangeAction === 'cancel'
         ? (describing.scheduledChangeAt?.toISOString() ?? null)
         : null,
     cancellable: overview.cancellableSubscriptionIds.length,
-    portalAvailable: Boolean(overview.paddleCustomerId),
+    portalAvailable: Boolean(overview.providerCustomerId),
     history: overview.history.map((entitlement) =>
       applyEntitlementHistoryFields(
         {
-          ref: entitlement.paddleSubscriptionId,
-          kind: isPass(entitlement.paddleSubscriptionId) ? 'pass' : 'subscription',
-          comped: isCompRef(entitlement.paddleSubscriptionId),
+          ref: entitlement.billingRef,
+          kind: isPass(entitlement.billingRef) ? 'pass' : 'subscription',
+          comped: isCompRef(entitlement.billingRef),
           status: entitlement.status,
           currentPeriodEnd: entitlement.currentPeriodEnd?.toISOString() ?? null,
           purchasedAt: entitlement.createdAt.toISOString(),

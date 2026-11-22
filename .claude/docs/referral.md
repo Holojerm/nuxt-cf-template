@@ -99,7 +99,7 @@ from outside the building. Treat `layers/referral/server/utils/referral.ts` as b
 - **Idempotency is structural.** There is no ledger table and no "already paid"
   flag, because both need a read-then-write a webhook redelivery can race.
   Each grant derives a deterministic ref (`layers/referral/server/utils/referral-refs.ts`) and the
-  unique index on `paddle_subscription_id` refuses the second write. So the
+  unique index on `billing_ref` refuses the second write. So the
   webhook hook is called on *every* qualifying event: a redelivery is a repair
   path, not a second payout. The cap is the one soft edge — it is read-then-write,
   so the true ceiling is `REFERRAL_MAX_REWARDS` plus in-flight deliveries.

@@ -50,7 +50,7 @@ export function createReferralOutcomeHandler(
     // `paused → active` is a resume, and `trialing` itself is not money.
     //
     // It is deliberately NOT keyed on `transaction.completed` carrying a
-    // `subscription_id`, which would be the truer signal. applyPaddleEvent
+    // `subscription_id`, which would be the truer signal. applyBillingEvent
     // classifies that as `ignored: 'subscription_transaction'` and returns no
     // userId, so using it would mean widening that contract AND relying on
     // Paddle to echo the checkout's `custom_data` onto subscription

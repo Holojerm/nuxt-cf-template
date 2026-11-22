@@ -28,7 +28,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
  * the reason is that a comp and an earned reward differ in who is owed what.
  *
  * A comp is an apology an operator chooses to send, so refusing it and naming a
- * better instrument (a Paddle credit) is good support. A referral reward has
+ * better instrument (a Stripe credit) is good support. A referral reward has
  * already been EARNED, by somebody who read "you get 30 days when they pay" on
  * their own account page and then went and did it. Refusing costs them the
  * reward permanently — the trigger is a one-time transaction, so nothing ever
@@ -47,7 +47,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
  * The stacking base is `overview.active`, the longest-running granting row,
  * rather than the subscription specifically: if a pass runs past the renewal,
  * stacking on the renewal would throw away days the customer already holds.
- * A `sub_` row with no `current_period_end` (Paddle always sends one; a null
+ * A `sub_` row with no `current_period_end` (Stripe always sends one; a null
  * would mean a malformed event) has nothing to anchor on and starts today.
  */
 async function planEarnedGrant(
@@ -108,7 +108,7 @@ async function writeEarnedGrant(
     .insert(tables.entitlements)
     .values({
       userId: plan.userId,
-      paddleSubscriptionId: plan.ref,
+      billingRef: plan.ref,
       productKey: plan.productKey,
       status: 'active',
       // Both ends of the window. The start is what the clawback measures the
@@ -120,7 +120,7 @@ async function writeEarnedGrant(
       // paid for — see `earned_from_ref` in the layer's schema.
       earnedFromRef: plan.earnedFromRef,
     })
-    .onConflictDoNothing({ target: tables.entitlements.paddleSubscriptionId })
+    .onConflictDoNothing({ target: tables.entitlements.billingRef })
     .returning({ currentPeriodEnd: tables.entitlements.currentPeriodEnd })
 
   const row = inserted[0]
@@ -130,7 +130,7 @@ async function writeEarnedGrant(
   // force rather than the one this call would have written, so a caller never
   // tells somebody about days they do not have.
   const existing = await db.query.entitlements.findFirst({
-    where: eq(tables.entitlements.paddleSubscriptionId, plan.ref),
+    where: eq(tables.entitlements.billingRef, plan.ref),
     columns: { currentPeriodEnd: true },
   })
   return { granted: false, endsAt: existing?.currentPeriodEnd ?? plan.endsAt }
@@ -147,7 +147,7 @@ async function writeEarnedGrant(
  */
 async function earnedGrantExists(db: ExtensionDb, ref: string): Promise<boolean> {
   const row = await db.query.entitlements.findFirst({
-    where: eq(tables.entitlements.paddleSubscriptionId, ref),
+    where: eq(tables.entitlements.billingRef, ref),
     columns: { id: true },
   })
   return Boolean(row)
@@ -173,7 +173,7 @@ async function countEarnedGrants(
       and(
         eq(tables.entitlements.userId, userId),
         // Escaped, because `_` is a LIKE wildcard — see server/utils/sql.ts.
-        likePrefix(tables.entitlements.paddleSubscriptionId, prefix),
+        likePrefix(tables.entitlements.billingRef, prefix),
         ...(options.standingOnly ? [ne(tables.entitlements.status, DERIVED_REVOKED_STATUS)] : []),
       ),
     )

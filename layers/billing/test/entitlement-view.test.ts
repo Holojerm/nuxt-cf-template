@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '~~/server/db/schema'
 import { buildEntitlementView } from '../server/utils/entitlement-view'
-import { compRef } from '../server/utils/paddle-refs'
+import { compRef } from '../server/utils/billing-refs'
 
 const db = drizzle(env.DB, { schema })
 
@@ -37,8 +37,8 @@ beforeEach(async () => {
 function insert(ref: string, status: string, endsInDays: number) {
   return db.insert(schema.entitlements).values({
     userId: USER,
-    paddleCustomerId: 'ctm_1',
-    paddleSubscriptionId: ref,
+    providerCustomerId: 'cus_1',
+    billingRef: ref,
     productKey: 'default',
     status,
     currentPeriodEnd: new Date(Date.now() + endsInDays * DAY_MS),
@@ -156,9 +156,9 @@ describe('buildEntitlementView — a live subscription describes the account', (
   })
 
   it('offers the portal to every paying customer — the API key is required, not a gate', async () => {
-    // The cancel button never hides behind config: with NUXT_PADDLE_API_KEY
+    // The cancel button never hides behind config: with NUXT_STRIPE_SECRET_KEY
     // unset the portal route 503s and the toast names support, which is loud
-    // in the right direction. Only "no Paddle customer at all" hides it.
+    // in the right direction. Only "no Stripe customer at all" hides it.
     await insert('sub_1', 'active', 20)
 
     const view = await buildEntitlementView(db, USER)
