@@ -5,7 +5,7 @@
 import { z } from 'zod'
 import type { H3Event } from 'h3'
 
-import { verifySubscriberToken, type SubscriberTokenPurpose } from './subscribers'
+import { verifySubscriberToken, type SubscriberTokenPurpose } from './subscriber-tokens'
 
 /**
  * The form's own budget, per IP. Deliberately not the native limiter's numbers

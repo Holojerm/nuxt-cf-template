@@ -20,7 +20,8 @@ import { emailBranding } from '../../../utils/email-templates'
 import { logEvent } from '../../../utils/log'
 import { d1RateLimitStore, rateLimit } from '../../../utils/rate-limit'
 import { SUBSCRIBE_LIMITER } from '../../../utils/subscriber-requests'
-import { buildSubscriberConfirmUrl, requestSubscription } from '../../../utils/subscribers'
+import { buildSubscriberConfirmUrl } from '../../../utils/subscriber-tokens'
+import { requestSubscription } from '../../../utils/subscribers'
 import { requireTurnstile, turnstileTokenSchema } from '../../../utils/turnstile'
 
 const bodySchema = z.object({

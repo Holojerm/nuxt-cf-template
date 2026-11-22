@@ -5,13 +5,12 @@
 // gets delivered to an inbox, so escaping is the security-relevant part.
 
 import { describe, expect, it } from 'vitest'
+import { noteEmail, subscribeConfirmEmail } from '../server/utils/email-notes'
 import {
   accessEndedEmail,
   feedbackReplyEmail,
-  noteEmail,
   paymentFailedEmail,
   purchaseEmail,
-  subscribeConfirmEmail,
 } from '../server/utils/email-templates'
 
 const BRAND = { appName: 'My App', appUrl: 'https://example.com' }

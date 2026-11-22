@@ -15,19 +15,17 @@
 // preference. Confirming for such an address switches that preference on, and
 // signing up removes the subscriber row, so one person is never on both lists.
 //
-// Tokens are HMACs under the key unsubscribe.ts derives, so there is no secret
-// to set and nothing stored to look up. Like the rest of that file, every
-// function takes the Drizzle client, for the workerd tests.
+// The signed links are in subscriber-tokens.ts. Every function here takes the
+// Drizzle client, for the workerd tests.
 
 import { and, count, eq, isNotNull, isNull, lt } from 'drizzle-orm'
 
 import * as tables from '../db/schema'
-import { subscribeConfirmEmail, type Branding } from './email-templates'
+import { subscribeConfirmEmail } from './email-notes'
+import type { Branding } from './email-templates'
 import type { SendEmailOptions, SendEmailResult } from './email'
-import { timingSafeEqual } from './hash'
 import { setNotificationPreference, type NotificationDb } from './notifications'
 import { consumeRateLimit, type RateLimitStore } from './rate-limit'
-import { hmacBase64Url } from './unsubscribe'
 import { isUndeliverableAddress, normalizeEmail } from './users'
 
 export const SUBSCRIBER_PENDING_DAYS = 7
@@ -36,53 +34,6 @@ export const SUBSCRIBE_ADDRESS_BUDGET = { limit: 3, windowSeconds: 24 * 60 * 60 
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const subscribers = tables.emailSubscribers
-
-export type SubscriberTokenPurpose = 'confirm' | 'leave'
-
-const message = (purpose: SubscriberTokenPurpose, id: string) => `subscriber:${purpose}|${id}`
-
-export const signSubscriberToken = (
-  sessionPassword: string,
-  purpose: SubscriberTokenPurpose,
-  id: string,
-): Promise<string> => hmacBase64Url(sessionPassword, message(purpose, id))
-
-export async function verifySubscriberToken(
-  sessionPassword: string,
-  purpose: SubscriberTokenPurpose,
-  id: string,
-  token: string,
-): Promise<boolean> {
-  return timingSafeEqual(await signSubscriberToken(sessionPassword, purpose, id), token)
-}
-
-const origin = (appUrl: string) => appUrl.replace(/\/+$/, '')
-
-/** The confirmation page. Parameters ride in the fragment, which no server logs. */
-export async function buildSubscriberConfirmUrl(
-  sessionPassword: string,
-  appUrl: string,
-  id: string,
-): Promise<string> {
-  const params = new URLSearchParams({
-    s: id,
-    t: await signSubscriberToken(sessionPassword, 'confirm', id),
-  })
-  return `${origin(appUrl)}/updates/confirm#${params.toString()}`
-}
-
-/** The List-Unsubscribe target: a mail provider POSTs it (RFC 8058), a person GETs it. */
-export async function buildSubscriberUnsubscribeUrl(
-  sessionPassword: string,
-  appUrl: string,
-  id: string,
-): Promise<string> {
-  const params = new URLSearchParams({
-    s: id,
-    t: await signSubscriberToken(sessionPassword, 'leave', id),
-  })
-  return `${origin(appUrl)}/api/email/updates/unsubscribe?${params.toString()}`
-}
 
 export interface SubscribeDeps {
   brand: Branding

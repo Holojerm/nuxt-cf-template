@@ -265,6 +265,7 @@ ask for product news; `server/utils/subscribers.ts` is the whole of it.
 - **Accounts win.** An address with an account is never mailed as a subscriber.
   Confirming for one switches that account's `product_updates` on and drops the
   row; signing up drops the row too.
-- Links are HMACs under the key `unsubscribe.ts` derives; there is no secret to set.
+- Links are HMACs under the key `unsubscribe.ts` derives (`subscriber-tokens.ts`);
+  there is no secret to set.
 - `/api/fleet` reports `email.subscribers: { confirmed, pending }`. Counts only.
 

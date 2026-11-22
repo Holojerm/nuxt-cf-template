@@ -21,33 +21,19 @@
 
 import { eq, sql } from 'drizzle-orm'
 
-import { announcementStepId, type Announcement } from '#shared/utils/announcements'
+import type { Announcement } from '#shared/utils/announcements'
 import * as tables from '../db/schema'
 import type { LifecycleDb } from '../types/extension-types'
 import {
-  ledgerFor,
   stagesFor,
   subscribersPage,
   usersPage,
-  type AnnouncementRecipient,
   type AnnouncementStage,
 } from './announcement-audience'
-import { noteEmail, type Branding } from './email-templates'
-import type { LifecycleDeps } from './lifecycle'
-import { emailLink } from './lifecycle-definitions'
+import { deliverAnnouncement, type AnnouncementDeps } from './announcement-delivery'
 import { logEvent } from './log'
-import { isUndeliverableAddress } from './users'
 
-export interface AnnouncementDeps {
-  brand: Branding
-  send: LifecycleDeps['send']
-  /** The account's own unsubscribe link, for the `product_updates` preference. */
-  unsubscribeUrl: LifecycleDeps['unsubscribeUrl']
-  subscriberUnsubscribeUrl: (subscriberId: string) => Promise<string>
-  onSent?: (userId: string, stepId: string) => Promise<void>
-  /** Announcements one person may get in seven days. */
-  weeklyCap: number
-}
+export type { AnnouncementDeps }
 
 export interface AnnouncementReport {
   state: 'scheduled' | 'expired' | 'running' | 'finished'
@@ -145,7 +131,7 @@ async function runOne(
         ? await usersPage(db, announcement.audience, query)
         : await subscribersPage(db, query)
     for (const recipient of page) {
-      const outcome = await deliver(db, announcement, stage, recipient, deps, now)
+      const outcome = await deliverAnnouncement(db, announcement, stage, recipient, deps, now)
       if (outcome === 'retry') {
         halted = true
         break
@@ -177,56 +163,4 @@ async function runOne(
     })
     .where(eq(runs.announcementId, announcement.id))
   return report
-}
-
-type Outcome = 'sent' | 'capped' | 'optedOut' | 'failed' | 'alreadySent' | 'retry'
-
-async function deliver(
-  db: LifecycleDb,
-  announcement: Announcement,
-  stage: AnnouncementStage,
-  recipient: AnnouncementRecipient,
-  deps: AnnouncementDeps,
-  now: Date,
-): Promise<Outcome> {
-  const ledger = ledgerFor(db, stage)
-  const stepId = announcementStepId(announcement.id)
-  if (isUndeliverableAddress(recipient.email)) return 'optedOut'
-  if (!(await ledger.allows(recipient.id))) return 'optedOut'
-  if ((await ledger.sentThisWeek(recipient.id, now)) >= deps.weeklyCap) return 'capped'
-
-  const claimId = await ledger.claim(recipient.id, stepId, now)
-  if (!claimId) return 'alreadySent'
-
-  const { brand } = deps
-  const content = noteEmail(brand, {
-    subject: announcement.subject,
-    heading: announcement.heading,
-    paragraphs: announcement.paragraphs,
-    button: announcement.button && {
-      label: announcement.button.label,
-      url: emailLink(brand.appUrl, announcement.button.path, 'announcement', stepId),
-    },
-    footnote:
-      stage === 'users'
-        ? `You're receiving this because you have an account at ${brand.appName}.`
-        : `You're receiving this because you asked for product updates from ${brand.appName}.`,
-  })
-  const url =
-    stage === 'users'
-      ? await deps.unsubscribeUrl(recipient.id, 'product_updates')
-      : await deps.subscriberUnsubscribeUrl(recipient.id)
-  const result = await deps.send({
-    to: recipient.email,
-    ...content,
-    unsubscribe: { eventType: 'product_updates', url },
-  })
-
-  if (!result.sent) {
-    if (result.reason === 'rejected') return 'failed'
-    await ledger.release(claimId)
-    return 'retry'
-  }
-  if (stage === 'users') await deps.onSent?.(recipient.id, stepId)
-  return 'sent'
 }

@@ -150,6 +150,7 @@ const LIFECYCLE = [
   'server/utils/lifecycle-runtime.ts',
   'server/utils/announcements.ts',
   'server/utils/announcement-audience.ts',
+  'server/utils/announcement-delivery.ts',
   'server/plugins/lifecycle.ts',
   'server/tasks/lifecycle-email.ts',
   'test/lifecycle.test.ts',

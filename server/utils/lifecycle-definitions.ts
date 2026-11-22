@@ -13,7 +13,8 @@ import {
 } from '#shared/utils/notifications'
 import * as tables from '../db/schema'
 import type { LifecycleDb, LifecycleRecipient, LifecycleStep } from '../types/extension-types'
-import { noteEmail, type Branding, type EmailContent } from './email-templates'
+import { noteEmail } from './email-notes'
+import type { Branding, EmailContent } from './email-templates'
 
 export interface LifecycleStepDefinition {
   /** Stored in `lifecycle_sends`. Never rename one. */

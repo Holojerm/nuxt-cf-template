@@ -19,7 +19,7 @@ import { ANNOUNCEMENTS_PER_WEEK } from '../utils/lifecycle-sequence'
 import { TEMPLATE_LIFECYCLE_STEPS } from '../utils/lifecycle-steps'
 import { logEvent } from '../utils/log'
 import { captureServerEvent } from '../utils/posthog'
-import { buildSubscriberUnsubscribeUrl } from '../utils/subscribers'
+import { buildSubscriberUnsubscribeUrl } from '../utils/subscriber-tokens'
 
 interface LifecycleRunResult {
   steps: Record<string, LifecycleStepReport>

@@ -11,15 +11,17 @@ import type { RateLimitStore } from '../server/utils/rate-limit'
 import {
   buildSubscriberConfirmUrl,
   buildSubscriberUnsubscribeUrl,
+  signSubscriberToken,
+  verifySubscriberToken,
+} from '../server/utils/subscriber-tokens'
+import {
   confirmSubscription,
   countSubscribers,
   purgePendingSubscribers,
   removeSubscriber,
   removeSubscriberByEmail,
   requestSubscription,
-  signSubscriberToken,
   SUBSCRIBE_ADDRESS_BUDGET,
-  verifySubscriberToken,
   type SubscribeDeps,
 } from '../server/utils/subscribers'
 
