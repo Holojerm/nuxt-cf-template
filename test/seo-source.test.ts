@@ -12,7 +12,13 @@
 import { describe, expect, it } from 'vitest'
 
 import { endOfString, extractFunction, findClosing } from '../scripts/lib/brace-match'
-import { seoDescription, topLevelFields, useSeoArgument } from '../scripts/lib/seo-source'
+import {
+  checkPageCollections,
+  collectionCall,
+  pageRouteOfFile,
+} from '../scripts/lib/page-collections-check'
+import { seoDescription, seoTitle, topLevelFields, useSeoArgument } from '../scripts/lib/seo-source'
+import type { PageCollection } from '../shared/utils/page-collections'
 
 describe('findClosing', () => {
   it('matches its own delimiter through nested pairs', () => {
@@ -221,5 +227,96 @@ describe('seoDescription', () => {
 
   it('reports a call with no description at all', () => {
     expect(read(`useSeo({ title: 'Customer' })`)).toEqual({ present: false, literal: null })
+  })
+})
+
+describe('seoTitle', () => {
+  it('reads the title the way seoDescription reads the description', () => {
+    const source = `useSeo({ title: 'Pricing', description: 'x', schema: [f({ title: 'nested' })] })`
+    const argument = useSeoArgument(source)
+    expect(argument.kind === 'object' && seoTitle(argument.text, source).literal?.text).toBe(
+      'Pricing',
+    )
+  })
+})
+
+// Rule 7 of the gate: generated pages. The guards themselves are covered in
+// test/page-collections.test.ts; this is what the gate makes of them.
+describe('page collections in the gate', () => {
+  const shared = Array.from({ length: 90 }, (_, word) => `w${word}`).join(' ')
+  const rows = (count: number, body = (index: number) => `${shared} ${index}`) =>
+    Array.from({ length: count }, (_, index) => ({
+      slug: `item-${index}`,
+      name: `Item ${index}`,
+      summary: `Item ${index} is described here in a sentence long enough to pass.`,
+      body: body(index),
+    }))
+  const collection = (overrides: Partial<PageCollection> = {}): PageCollection => ({
+    key: 'items',
+    route: '/items/[slug]',
+    slug: 'slug',
+    heading: 'Items',
+    title: '{name} in detail',
+    description: '{summary}',
+    h1: '{name}',
+    sections: [{ heading: 'About', field: 'body' }],
+    rows: () => distinct,
+    ...overrides,
+  })
+  const distinct = rows(2, (index) =>
+    Array.from({ length: 90 }, (_, word) => `r${index}w${word}`).join(' '),
+  )
+  const page = { file: 'app/pages/items/[slug].vue', route: '/items/[slug]', key: 'items' }
+  const check = (collections: PageCollection[], pageFiles = [page]) =>
+    checkPageCollections({
+      collections,
+      listFile: 'list.ts',
+      pageFiles,
+      taken: { titles: [], descriptions: [] },
+      today: '2026-11-22',
+    })
+
+  it('reads the key and the route of a collection page file', () => {
+    expect(collectionCall(`const p = await useCollectionPage('glossary')`)).toEqual({
+      kind: 'key',
+      key: 'glossary',
+    })
+    expect(collectionCall('useCollectionPage(key)').kind).toBe('unreadable')
+    expect(pageRouteOfFile('glossary/[slug].vue')).toBe('/glossary/[slug]')
+    expect(pageRouteOfFile('glossary/index.vue')).toBe('/glossary')
+  })
+
+  it('passes a collection whose rows all publish', async () => {
+    expect(await check([collection()])).toEqual([])
+  })
+
+  it('fails a near-copy row, and says to fix the data rather than pad it', async () => {
+    const problems = await check([collection({ rows: () => rows(2) })])
+    expect(problems.map((problem) => problem.detail)).toEqual([
+      '/items/item-1: near-copy of /items/item-0',
+    ])
+    expect(problems[0]!.remedy).toMatch(/never pad it/)
+  })
+
+  it('fails a collection with no page, a page at the wrong route, and an unknown key', async () => {
+    const missing = await check([collection()], [])
+    expect(missing.map((problem) => problem.rule)).toEqual(['collection without a page'])
+    const moved = await check([collection()], [{ ...page, route: '/stuff/[slug]' }])
+    expect(moved.map((problem) => problem.rule)).toEqual(['collection page at the wrong route'])
+    const unknown = await check([collection()], [page, { ...page, key: 'other' }])
+    expect(unknown.map((problem) => problem.rule)).toEqual(['unknown collection'])
+  })
+
+  it('asks for examples when the rows need a database', async () => {
+    const needsDb = collection({
+      rows: (db) => {
+        if (!db) throw new Error('no database')
+        return []
+      },
+    })
+    expect((await check([needsDb])).map((problem) => problem.rule)).toEqual([
+      'rows need a database',
+    ])
+    expect(await check([{ ...needsDb, examples: distinct }])).toEqual([])
   })
 })

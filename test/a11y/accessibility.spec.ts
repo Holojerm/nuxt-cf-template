@@ -15,6 +15,8 @@ import type { Result } from 'axe-core'
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
+import { APP_PAGE_COLLECTIONS } from '../../server/utils/page-collections-app'
+import { collectionPrefix } from '../../shared/utils/page-collections'
 import { hasLayer, hasPage } from '../lib/layers'
 
 // Public routes only. /dashboard and /account redirect to /login when signed
@@ -48,6 +50,10 @@ const ROUTES = [
   // fail contrast in one of the two modes.
   '/blog/how-billing-works',
   '/changelog',
+  '/glossary',
+  // One generated page per collection stands in for its rows — see
+  // COLLECTION_PREFIXES below.
+  '/glossary/magic-link',
   ...(hasPage('login') ? ['/login'] : []),
   ...(hasPage('auth/verify') ? ['/auth/verify'] : []),
   // Off by default; the browser suites turn the layer on (its e2e.config.ts).
@@ -70,6 +76,9 @@ const ROUTES = [
  * separately insists that at least one real post is actually scanned.
  */
 const BLOG_POST_PREFIX = '/blog/'
+
+/** Where each page collection's generated pages live: `/glossary/`. */
+const COLLECTION_PREFIXES = APP_PAGE_COLLECTIONS.map(collectionPrefix)
 
 const WCAG_TAGS = [
   'wcag2a',
@@ -271,8 +280,24 @@ test('sitemap coverage: every public page is in ROUTES', async ({ request }) => 
       'A renamed or deleted post leaves the sweep scanning a 404.',
   ).toEqual([])
 
+  // Generated pages (page collections) get the posts' exemption for the same
+  // reason: every row renders through one page file. Each collection with
+  // pages in the sitemap must still have one of them scanned, and that one
+  // must be live.
+  for (const prefix of COLLECTION_PREFIXES) {
+    const published = paths.filter((path) => path.startsWith(prefix))
+    if (published.length === 0) continue
+    expect(
+      ROUTES.filter((route) => published.includes(route)),
+      `ROUTES must scan one published page under ${prefix} — it stands in for the rest.`,
+    ).not.toEqual([])
+  }
+
   const missing = paths.filter(
-    (path) => !ROUTES.includes(path) && !path.startsWith(BLOG_POST_PREFIX),
+    (path) =>
+      !ROUTES.includes(path) &&
+      !path.startsWith(BLOG_POST_PREFIX) &&
+      !COLLECTION_PREFIXES.some((prefix) => path.startsWith(prefix)),
   )
   expect(
     missing,
