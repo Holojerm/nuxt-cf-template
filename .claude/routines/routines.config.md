@@ -22,11 +22,48 @@ treat placeholder values as "not configured" and skip the dependent work (journa
 ## Autonomy grants
 
 Routines above tier 1 act only where listed here (see `_shared.md` › Autonomy tiers). Add a line
-after reading a routine's drafts for a few weeks; delete it to take the grant back.
+after reading a routine's drafts for a few weeks; delete it to take the grant back. On an
+operator repo (**Operator**, below) this table is not consulted: every routine acts at its
+declared tier.
 
 | Routine | Tier | Granted on |
 | --- | --- | --- |
 | dependency-merge | 2 | 2026-11-07 |
+
+## Operator
+
+Turns the operator grant on for this product (`_shared.md` › Operator grant): routines act at
+their declared tier with no draft period, `growth-review` runs its own flags, the product mails
+opted-in users, and `support-inbox` sends replies. The template ships it off. It is on only when
+Mode is `grow` and every row of this table holds a real value; set Mode back to `off` to take
+it back.
+
+| Key | Value |
+| --- | --- |
+| Mode | `off` |
+| Monthly token cap (all of this product's routines together) | `<tokens per calendar month>` |
+| Announcement email cap | `<announcement emails one user may get in a week, e.g. 1>` |
+| Assistant signature (replies a routine sends) | `<PRODUCT_NAME> assistant` |
+
+### Escalation list
+
+What still goes to the owner on an operator repo, as a `needs-owner` issue (`_shared.md` ›
+Escalation). The first table is the floor from `_shared.md`, repeated so the whole list is in
+one place; editing it here changes nothing. Add product-specific rows to the second.
+
+| Always the owner's |
+| --- |
+| Pricing, plans, discounts and trials |
+| Spend of any kind (ads, tools, paid placements) |
+| Refunds and billing disputes |
+| Deleting or exporting a user's data |
+| Support threads about billing, legal or security, and angry or churning customers |
+| Anything under the owner's personal name or accounts (Hacker News, Reddit, Product Hunt, their own email) |
+| Mail to anyone who has not opted in |
+
+| Also the owner's for this product | Why |
+| --- | --- |
+| _(none yet)_ | |
 
 ## Mechanical fixes
 
