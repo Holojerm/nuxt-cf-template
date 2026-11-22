@@ -93,6 +93,10 @@ useSeo({
          this system overrides. -->
     <ContentRenderer :value="post" class="mt-8 border-t border-default pt-2" />
 
+    <!-- A reader who reached the end of a post is the visitor most likely to want
+         the next one. Renders nothing for someone signed in. -->
+    <UpdatesForm class="mt-12" />
+
     <footer class="mt-12 border-t border-default pt-6">
       <UButton to="/blog" color="neutral" variant="outline" icon="i-lucide-arrow-left">
         All posts

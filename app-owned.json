@@ -10,6 +10,7 @@
     "scripts/seed.ts",
     "server/db/schema.ts",
     "server/utils/lifecycle-app-steps.ts",
+    "server/utils/lifecycle-sequence.ts",
     "shared/utils/app-events.ts",
     "shared/utils/brand-colors.generated.ts"
   ]

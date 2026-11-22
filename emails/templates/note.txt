@@ -1,0 +1,14 @@
+{{heading}}
+
+{{#paragraphs}}
+{{.}}
+
+{{/paragraphs}}
+{{#button}}
+{{label}}: {{url}}
+
+{{/button}}
+—
+{{footnote}}
+
+{{appUrl}}

@@ -23,6 +23,9 @@ const send = (userId: string, stepId: string, sentDaysAgo: number, subjectKey = 
 describe('collectFleetEmail', () => {
   beforeEach(async () => {
     await env.DB.exec('DELETE FROM lifecycle_sends')
+    await env.DB.exec('DELETE FROM subscriber_sends')
+    await env.DB.exec('DELETE FROM announcement_runs')
+    await env.DB.exec('DELETE FROM email_subscribers')
     await env.DB.exec('DELETE FROM users')
     await db.insert(schema.users).values(
       ['a', 'b', 'c'].map((id) => ({
@@ -36,7 +39,13 @@ describe('collectFleetEmail', () => {
   })
 
   it('is zero with no steps on an empty ledger', async () => {
-    expect(await collectFleetEmail(db, NOW)).toEqual({ windowDays: 28, sent: 0, steps: {} })
+    expect(await collectFleetEmail(db, NOW)).toEqual({
+      windowDays: 28,
+      sent: 0,
+      steps: {},
+      capped: 0,
+      subscribers: { confirmed: 0, pending: 0 },
+    })
   })
 
   it('counts sends per step inside the window only', async () => {
@@ -51,11 +60,12 @@ describe('collectFleetEmail', () => {
       send('c', 'win_back', 40),
     ])
     const email = await collectFleetEmail(db, NOW)
-    expect(email).toEqual({
+    expect(email).toMatchObject({
       windowDays: 28,
       sent: 5,
       steps: { activation_nudge: 3, pass_expiring: 2 },
     })
+    expect(Object.keys(email.steps)).toHaveLength(2)
     // Counts and step ids: nothing that names a recipient.
     expect(JSON.stringify(email)).not.toContain('example.com')
   })
@@ -70,6 +80,44 @@ describe('collectFleetEmail', () => {
     const email = await collectFleetEmail(db, NOW)
     expect(Object.keys(email.steps)).toHaveLength(EMAIL_STEP_LIMIT)
     expect(email.sent).toBe(EMAIL_STEP_LIMIT + 2)
+  })
+})
+
+describe('collectFleetEmail with announcements and subscribers', () => {
+  beforeEach(async () => {
+    await env.DB.exec('DELETE FROM lifecycle_sends')
+    await env.DB.exec('DELETE FROM subscriber_sends')
+    await env.DB.exec('DELETE FROM announcement_runs')
+    await env.DB.exec('DELETE FROM email_subscribers')
+  })
+
+  it('sums an announcement over accounts and subscribers, and reports the cap and the list', async () => {
+    await db.insert(schema.lifecycleSends).values([send('a', 'announcement.exports', 2)])
+    await db.insert(schema.subscriberSends).values([
+      { subscriberId: 's1', stepId: 'announcement.exports', sentAt: daysAgo(2) },
+      { subscriberId: 's2', stepId: 'announcement.exports', sentAt: daysAgo(40) },
+    ])
+    await db.insert(schema.announcementRuns).values([
+      { announcementId: 'exports', capped: 3, createdAt: daysAgo(2) },
+      { announcementId: 'old', capped: 9, createdAt: daysAgo(60) },
+    ])
+    await db
+      .insert(schema.emailSubscribers)
+      .values([
+        { email: 'one@example.com', confirmedAt: daysAgo(5) },
+        { email: 'two@example.com', confirmedAt: daysAgo(1) },
+        { email: 'three@example.com' },
+      ])
+
+    const email = await collectFleetEmail(db, NOW)
+    expect(email).toEqual({
+      windowDays: 28,
+      sent: 2,
+      steps: { 'announcement.exports': 2 },
+      capped: 3,
+      subscribers: { confirmed: 2, pending: 1 },
+    })
+    expect(JSON.stringify(email)).not.toContain('example.com')
   })
 })
 

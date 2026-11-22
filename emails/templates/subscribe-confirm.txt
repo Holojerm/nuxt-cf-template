@@ -1,0 +1,14 @@
+Confirm your email address
+
+Someone asked for product updates from {{appName}} to be sent to this address. If that was you, confirm with the link below.
+
+You'll get an occasional email when something new ships, and every one has a link that removes your address.
+
+Confirm and send me updates: {{url}}
+
+The link works for {{days}} days.
+
+—
+If this wasn't you, ignore this email. Nothing else will be sent to this address, and it is deleted after {{days}} days.
+
+{{appUrl}}

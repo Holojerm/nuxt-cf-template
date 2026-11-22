@@ -16,16 +16,18 @@
 //
 // The parameters arrive in the fragment, so this page's own request carries no
 // signed token — nothing to land in an access log or a `Referer`.
+//
+// Two kinds of link land here. An account's (`u`, `e`, `t`) switches one
+// preference off. A subscriber's (`s`, `t`) belongs to a visitor with no account
+// (server/utils/subscribers.ts), and unsubscribing deletes their address.
 
 definePageMeta({ layout: 'default' })
 
 const config = useRuntimeConfig()
 
-interface UnsubscribeParams {
-  u: string
-  e: string
-  t: string
-}
+type UnsubscribeParams =
+  | { subscriber: false; body: { u: string; e: string; t: string } }
+  | { subscriber: true; body: { s: string; t: string } }
 
 const pending = ref(false)
 const done = ref(false)
@@ -40,11 +42,15 @@ const { params: fragment, resolved } = useFragmentParams(() => {
 })
 
 const params = computed<UnsubscribeParams | null>(() => {
+  const s = fragment.value?.get('s')
   const u = fragment.value?.get('u')
   const e = fragment.value?.get('e')
   const t = fragment.value?.get('t')
-  return u && e && t ? { u, e, t } : null
+  if (s && t) return { subscriber: true, body: { s, t } }
+  return u && e && t ? { subscriber: false, body: { u, e, t } } : null
 })
+
+const isSubscriber = computed(() => params.value?.subscriber === true)
 
 /**
  * What the reader is about to switch off, in the same words the /account
@@ -56,8 +62,9 @@ const params = computed<UnsubscribeParams | null>(() => {
  * "Welcome email" already ends in the word and "Referral program" is not one.
  */
 const label = computed(() => {
-  const eventType = params.value?.e
-  if (!eventType) return null
+  if (!params.value) return null
+  if (params.value.subscriber) return OPTIONAL_NOTIFICATION_COPY.product_updates.label
+  const eventType = params.value.body.e
   return isOptionalNotificationEventType(eventType)
     ? OPTIONAL_NOTIFICATION_COPY[eventType].label
     : eventType
@@ -75,7 +82,10 @@ async function confirm() {
     // after the redirect deliberately moved it into the fragment. The server
     // reads a body first and falls back to the query, which is what the
     // one-click callers and the plain footer link still use.
-    await $fetch('/api/email/unsubscribe', { method: 'POST', body: params.value })
+    const endpoint = params.value.subscriber
+      ? '/api/email/updates/unsubscribe'
+      : '/api/email/unsubscribe'
+    await $fetch(endpoint, { method: 'POST', body: params.value.body })
     done.value = true
   } catch {
     failed.value = true
@@ -103,6 +113,13 @@ useSeo({
         <USkeleton class="h-10 w-full" />
       </div>
 
+      <div v-else-if="done && isSubscriber" class="flex items-start gap-3" role="status">
+        <UIcon name="i-lucide-circle-check" class="mt-1 size-5 shrink-0 text-primary" />
+        <p class="text-muted">
+          Done — you won't get any more email from us, and your address has been deleted.
+        </p>
+      </div>
+
       <div v-else-if="done" class="flex flex-col gap-4">
         <div class="flex items-start gap-3">
           <UIcon name="i-lucide-circle-check" class="mt-1 size-5 shrink-0 text-primary" />
@@ -117,7 +134,11 @@ useSeo({
       </div>
 
       <div v-else-if="params" class="flex flex-col gap-4">
-        <p class="text-muted">
+        <p v-if="isSubscriber" class="text-muted">
+          Unsubscribe from <span class="text-highlighted">{{ label }}</span>? Your address is
+          deleted, not kept on a list.
+        </p>
+        <p v-else class="text-muted">
           Unsubscribe from <span class="text-highlighted">{{ label }}</span>? Billing and security
           email will keep coming — those aren't optional.
         </p>
