@@ -28,6 +28,7 @@ import type { drizzle } from 'drizzle-orm/d1'
 import journal from '../db/migrations/meta/_journal.json'
 import * as tables from '../db/schema'
 import { classifyOps, type OpsSeverity } from './ops-severity'
+import { collectFleetEmail, type FleetEmail } from './fleet-email'
 import { collectFleetFunnel, type FleetFunnel } from './fleet-funnel'
 import {
   collectSections,
@@ -135,6 +136,7 @@ export interface FleetCountersCore {
   users: { total: number; last7d: number }
   ops: { kinds: FleetOpsKind[] }
   funnel: FleetFunnel
+  email: FleetEmail
   extra: Record<string, number>
 }
 
@@ -210,6 +212,7 @@ export async function collectFleetCounters(db: FleetDb, now = new Date()): Promi
     users: { total: users?.total ?? 0, last7d: recentUsers?.total ?? 0 },
     ops,
     funnel: await collectFleetFunnel(db, now),
+    email: await collectFleetEmail(db, now),
     extra,
     ...(await collectSections<FleetCounterContributor, FleetCounterSections>(
       getFleetCounterContributors(),

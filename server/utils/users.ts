@@ -186,6 +186,7 @@ export async function upsertOAuthUser(
     signupMedium: attribution?.medium ?? null,
     signupCampaign: attribution?.campaign ?? null,
     signupReferrer: attribution?.referrer ?? null,
+    signupLanding: attribution?.landing ?? null,
     ...resolved,
   }
 

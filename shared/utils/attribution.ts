@@ -20,6 +20,7 @@
 
 import { z } from 'zod'
 
+import { LANDING_MAX, LANDING_PATTERN, landingPath } from './landing-path'
 import { REFERRAL_CODE_LENGTH, REFERRAL_CODE_PATTERN, normalizeReferralCode } from './referral-code'
 
 /** Cookie name. Short — it rides on every request to this origin. */
@@ -45,9 +46,14 @@ export const attributionSchema = z.object({
   campaign: z.string().max(SHORT_MAX).optional().catch(undefined),
   referrer: z.string().max(REFERRER_MAX).optional().catch(undefined),
   /**
+   * The path of the first page seen, as landingPath() writes it. Pinned to that
+   * shape because it is reported, grouped, on /api/fleet.
+   */
+  landing: z.string().max(LANDING_MAX).regex(LANDING_PATTERN).optional().catch(undefined),
+  /**
    * Another account's referral code, from `?ref=` on the landing URL.
    *
-   * The strictest field here by a distance, and it earns that: the other four
+   * The strictest field here by a distance, and it earns that: the other five
    * end up in marketing columns, while this one decides whether a stranger gets
    * credited with a customer and eventually paid in access days. So it is
    * pinned to the exact alphabet AND the exact length the generator produces
@@ -154,6 +160,7 @@ export function parseAttribution({ url, referrer, origin }: ParseAttributionInpu
   const utmMedium = clean(params.get('utm_medium'))
   const campaign = clean(params.get('utm_campaign'))
   const referralCode = normalizeReferralCode(params.get('ref'))
+  const landing = landingPath(url)
 
   // A referrer on our own origin means an internal navigation, not an arrival.
   let referrerHost: string | undefined
@@ -177,6 +184,7 @@ export function parseAttribution({ url, referrer, origin }: ParseAttributionInpu
       medium: utmMedium ?? 'unknown',
       campaign,
       referrer: referrerUrl,
+      landing,
       referralCode,
     }
   }
@@ -190,7 +198,14 @@ export function parseAttribution({ url, referrer, origin }: ParseAttributionInpu
         ? 'bing'
         : undefined
   if (paidClick) {
-    return { source: paidClick, medium: 'paid', campaign, referrer: referrerUrl, referralCode }
+    return {
+      source: paidClick,
+      medium: 'paid',
+      campaign,
+      referrer: referrerUrl,
+      landing,
+      referralCode,
+    }
   }
 
   // ── A referral link IS the channel ─────────────────────────────────────────
@@ -205,15 +220,22 @@ export function parseAttribution({ url, referrer, origin }: ParseAttributionInpu
   // things is a bucket nobody can report on. The referring URL, when there is
   // one, still rides along in `referrer`.
   if (referralCode) {
-    return { source: 'referral', medium: 'invite', campaign, referrer: referrerUrl, referralCode }
+    return {
+      source: 'referral',
+      medium: 'invite',
+      campaign,
+      referrer: referrerUrl,
+      landing,
+      referralCode,
+    }
   }
 
   if (referrerHost) {
     const { source, medium } = classifyReferrer(referrerHost)
-    return { source, medium, campaign, referrer: referrerUrl, referralCode }
+    return { source, medium, campaign, referrer: referrerUrl, landing, referralCode }
   }
 
-  return { source: 'direct', medium: 'none', campaign, referrer: undefined, referralCode }
+  return { source: 'direct', medium: 'none', campaign, referrer: undefined, landing, referralCode }
 }
 
 /**
@@ -230,8 +252,8 @@ export function readAttributionCookie(raw: string | undefined): Attribution | nu
   }
   const parsed = attributionSchema.safeParse(candidate)
   if (!parsed.success) return null
-  const { source, medium, campaign, referrer, referralCode } = parsed.data
-  if (!source && !medium && !campaign && !referrer && !referralCode) return null
+  const { source, medium, campaign, referrer, landing, referralCode } = parsed.data
+  if (!source && !medium && !campaign && !referrer && !landing && !referralCode) return null
   return parsed.data
 }
 
@@ -250,7 +272,7 @@ export function readAttributionCookie(raw: string | undefined): Attribution | nu
  * people who have heard of you before.
  *
  * ── Why only that one field ──────────────────────────────────────────────────
- * First touch is the point of the other four (see the file header): the channel
+ * First touch is the point of the other five (see the file header): the channel
  * that INTRODUCED somebody is the one worth spending on, and refreshing them on
  * a later visit is how attribution decays into "everyone came from Google". A
  * referral code is not a channel measurement, it is a claim about a person, and

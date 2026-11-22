@@ -200,6 +200,7 @@ export async function deleteAccount(
             signupMedium: null,
             signupCampaign: null,
             signupReferrer: null,
+            signupLanding: null,
             referralCode: null,
             // referredBy is left alone on purpose — it names the OTHER
             // account's referral code, not this one's, and this account leaving
@@ -270,6 +271,7 @@ export interface AccountExportUser {
   signupMedium: string | null
   signupCampaign: string | null
   signupReferrer: string | null
+  signupLanding: string | null
   referralCode: string | null
   lastLoginAt: string | null
   createdAt: string
@@ -373,6 +375,7 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
       signupMedium: user.signupMedium,
       signupCampaign: user.signupCampaign,
       signupReferrer: user.signupReferrer,
+      signupLanding: user.signupLanding,
       referralCode: user.referralCode,
       lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
       createdAt: user.createdAt.toISOString(),

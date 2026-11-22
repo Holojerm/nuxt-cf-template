@@ -137,6 +137,7 @@ export async function createMagicLinkToken(
         signupMedium: input.attribution?.medium ?? null,
         signupCampaign: input.attribution?.campaign ?? null,
         signupReferrer: input.attribution?.referrer ?? null,
+        signupLanding: input.attribution?.landing ?? null,
         // Shape-validated by attributionSchema, re-validated at redemption before it
         // can name an account; this column only carries it across devices.
         referralCode: input.attribution?.referralCode ?? null,
@@ -243,6 +244,7 @@ export function attributionFromRecord(record: MagicLinkToken): Attribution | und
     medium: record.signupMedium ?? undefined,
     campaign: record.signupCampaign ?? undefined,
     referrer: record.signupReferrer ?? undefined,
+    landing: record.signupLanding ?? undefined,
     referralCode: record.referralCode ?? undefined,
   }
   const known = Object.values(attribution).some((value) => value !== undefined)
