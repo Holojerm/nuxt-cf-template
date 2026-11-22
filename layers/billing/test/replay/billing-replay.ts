@@ -457,8 +457,7 @@ function normaliseBody(path: string, body: unknown): unknown {
       const e = clone.entitlement as Record<string, unknown>
       e.history = sortBy(e.history, 'ref')
     }
-    if ('entitlements' in clone)
-      clone.entitlements = sortBy(clone.entitlements, 'billingRef')
+    if ('entitlements' in clone) clone.entitlements = sortBy(clone.entitlements, 'billingRef')
     if (path.startsWith('/api/admin/users/') && Array.isArray(clone.audit)) clone.audit = []
     if (Array.isArray(clone.auditEntries)) clone.auditEntries = []
   }

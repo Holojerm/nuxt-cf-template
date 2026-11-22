@@ -358,9 +358,7 @@ describe('grantRefereeWelcome', () => {
     expect(result.days).toBe(REFERRAL_WELCOME_DAYS)
 
     const granting = await findActiveEntitlement(db, 'referee')
-    expect(granting?.billingRef).toBe(
-      await welcomeRefForEmail('referee@example.com', SALT),
-    )
+    expect(granting?.billingRef).toBe(await welcomeRefForEmail('referee@example.com', SALT))
     // The referrer is paid on the referee's first PURCHASE and not before.
     expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
   })

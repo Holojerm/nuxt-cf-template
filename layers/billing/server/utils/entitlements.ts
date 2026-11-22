@@ -1371,15 +1371,15 @@ export async function getBillingOverview(
       .filter((e) => isSubscriptionRef(e.billingRef) && isBillingLive(e))
       .map((e) => e.billingRef),
     accessSubscriptionIds: history
-      .filter(
-        (e) => isSubscriptionRef(e.billingRef) && ACTIVE_STATUSES.includes(e.status),
-      )
+      .filter((e) => isSubscriptionRef(e.billingRef) && ACTIVE_STATUSES.includes(e.status))
       .map((e) => e.billingRef),
     // Prefer the customer behind the LIVE entitlement — that's whose portal a
     // cancel link has to open. Fall back to any customer id we've ever seen so
     // a lapsed user can still reach their invoices.
     providerCustomerId:
-      active?.providerCustomerId ?? history.find((e) => e.providerCustomerId)?.providerCustomerId ?? null,
+      active?.providerCustomerId ??
+      history.find((e) => e.providerCustomerId)?.providerCustomerId ??
+      null,
     history,
   }
 }

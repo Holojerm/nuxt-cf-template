@@ -77,8 +77,7 @@ describe('findActiveEntitlement(…, now)', () => {
       currentPeriodEnd: new Date('2020-01-01'),
     })
     expect(
-      (await findActiveEntitlement(db, USER, 'default', new Date('2090-01-01')))
-        ?.billingRef,
+      (await findActiveEntitlement(db, USER, 'default', new Date('2090-01-01')))?.billingRef,
     ).toBe('sub_a')
   })
 })
@@ -239,9 +238,7 @@ describe('billing.stackAtBilledAt', () => {
       transactionId: 'pi_p1',
       billedAt: billed,
     })
-    await db
-      .delete(schema.entitlements)
-      .where(eq(schema.entitlements.billingRef, 'pi_p1'))
+    await db.delete(schema.entitlements).where(eq(schema.entitlements.billingRef, 'pi_p1'))
     setStackAtBilled(true)
     const promptOn = await grantPass(db, {
       userId: USER,

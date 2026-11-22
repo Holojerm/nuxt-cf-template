@@ -57,7 +57,9 @@ describe('billing purge contributor — applied event ids', () => {
     expect(result).toEqual({ count: 1, truncated: false })
     // The token sweep itself no longer touches the table.
     expect(await purgeExpiredTokens(db, { now: NOW })).not.toHaveProperty('billingEvents')
-    const remaining = await db.select({ id: schema.billingEvents.eventId }).from(schema.billingEvents)
+    const remaining = await db
+      .select({ id: schema.billingEvents.eventId })
+      .from(schema.billingEvents)
     expect(remaining.map((row) => row.id).sort()).toEqual(['evt-fresh', 'evt-week'])
   })
 })
