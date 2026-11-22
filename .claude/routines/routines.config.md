@@ -33,8 +33,9 @@ declared tier.
 ## Operator
 
 Turns the operator grant on for this product (`_shared.md` › Operator grant): routines act at
-their declared tier with no draft period, `growth-review` runs its own flags, the product mails
-opted-in users, and `support-inbox` sends replies. The template ships it off. It is on only when
+their declared tier with no draft period, `growth-review` runs its own flags and submits free
+directory listings under the product's name, the product mails opted-in users, and
+`support-inbox` sends replies. The template ships it off. It is on only when
 Mode is `grow` and every row of this table holds a real value; set Mode back to `off` to take
 it back.
 
@@ -54,11 +55,12 @@ one place; editing it here changes nothing. Add product-specific rows to the sec
 | Always the owner's |
 | --- |
 | Pricing, plans, discounts and trials |
-| Spend of any kind (ads, tools, paid placements) |
+| Spend of any kind (ads, tools, paid placements, paid listings) |
+| Creating an account the product does not have yet |
 | Refunds and billing disputes |
 | Deleting or exporting a user's data |
 | Support threads about billing, legal or security, and angry or churning customers |
-| Anything under the owner's personal name or accounts (Hacker News, Reddit, Product Hunt, their own email) |
+| Anything under the owner's personal name or accounts (Hacker News, Reddit, Product Hunt and other communities, their own email) |
 | Mail to anyone who has not opted in |
 
 | Also the owner's for this product | Why |
