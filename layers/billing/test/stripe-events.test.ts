@@ -440,6 +440,14 @@ describe('charge.refunded', () => {
     expect(result?.data.subscription_id).toBeNull()
   })
 
+  it('keys a pass refund on the PaymentIntent when Managed Payments wrote an invoice for it', async () => {
+    refs = { invoiceId: 'in_pass', subscriptionId: null }
+    const result = await normalize(stripeEvent('charge.refunded', charge()))
+    expect(result?.data.transaction_id).toBe('pi_1')
+    expect(result?.data.subscription_id).toBeNull()
+    expect(lookups).toEqual(['refs:pi_1'])
+  })
+
   it('uses the charge id when there is no PaymentIntent to look up', async () => {
     const result = await normalize(stripeEvent('charge.refunded', charge({ payment_intent: null })))
     expect(result?.data.transaction_id).toBe('ch_1')
@@ -524,6 +532,18 @@ describe('charge.dispute.*', () => {
       action: 'chargeback',
       status: 'lost',
     })
+  })
+
+  it('keys a pass dispute on the PaymentIntent when Managed Payments wrote an invoice for it', async () => {
+    refs = { invoiceId: 'in_pass', subscriptionId: null }
+    const result = await normalize(stripeEvent('charge.dispute.created', dispute('needs_response')))
+    expect(result?.data).toMatchObject({ transaction_id: 'pi_1', subscription_id: null })
+  })
+
+  it('keys a dispute on the PaymentIntent when the payment has no invoice', async () => {
+    refs = null
+    const result = await normalize(stripeEvent('charge.dispute.created', dispute('needs_response')))
+    expect(result?.data).toMatchObject({ transaction_id: 'pi_1', subscription_id: null })
   })
 
   it('falls back to the charge id with no PaymentIntent', async () => {
@@ -613,36 +633,46 @@ describe('normalized events through applyBillingEvent', () => {
     expect(row?.firstTransactionId).toBe('in_1')
   })
 
-  it('grants a pass from a paid session, then charge.refunded revokes it', async () => {
-    const purchase = await normalized(
-      stripeEvent('checkout.session.completed', sessionObject(), {
-        created: seconds(Date.now() - 60_000),
-      }),
-    )
-    expect(await applyBillingEvent(db, purchase, CATALOGUE)).toMatchObject({
-      kind: 'pass',
-      userId: USER,
-      granted: true,
-    })
-    expect(await findActiveEntitlement(db, USER)).toMatchObject({
-      billingRef: 'pi_1',
-    })
+  // Managed Payments writes an invoice for a one-time payment too (seen in test
+  // mode 2026-11-22); the pass row is still keyed on its PaymentIntent.
+  const PASS_REFS: [string, PaymentRefs | null][] = [
+    ['no invoice', null],
+    ['an invoice with no subscription', { invoiceId: 'in_pass', subscriptionId: null }],
+  ]
 
-    refs = null
-    const refund = await normalized(
-      stripeEvent('charge.refunded', {
-        id: 'ch_1',
-        payment_intent: 'pi_1',
-        refunded: true,
-      }),
-    )
-    expect(await applyBillingEvent(db, refund, CATALOGUE)).toMatchObject({
-      kind: 'adjustment',
-      action: 'refund',
-      result: { outcome: 'revoked', userId: USER, billingRef: 'pi_1' },
-    })
-    expect(await findActiveEntitlement(db, USER)).toBeNull()
-  })
+  it.each(PASS_REFS)(
+    'grants a pass from a paid session, then charge.refunded revokes it (%s)',
+    async (_, passRefs) => {
+      const purchase = await normalized(
+        stripeEvent('checkout.session.completed', sessionObject(), {
+          created: seconds(Date.now() - 60_000),
+        }),
+      )
+      expect(await applyBillingEvent(db, purchase, CATALOGUE)).toMatchObject({
+        kind: 'pass',
+        userId: USER,
+        granted: true,
+      })
+      expect(await findActiveEntitlement(db, USER)).toMatchObject({
+        billingRef: 'pi_1',
+      })
+
+      refs = passRefs
+      const refund = await normalized(
+        stripeEvent('charge.refunded', {
+          id: 'ch_1',
+          payment_intent: 'pi_1',
+          refunded: true,
+        }),
+      )
+      expect(await applyBillingEvent(db, refund, CATALOGUE)).toMatchObject({
+        kind: 'adjustment',
+        action: 'refund',
+        result: { outcome: 'revoked', userId: USER, billingRef: 'pi_1' },
+      })
+      expect(await findActiveEntitlement(db, USER)).toBeNull()
+    },
+  )
 
   it('revokes a subscription through the invoice payment behind a refund', async () => {
     const active = await normalized(
@@ -677,49 +707,53 @@ describe('normalized events through applyBillingEvent', () => {
     expect(await findActiveEntitlement(db, USER)).toBeNull()
   })
 
-  it('revokes a pass when a dispute opens and restores it when the dispute is won', async () => {
-    const purchase = await normalized(
-      stripeEvent('checkout.session.completed', sessionObject(), {
-        created: seconds(Date.now() - 3_600_000),
-      }),
-    )
-    await applyBillingEvent(db, purchase, CATALOGUE)
-    expect(await findActiveEntitlement(db, USER)).not.toBeNull()
+  it.each(PASS_REFS)(
+    'revokes a pass when a dispute opens and restores it when the dispute is won (%s)',
+    async (_, passRefs) => {
+      refs = passRefs
+      const purchase = await normalized(
+        stripeEvent('checkout.session.completed', sessionObject(), {
+          created: seconds(Date.now() - 3_600_000),
+        }),
+      )
+      await applyBillingEvent(db, purchase, CATALOGUE)
+      expect(await findActiveEntitlement(db, USER)).not.toBeNull()
 
-    const opened = await normalized(
-      stripeEvent(
-        'charge.dispute.created',
-        {
-          id: 'dp_1',
-          status: 'needs_response',
-          charge: 'ch_1',
-          payment_intent: 'pi_1',
-        },
-        { created: seconds(Date.now() - 1_800_000) },
-      ),
-    )
-    expect(await applyBillingEvent(db, opened, CATALOGUE)).toMatchObject({
-      kind: 'adjustment',
-      action: 'chargeback',
-      result: { outcome: 'revoked', billingRef: 'pi_1' },
-    })
-    expect(await findActiveEntitlement(db, USER)).toBeNull()
+      const opened = await normalized(
+        stripeEvent(
+          'charge.dispute.created',
+          {
+            id: 'dp_1',
+            status: 'needs_response',
+            charge: 'ch_1',
+            payment_intent: 'pi_1',
+          },
+          { created: seconds(Date.now() - 1_800_000) },
+        ),
+      )
+      expect(await applyBillingEvent(db, opened, CATALOGUE)).toMatchObject({
+        kind: 'adjustment',
+        action: 'chargeback',
+        result: { outcome: 'revoked', billingRef: 'pi_1' },
+      })
+      expect(await findActiveEntitlement(db, USER)).toBeNull()
 
-    const won = await normalized(
-      stripeEvent(
-        'charge.dispute.closed',
-        { id: 'dp_1', status: 'won', charge: 'ch_1', payment_intent: 'pi_1' },
-        { created: seconds(Date.now() - 600_000) },
-      ),
-    )
-    expect(await applyBillingEvent(db, won, CATALOGUE)).toMatchObject({
-      kind: 'adjustment',
-      result: { outcome: 'reversed' },
-    })
-    expect(await findActiveEntitlement(db, USER)).toMatchObject({
-      billingRef: 'pi_1',
-    })
-  })
+      const won = await normalized(
+        stripeEvent(
+          'charge.dispute.closed',
+          { id: 'dp_1', status: 'won', charge: 'ch_1', payment_intent: 'pi_1' },
+          { created: seconds(Date.now() - 600_000) },
+        ),
+      )
+      expect(await applyBillingEvent(db, won, CATALOGUE)).toMatchObject({
+        kind: 'adjustment',
+        result: { outcome: 'reversed' },
+      })
+      expect(await findActiveEntitlement(db, USER)).toMatchObject({
+        billingRef: 'pi_1',
+      })
+    },
+  )
 
   it('does not revoke on a dispute early warning', async () => {
     const purchase = await normalized(

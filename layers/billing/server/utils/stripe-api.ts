@@ -127,10 +127,18 @@ export async function createCheckoutSession(
     ['cancel_url', input.cancelUrl],
     ['client_reference_id', input.userId],
     ['metadata[userId]', input.userId],
-    input.mode === 'subscription'
-      ? ['subscription_data[metadata][userId]', input.userId]
-      : ['payment_intent_data[metadata][userId]', input.userId],
   ]
+  if (input.mode === 'subscription') {
+    params.push(
+      ['subscription_data[metadata][userId]', input.userId],
+      // Flexible billing mode: accepted with Managed Payments (checked in test
+      // mode 2026-11-22). A scheduled cancel then reads as `cancel_at` alone,
+      // which stripe-events.ts handles.
+      ['subscription_data[billing_mode][type]', 'flexible'],
+    )
+  } else {
+    params.push(['payment_intent_data[metadata][userId]', input.userId])
+  }
   // Stripe refuses a session that names both.
   if (input.customerId) params.push(['customer', input.customerId])
   else if (input.customerEmail) params.push(['customer_email', input.customerEmail])
@@ -259,9 +267,9 @@ export async function listCheckoutLineItems(
 }
 
 export interface PaymentRefs {
-  /** The invoice the payment settled (`in_…`), when it was a subscription payment. */
+  /** The invoice the payment settled (`in_…`). Managed Payments writes one for a one-time payment too. */
   invoiceId: string | null
-  /** The subscription that invoice belongs to (`sub_…`). */
+  /** The subscription that invoice belongs to (`sub_…`); null for a one-time payment. */
   subscriptionId: string | null
 }
 
@@ -281,9 +289,10 @@ interface InvoicePaymentList {
 
 /**
  * Which invoice and subscription a payment belongs to, or null for a payment
- * with no invoice (a one-time pass). A refund or dispute names only the charge
- * and its PaymentIntent, and the entitlement to revoke is keyed on the
- * subscription, so the webhook asks.
+ * with no invoice. A refund or dispute names only the charge and its
+ * PaymentIntent, and a subscription's entitlement is keyed on the
+ * subscription, so the webhook asks. Under Managed Payments a one-time pass
+ * has an invoice as well, with no subscription on it.
  */
 export async function findPaymentRefs(
   opts: StripeClientOptions & { paymentIntentId: string },
