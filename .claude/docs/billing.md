@@ -111,15 +111,9 @@ util collides (`billing.ts`, `entitlements.ts`, `stripe.ts`…) renames its own 
 `entitlements` table differs from the layer's (extra or missing columns, no foreign key) must
 reconcile it before re-exporting the layer's schema: `bunx drizzle-kit generate` has to say "No
 schema changes". Migrations are never in the layer; their numbers are the app's. A fork that already has the
-old tables writes its own migration to rename them, then runs `bunx drizzle-kit generate` and expects "No schema
-changes" (add the index renames it asks for):
-
-```sql
--- destructive-ok: renames only, no data lost
-ALTER TABLE entitlements RENAME COLUMN billing_ref TO billing_ref;
-ALTER TABLE entitlements RENAME COLUMN provider_customer_id TO provider_customer_id;
-ALTER TABLE billing_events RENAME TO billing_events;
-```
+old tables copies the template's `server/db/migrations/0025_rename_billing_columns.sql` (two column renames,
+one table rename and their index renames, rows kept) under its own next number, then runs
+`bunx drizzle-kit generate` and expects "No schema changes".
 
 **Replay.** `bun run build && bun run billing:replay --out dump.json` posts the signed fixtures in
 `layers/billing/test/replay/` to the built Worker on a throwaway local D1 and dumps every status,
@@ -201,6 +195,8 @@ export default {
   `billing_events` rows are swept by billing's `billingEvents` purge contributor (run by the nightly purge task) after
   `BILLING_EVENT_RETENTION_SECONDS` (30 days), long after Stripe stops retrying.
   All three refusals are logged as `stripe_webhook_not_applied` with the reason.
+- **What a refund or dispute is matched on.** A pass row's ref is its PaymentIntent (`pi_…`), a subscription row's is `sub_…`, and a subscription's referral reward is keyed on its first invoice (`in_…`). A `charge.refunded` or `charge.dispute.*` names only the charge and the PaymentIntent, so the webhook asks Stripe for the invoice behind the payment (`findPaymentRefs`: `GET /v1/invoice_payments`, the subscription at `invoice.parent.subscription_details.subscription`). The adjustment's transaction is the invoice **only when that invoice belongs to a subscription**; otherwise it is the PaymentIntent. Managed Payments writes an invoice for a one-time payment too, so keying on any invoice would leave a refunded or charged-back pass with its access (found in test mode, 2026-11-22).
+- **Flexible billing mode.** The monthly plan's Checkout Session sends `subscription_data[billing_mode][type]=flexible` (Managed Payments accepts it). In flexible mode a cancel scheduled in the portal reads as `cancel_at` set to the period end with `cancel_at_period_end: false`, which `stripe-events.ts` turns into the same scheduled cancel.
 - **The webhook trusts the price, not the metadata.** The checkout route stamps `metadata.userId` from the session, so only `userId` is read from it, and only to find the account. What was bought comes from the event's `items[].price.id` (a Checkout Session's line items are fetched from Stripe, since the webhook payload carries none), matched against the configured `NUXT_PUBLIC_STRIPE_PRICE_*` values by `priceCatalogue()` in `layers/billing/server/utils/stripe-prices.ts`: a new row is created only for a configured price of the kind the event implies, and an unknown price is acknowledged, logged as `stripe_webhook_unrecognised_price`, and grants nothing. Status changes on an existing subscription row skip the check so a price rotated out of config cannot leave a cancellation unapplied. Selling a second product means a new config key and a catalogue entry — not a `productKey` branch on metadata.
 - **Feedback loop** is pre-wired: `<FeedbackWidget />` (mounted in the default layout) → `POST /api/feedback` (public — the auth middleware allowlists that exact method + path; the handler rate-limits by `ip_hash` in D1) → a `feedback` row in D1 **and** a server-side PostHog `feedback_submitted` event carrying the session-replay link. Never capture the same event from the client too. Read the queue with `GET /api/feedback` (admin-only via `requireAdmin()`); the `feedback-triage` routine turns it into GitHub issues.
 - **MCP worker** (`mcp/`) is an optional second Worker: OAuth 2.1 (workers-oauth-provider + `OAUTH_KV`), stateless `createMcpHandler` tools at `/mcp`, sharing the app's D1 by `database_id`. The app owns all migrations; the worker reads with raw SQL. People sign in through the app: the worker's `/authorize` sends the browser to `/auth/mcp`, the app mints a single-use code for the signed-in user (`POST /api/mcp/connect-code`), and the worker spends it at `/authorize/callback` after an approval click. Its wrangler scripts pass `-c wrangler.jsonc` — required, because the app build's `.wrangler/deploy/config.json` redirect confuses wrangler otherwise. Do not use `McpAgent` for new tools — it's deprecated in the agents SDK; `createMcpHandler` is the current path. What every tool must declare, the discovery routes, and listing the server in a directory are in [mcp.md](mcp.md).

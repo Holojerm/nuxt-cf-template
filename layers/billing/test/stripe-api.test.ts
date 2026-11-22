@@ -94,6 +94,7 @@ describe('createCheckoutSession', () => {
       ['client_reference_id', 'user_1'],
       ['metadata[userId]', 'user_1'],
       ['subscription_data[metadata][userId]', 'user_1'],
+      ['subscription_data[billing_mode][type]', 'flexible'],
       ['customer_email', 'a@b.co'],
     ])
   })
@@ -113,6 +114,16 @@ describe('createCheckoutSession', () => {
       ['metadata[userId]', 'user_1'],
       ['payment_intent_data[metadata][userId]', 'user_1'],
     ])
+  })
+
+  it('puts the monthly plan in flexible billing mode, and only the monthly plan', async () => {
+    answer = () => json({ id: 'cs_4', url: 'https://x' })
+    await createCheckoutSession({ ...base, mode: 'subscription' })
+    await createCheckoutSession({ ...base, mode: 'payment', priceId: 'price_p' })
+    const mode = (i: number) =>
+      bodyPairs(requests[i]).find(([k]) => k === 'subscription_data[billing_mode][type]')?.[1]
+    expect(mode(0)).toBe('flexible')
+    expect(mode(1)).toBeUndefined()
   })
 
   it('sends customer, never customer_email too, when both are known', async () => {
