@@ -136,9 +136,16 @@ and serve it on each product's scoreboard (`GET /api/scoreboard/<slug>`), which 
 `seo-content` routine reads. Until then the `search` field is absent, and the routine skips its
 click-based steps.
 
-**Owner steps** (both consoles want the owner's own Google account, so an agent cannot do
-these), once per domain: `drawthesystem.com`, `woolholm.com` (a Domain property covers
-`app.woolholm.com`), `pocket-film-school.com`.
+**Owner steps** (both consoles want the owner's own Google account; an agent can drive them in
+the owner's signed-in browser), once per domain: `drawthesystem.com`, `woolholm.com` (a Domain
+property covers `app.woolholm.com`), `pocket-film-school.com`.
+
+State (2026-11-22): all three are verified Domain properties with their sitemaps read. Fleet's
+identity is the service account `fleet-search-reader@fleet-search.iam.gserviceaccount.com` in
+the Google Cloud project `fleet-search` (Search Console API enabled, no project roles), with
+Restricted access on all three properties. It has no JSON key yet: create one (IAM & Admin →
+Service accounts → Keys → Add key → JSON) when fleet's collector is built, and put it straight
+into 1Password rather than leaving it in Downloads.
 
 1. **Verify by DNS.** Google Search Console → Add property → *Domain* → enter the apex → copy the
    `google-site-verification=…` TXT value. Add it as a TXT record at the apex in Cloudflare
