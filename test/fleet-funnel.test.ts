@@ -12,6 +12,7 @@ import {
   landingKey,
   sourceKey,
 } from '../server/utils/fleet-funnel'
+import { parseAttribution } from '../shared/utils/attribution'
 
 const db = drizzle(env.DB, { schema })
 
@@ -183,6 +184,36 @@ describe('campaignKey', () => {
     expect(campaignKey('launch-2026')).toBe('launch-2026')
     expect(campaignKey('ada@example.com')).toBe('other')
     expect(campaignKey(null)).toBe('other')
+  })
+})
+
+// The routines tag every link they publish (.claude/routines/_shared.md › Tagged links) and
+// judge channel bets on these keys, so a tag in that shape must come back unchanged.
+describe('a link tagged by a routine', () => {
+  const tagged = [
+    { source: 'x', medium: 'social', campaign: 'x-post' },
+    { source: 'x', medium: 'social', campaign: 'cache-tradeoffs-page' },
+    { source: 'email', medium: 'announcement', campaign: 'announcement.exports' },
+    { source: 'alternativeto', medium: 'directory', campaign: 'a'.repeat(40) },
+  ]
+
+  it.each(tagged)('reports $source / $campaign under its own keys', (tag) => {
+    const first = parseAttribution({
+      url: `https://app.example/blog/post?utm_source=${tag.source}&utm_medium=${tag.medium}&utm_campaign=${tag.campaign}`,
+      // What X and a mail client send; the explicit tag has to win over both.
+      referrer: 'https://t.co/abc',
+      origin: 'https://app.example',
+    })
+    expect(first.medium).toBe(tag.medium)
+    expect(sourceKey(first.source ?? null)).toBe(tag.source)
+    expect(campaignKey(first.campaign ?? null)).toBe(tag.campaign)
+  })
+
+  it('loses a tag outside the shape to "other"', () => {
+    const first = parseAttribution({
+      url: 'https://app.example/?utm_source=x&utm_medium=social&utm_campaign=Launch%20Week',
+    })
+    expect(campaignKey(first.campaign?.toLowerCase() ?? null)).toBe('other')
   })
 })
 

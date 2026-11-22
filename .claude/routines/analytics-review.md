@@ -33,6 +33,12 @@ a report the owner can read in two minutes and issues the backlog can act on.
      Query it per `_shared.md` › Reading production D1, and prefer it over PostHog's
      `$initial_utm_*` when the two disagree: ad blockers make the PostHog figure a
      non-random undercount.
+   - **Channel bets.** For every open `growth-bet` issue of type `channel`, report two counts
+     since its first publication: visits (distinct visitors with a `$pageview` carrying the
+     bet's `utm_campaign`, or for a search page, sessions that began on its landing path)
+     and signups (`users.signup_campaign`, or `users.signup_landing`). `growth-review` judges
+     the bet on these and does not recompute them. With no visit source, write "visits: not
+     measured" rather than a zero.
    - **Churn reasons.** `feedback` rows with `kind = 'churn'`, written by the cancellation
      prompt on /account. Small numbers, high signal — quote them verbatim rather than
      summarising, and never average them into a sentiment score.
