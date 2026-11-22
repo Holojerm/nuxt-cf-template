@@ -17,6 +17,7 @@
     "docs/**",
     "server/db/migrations/**",
     "server/emails/generated.ts",
+    "server/emails/announcements.generated.ts",
     "emails/theme.generated.css",
     "emails/.maizzle/**",
     "emails/**/*.vue",

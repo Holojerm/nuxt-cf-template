@@ -89,7 +89,12 @@ async function deriveKeyUncached(sessionPassword: string): Promise<CryptoKey> {
   )
 }
 
-async function hmacBase64Url(sessionPassword: string, message: string): Promise<string> {
+/**
+ * HMAC of `message` under the derived key. Exported for the other links that
+ * are mailed out and must hold no secret of their own (server/utils/subscribers.ts);
+ * each caller prefixes its messages so one kind of token is never valid as another.
+ */
+export async function hmacBase64Url(sessionPassword: string, message: string): Promise<string> {
   const key = await deriveKey(sessionPassword)
   const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(message))
   return base64url(signature)

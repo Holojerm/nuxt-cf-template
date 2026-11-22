@@ -145,8 +145,17 @@ const LIFECYCLE = [
   'server/utils/lifecycle-emails.ts',
   'server/utils/lifecycle-steps.ts',
   'server/utils/lifecycle-app-steps.ts',
+  'server/utils/lifecycle-definitions.ts',
+  'server/utils/lifecycle-sequence.ts',
+  'server/utils/lifecycle-runtime.ts',
+  'server/utils/announcements.ts',
+  'server/utils/announcement-audience.ts',
+  'server/utils/announcement-delivery.ts',
+  'server/plugins/lifecycle.ts',
   'server/tasks/lifecycle-email.ts',
   'test/lifecycle.test.ts',
+  'test/lifecycle-sequence.test.ts',
+  'test/announcements.test.ts',
 ]
 
 const withoutBilling = (dir: string) => {

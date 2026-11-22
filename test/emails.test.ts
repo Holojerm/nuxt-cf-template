@@ -18,15 +18,15 @@ const NAMES = Object.keys(EMAILS) as EmailName[]
 const ACTION_URL: Record<EmailName, (data: Record<string, unknown>) => string> = {
   'access-ended': (d) => `${d.appUrl}/pricing`,
   'account-deleted': (d) => `${d.appUrl}`,
-  'activation-nudge': (d) => `${d.appUrl}/dashboard`,
   'feedback-reply': (d) => `${d.appUrl}`,
   'magic-link': (d) => String(d.url),
+  note: (d) => String((d.button as { url: string }).url),
   'pass-expiring': (d) => `${d.appUrl}/account`,
   'password-reset': (d) => String(d.url),
   'payment-failed': (d) => `${d.appUrl}/account`,
   purchase: (d) => `${d.appUrl}/account`,
+  'subscribe-confirm': (d) => String(d.url),
   'verify-email': (d) => String(d.url),
-  welcome: (d) => `${d.appUrl}`,
 }
 
 /** Every string in a sample replaced by markup that would break out of its context. */
@@ -89,8 +89,8 @@ describe.each(NAMES)('%s', (name) => {
 
 describe('renderEmail', () => {
   it('escapes data in the HTML but not in the text, which has no markup to break', () => {
-    const { html, text } = renderEmail('welcome', {
-      ...SAMPLES.welcome,
+    const { html, text } = renderEmail('account-deleted', {
+      ...SAMPLES['account-deleted'],
       name: `Ada & "Grace" <3`,
     })
     expect(html).toContain('Ada &amp; &quot;Grace&quot; &lt;3')

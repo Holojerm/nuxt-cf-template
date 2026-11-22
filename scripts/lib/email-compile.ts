@@ -9,18 +9,21 @@
 // Vite and a CSS toolchain, none of which belong in a 3 MB bundle. The Worker
 // gets strings and fills in the {{tags}} with Mustache (server/utils/render-email.ts).
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { render } from '@maizzle/framework'
 
 import config from '../../emails/maizzle.config'
+import { announcementModuleSource, parseAnnouncement } from '../announcement-source'
 import { emailModuleSource, variableDrift, type CompiledEmail } from '../email-source'
 
 const ROOT = resolve(import.meta.dir, '../..')
 export const EMAILS_DIR = join(ROOT, 'emails')
 const TEMPLATES_DIR = join(EMAILS_DIR, 'templates')
 export const GENERATED_FILE = join(ROOT, 'server/emails/generated.ts')
+const ANNOUNCEMENTS_DIR = join(ROOT, 'content/announcements')
+export const ANNOUNCEMENTS_FILE = join(ROOT, 'server/emails/announcements.generated.ts')
 
 export function templateNames(): string[] {
   return readdirSync(TEMPLATES_DIR)
@@ -93,4 +96,22 @@ export async function compileEmails(): Promise<string> {
     emails[name] = { html, text }
   }
   return emailModuleSource(emails)
+}
+
+/** content/announcements/*.md, by id. A README or a file starting with `_` is not one. */
+export function announcementIds(): string[] {
+  if (!existsSync(ANNOUNCEMENTS_DIR)) return []
+  return readdirSync(ANNOUNCEMENTS_DIR)
+    .filter((file) => file.endsWith('.md') && !file.startsWith('_') && file !== 'README.md')
+    .map((file) => file.slice(0, -'.md'.length))
+    .sort()
+}
+
+/** Every announcement, parsed and validated. Throws on the first one that is not sound. */
+export function compileAnnouncements(): string {
+  return announcementModuleSource(
+    announcementIds().map((id) =>
+      parseAnnouncement(id, readFileSync(join(ANNOUNCEMENTS_DIR, `${id}.md`), 'utf8')),
+    ),
+  )
 }

@@ -146,6 +146,10 @@ except the allowlist in `server/utils/public-routes.ts`. Core ships:
   `server/plugins/blog-routes.ts`, not core, so deleting the blog removes them.
 - `GET|POST /api/email/unsubscribe` — reached from a mail footer on a device
   that may not be signed in.
+- `POST /api/email/updates`, `POST /api/email/updates/confirm`,
+  `GET|POST /api/email/updates/unsubscribe` — the product-updates list for
+  visitors with no account; registered by `server/plugins/subscribers.ts`. The
+  first is behind Turnstile and two rate limits, the others behind a signed link.
 
 Features and forks add their own from a Nitro plugin; **never edit the
 middleware**:

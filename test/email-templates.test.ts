@@ -5,34 +5,56 @@
 // gets delivered to an inbox, so escaping is the security-relevant part.
 
 import { describe, expect, it } from 'vitest'
+import { noteEmail, subscribeConfirmEmail } from '../server/utils/email-notes'
 import {
   accessEndedEmail,
   feedbackReplyEmail,
   paymentFailedEmail,
   purchaseEmail,
-  welcomeEmail,
 } from '../server/utils/email-templates'
 
 const BRAND = { appName: 'My App', appUrl: 'https://example.com' }
 
-describe('welcomeEmail', () => {
-  it('addresses the person and links the app', () => {
-    const email = welcomeEmail(BRAND, { name: 'Ada' })
-    expect(email.subject).toContain('My App')
-    expect(email.html).toContain('Ada')
-    expect(email.html).toContain('https://example.com')
+describe('noteEmail', () => {
+  const note = {
+    subject: 'Exports are here',
+    heading: 'Exports are here',
+    paragraphs: ['First paragraph.', 'Second paragraph.'],
+    button: { label: 'See what changed', url: 'https://example.com/changelog' },
+    footnote: 'You are receiving this because you have an account.',
+  }
+
+  it('renders every paragraph, the button and the footnote in both parts', () => {
+    const email = noteEmail(BRAND, note)
+    expect(email.subject).toBe('Exports are here')
+    for (const part of [email.html, email.text]) {
+      expect(part).toContain('First paragraph.')
+      expect(part).toContain('Second paragraph.')
+      expect(part).toContain('https://example.com/changelog')
+      expect(part).toContain('You are receiving this because')
+    }
+    expect(email.text).toContain('See what changed: https://example.com/changelog')
   })
 
-  it('escapes a hostile display name', () => {
-    const email = welcomeEmail(BRAND, { name: '<script>alert(1)</script>' })
+  it('leaves the button out when there is none', () => {
+    const email = noteEmail(BRAND, { ...note, button: undefined })
+    expect(email.text).not.toContain('changelog')
+    expect(email.text).not.toMatch(/\n{3,}/)
+  })
+
+  it('escapes hostile copy', () => {
+    const email = noteEmail(BRAND, { ...note, paragraphs: ['<script>alert(1)</script>'] })
     expect(email.html).not.toContain('<script>')
     expect(email.html).toContain('&lt;script&gt;')
   })
+})
 
-  it('ships a plain-text alternative that is actually plain', () => {
-    const email = welcomeEmail(BRAND, { name: 'Ada' })
-    expect(email.text).not.toContain('<')
-    expect(email.text.length).toBeGreaterThan(20)
+describe('subscribeConfirmEmail', () => {
+  it('carries the link and says how long it works', () => {
+    const email = subscribeConfirmEmail(BRAND, { url: 'https://example.com/c#s=1&t=2', days: 7 })
+    expect(email.html).toContain('https://example.com/c#s=1&amp;t=2')
+    expect(email.text).toContain('https://example.com/c#s=1&t=2')
+    expect(email.text).toContain('7 days')
   })
 })
 

@@ -41,8 +41,12 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   out), and `funnel.weeks` is eight entries, oldest first, of
   `{ weekStart, signups, activated, paid }` per signup week. Weeks start Monday 00:00 UTC and the
   last one is the week in progress (`server/utils/fleet-cohorts.ts`).
-  `email: { windowDays, sent, steps }` counts `lifecycle_sends` rows per step id over 28 days
-  (`server/utils/fleet-email.ts`); sign-in links and receipts are not in that table. The landing
+  `email: { windowDays, sent, steps, capped, subscribers }` counts sends per step id over 28
+  days (`server/utils/fleet-email.ts`) from `lifecycle_sends` and, for visitors with no account,
+  `subscriber_sends`; an announcement is the step `announcement.<id>`. Sign-in links, receipts
+  and the subscribe confirmation are in neither table. `capped` is announcement sends skipped
+  by the weekly cap, and `subscribers` is `{ confirmed, pending }` on the product-updates list:
+  counts, never an address. The landing
   path is `users.signup_landing`, written once at signup from the attribution cookie as a route
   shape: no query string, and any segment that reads as an id or token becomes `:id`
   (`shared/utils/landing-path.ts`). Adding a field to this payload does not bump `schema`;

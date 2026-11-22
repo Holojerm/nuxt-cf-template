@@ -1,47 +1,20 @@
-// The template's own lifecycle steps. A fork adds its own in lifecycle-app-steps.ts
-// (shipped empty, never edited by the template) — typically a win-back keyed on
-// whatever "used the product" means there, which the template cannot know.
+// The steps built from lifecycle-sequence.ts, which is where their wording,
+// delay and audience live. Features add theirs with registerLifecycleStep()
+// (billing's `pass_expiring`), and a step that needs its own query goes in
+// lifecycle-app-steps.ts; the task runs these, then those.
 
-import { and, gt, lte, notExists, sql } from 'drizzle-orm'
+import { defineLifecycleStep, isImmediate } from './lifecycle-definitions'
+import { LIFECYCLE_SEQUENCE } from './lifecycle-sequence'
+import type { LifecycleStep } from './lifecycle'
 
-import * as tables from '../db/schema'
-import { activationNudgeEmail } from './lifecycle-emails'
-import type { LifecycleDb, LifecycleRecipient, LifecycleStep } from './lifecycle'
+const enabled = LIFECYCLE_SEQUENCE.filter((definition) => definition.enabled !== false)
 
-const DAY_MS = 24 * 60 * 60 * 1000
-
-function sentBefore(stepId: string) {
-  return notExists(
-    sql`(select 1 from ${tables.lifecycleSends} where ${tables.lifecycleSends.stepId} = ${stepId} and ${tables.lifecycleSends.userId} = ${tables.users.id})`,
-  )
-}
-
-/** Signed up 1–7 days ago and never completed onboarding. */
-export const activationNudgeStep: LifecycleStep = {
-  id: 'activation_nudge',
-  notification: 'tips',
-  async due(db: LifecycleDb, now: Date, limit: number): Promise<LifecycleRecipient[]> {
-    const rows = await db
-      .select({ userId: tables.users.id, email: tables.users.email, name: tables.users.name })
-      .from(tables.users)
-      .where(
-        and(
-          gt(tables.users.createdAt, new Date(now.getTime() - 7 * DAY_MS)),
-          lte(tables.users.createdAt, new Date(now.getTime() - DAY_MS)),
-          notExists(
-            sql`(select 1 from ${tables.auditLog} where ${tables.auditLog.action} = 'onboarding.activated' and ${tables.auditLog.actorUserId} = ${tables.users.id})`,
-          ),
-          sentBefore('activation_nudge'),
-        ),
-      )
-      .limit(limit)
-    return rows.map((row) => ({ ...row, subjectKey: '' }))
-  },
-  render: (brand, recipient) => activationNudgeEmail(brand, { name: recipient.name }),
-}
+export const TEMPLATE_LIFECYCLE_STEPS: readonly LifecycleStep[] = enabled.map(defineLifecycleStep)
 
 /**
- * Steps core owns. Features add theirs with registerLifecycleStep() (billing's
- * `pass_expiring`), which the task runs after these and before the app's.
+ * Steps due the moment an account exists (the welcome). Sign-up sends them at
+ * once (server/utils/lifecycle-runtime.ts); the daily run is the retry.
  */
-export const TEMPLATE_LIFECYCLE_STEPS: readonly LifecycleStep[] = [activationNudgeStep]
+export const IMMEDIATE_LIFECYCLE_STEPS: readonly LifecycleStep[] = enabled
+  .filter(isImmediate)
+  .map(defineLifecycleStep)

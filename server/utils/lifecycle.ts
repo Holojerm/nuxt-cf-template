@@ -71,16 +71,17 @@ export async function runLifecycle(
     }
     report.due = recipients.length
     for (const recipient of recipients) {
-      const outcome = await deliver(db, step, recipient, deps)
+      const outcome = await deliverLifecycleStep(db, step, recipient, deps)
       report[outcome] += 1
     }
   }
   return reports
 }
 
-type DeliveryOutcome = 'sent' | 'optedOut' | 'alreadySent' | 'failed'
+export type DeliveryOutcome = 'sent' | 'optedOut' | 'alreadySent' | 'failed'
 
-async function deliver(
+/** One step to one person, with every check the runner owns. Also the sign-up path. */
+export async function deliverLifecycleStep(
   db: LifecycleDb,
   step: LifecycleStep,
   recipient: LifecycleRecipient,
