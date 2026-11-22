@@ -3,6 +3,7 @@ schedule: "0 22 * * *"
 model: claude-sonnet-5
 connectors: [gmail, github]
 enabled: false
+operator: skip # fleet's weekly portfolio digest replaces it on an operator repo
 ---
 
 # Daily Digest
@@ -11,6 +12,11 @@ enabled: false
 
 The one autonomous outbound action in the system: a single email to the owner, every day,
 summarizing what the routines (and the repo) did that day and what needs a human decision.
+
+On an operator repo (`_shared.md` › Operator grant) this routine does not exist: fleet's weekly
+portfolio digest and its decisions queue replace it, and `/routines sync` neither creates nor
+enables it there. If you are running on one anyway, send nothing, journal
+`- no action needed (operator repo: fleet's weekly digest replaces daily-digest)`, and stop.
 
 ## Instructions
 

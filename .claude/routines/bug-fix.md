@@ -1,5 +1,7 @@
 ---
 schedule: "0 12 * * *"
+gate: |
+  Run `gh issue list --state open --label bug --limit 20 --search "-label:needs-owner -label:needs-more-info -linked:pr" --json number --jq '.[].number'`. Empty output means nothing to do.
 model: claude-sonnet-5
 connectors: [github]
 tier: 2

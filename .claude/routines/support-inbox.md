@@ -1,5 +1,7 @@
 ---
 schedule: "0 13 * * *"
+gate: |
+  Read only the support inbox search query in `routines.config.md`, then run that one search with the Gmail connector. No thread in the result means nothing to do.
 model: claude-sonnet-5
 connectors: [gmail, github]
 enabled: false
@@ -9,7 +11,7 @@ enabled: false
 
 ## Purpose
 
-Triage the support inbox daily and convert bug reports and feature requests into GitHub issues
+Triage the support inbox (daily, on the days it has mail) and convert bug reports and feature requests into GitHub issues
 so nothing lives only in email. On an operator repo (`_shared.md` › Operator grant) it sends
 how-to answers and acknowledgements itself; on any other repo it drafts them for the owner to
 review and send. Billing, legal, security and unhappy customers go to the owner on both.

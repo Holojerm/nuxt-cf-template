@@ -1,5 +1,8 @@
 ---
-schedule: "0 11 * * *"
+events: [issues.opened, issues.reopened] # GitHub events that start a run
+schedule: "0 11 * * 1" # weekly sweep for comments and missed events
+gate: |
+  Run `gh issue list --state open --limit 20 --search "updated:>=$(date -u -d '8 days ago' +%F) -label:growth-bet -label:decision" --json number --jq '.[].number'`. Empty output means nothing to do.
 model: claude-sonnet-5
 connectors: [github, cloudflare]
 enabled: false
@@ -16,9 +19,12 @@ routine always has a trustworthy queue to pull from.
 ## Instructions
 
 1. List open issues created or updated since the last `issue-triage` journal entry (check the
-   journal branch for when you last ran; default to the last 48 hours on first run).
+   journal branch for when you last ran; default to the last 48 hours on first run). A run an
+   issue event started covers that issue and anything else in the list.
    `routines.config.md` › **Issue triage scope** narrows this: `routine-filed` means only the
-   issues step 3 describes; `all` (the default) means every issue.
+   issues step 3 describes; `all` (the default) means every issue. Skip issues labelled
+   `growth-bet` (`growth-review`'s) and `decision` (the owner's queue, `_shared.md` ›
+   Escalation).
 2. For each untriaged issue:
    - **Classify**: `bug`, `enhancement`, `question`, or `invalid`. Add the label.
    - **Deduplicate**: search existing issues; if it's a duplicate, comment with a link to the

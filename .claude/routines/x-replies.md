@@ -1,5 +1,7 @@
 ---
 schedule: "0 9,17 * * *"
+gate: |
+  Run `rm -f /tmp/xr.json; git fetch -q origin ops-journal && git show origin/ops-journal:ops/marketing/x/replies/state.json > /tmp/xr.json 2>/dev/null || rm -f /tmp/xr.json; bun run scripts/x-replies.ts list --max 3 --dry-run --state /tmp/xr.json | bun -e 'const o = await Bun.stdin.json(); if (o.items.length) console.log(o.items.length)'`. Empty output means nothing to do.
 model: claude-sonnet-5
 connectors: [github]
 enabled: false
