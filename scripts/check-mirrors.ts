@@ -163,13 +163,13 @@ const PREDICATE_PINS: { file: string; fragment: string; why: string }[] = [
     why: "statuses that grant access (the SQL's status IN ('active', 'trialing'))",
   },
   {
-    file: `${BILLING_UTILS}/paddle-refs.ts`,
+    file: `${BILLING_UTILS}/billing-refs.ts`,
     fragment: "export const SUBSCRIPTION_REF_PREFIX = 'sub_'",
     why: "the prefix whose rows pass on status alone (the SQL's LIKE 'sub\\_%')",
   },
   {
     file: `${BILLING_UTILS}/entitlements.ts`,
-    fragment: 'likePrefix(tables.entitlements.paddleSubscriptionId, SUBSCRIPTION_REF_PREFIX)',
+    fragment: 'likePrefix(tables.entitlements.billingRef, SUBSCRIPTION_REF_PREFIX)',
     why: 'the escaped prefix match (ESCAPE) that findActiveEntitlement ORs with the expiry',
   },
   {

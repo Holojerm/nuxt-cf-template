@@ -52,16 +52,16 @@ middleware is billing's; the files page and `app/pages/dashboard.vue` name it, s
 no-op `subscription` route middleware in the app's `app/middleware/` (or shadow those pages) unless you edit them.
 
 **4. Delete the layer.** Billing is `layers/billing/`: don't vendor it, or `rm -rf` it. It holds
-the Paddle adapter (webhook, signature check, portal call), the entitlement model and its
+the Stripe adapter (webhook, signature check, Checkout and portal calls, the event translation), the entitlement model and its
 tests, billing state and notifications, comp grants, the `/pricing` page with `plans.ts`,
-the `usePaddle` and `useEntitlement` composables, the past-due banner and alert, the `subscription` route
+the `useCheckout` and `useEntitlement` composables, the past-due banner and alert, the `subscription` route
 middleware, the replay fixtures, and the Nitro plugin inside it that registers billing
 with core. Referrals are a separate layer (`layers/referral/`); step 1 removes them.
 
 Core imports none of it, so nothing else in core needs editing: account deletion is
-unguarded (and cancels nothing at Paddle), the data export drops `entitlements`, `/api/fleet` drops its `entitlements` group
+unguarded (and cancels nothing at Stripe), the data export drops `entitlements`, `/api/fleet` drops its `entitlements` group
 and reports `funnel.paid` as 0, the lifecycle run drops `pass_expiring`, the nightly purge
-drops the `paddleEvents` sweep, and `shared/utils/onboarding-steps.ts` loses its
+drops the `billingEvents` sweep, and `shared/utils/onboarding-steps.ts` loses its
 `entitlementActive` input (drop the `plan` step there). In a fork that vendored the layer,
 remove its entry from `layers.lock.json` too.
 
@@ -90,7 +90,7 @@ Google, so do not leave it behind "for later."
 
 **7. Drop the schema.** In [`server/db/schema.ts`](server/db/schema.ts) delete the
 `export * from '../../layers/billing/server/db/schema'` line (that drops `entitlements` and
-`paddle_events`), then:
+`billing_events`), then:
 
 ```bash
 bun db:generate    # writes the DROP TABLE migration
@@ -100,34 +100,41 @@ bun db:migrate     # local
 Remember production and preview are separate and nothing applies migrations for you:
 `bun run db:migrate:remote` and `bun run db:migrate:preview`.
 
-**8. The e2e specs left with the layer.** Billing's browser specs, fixtures and Paddle
-environment are `layers/billing/test/e2e/`; `playwright.config.ts` finds them there, so with the
+**8. The e2e specs left with the layer.** Billing's browser specs, fixtures and Stripe
+stub are `layers/billing/test/e2e/`; `playwright.config.ts` finds them there, so with the
 layer gone the `e2e-billing` project, the webhook secret and price ids on the dev server, and the
 webhook warm-up are gone too, and nothing needs deleting. The a11y and CSP specs follow the layer
 the same way: no `/pricing` scan, and the CSP spec instead asserts that no Paddle host is left in
 the policy, which the `billing` flag `nuxt.config.ts` passes to `securityHeaders()` guarantees.
+(Today that policy still carries Paddle's hosts when billing is present, because the layer no
+longer needs them and a follow-up PR removes them; Stripe Checkout and the portal are redirects.)
 
 **9. Strip the config.** The `runtimeConfig` declarations went with the layer. Remove from
 `.env.example` and `wrangler.toml` (both `[vars]` and `[env.preview.vars]`), and any
-product-id or `NUXT_BILLING_*` variable you set:
+`NUXT_BILLING_*` variable you set. The secrets are set on the Worker, not in a file, so delete them there too:
 
 ```
-NUXT_PADDLE_API_KEY
-NUXT_PADDLE_WEBHOOK_SECRET
-NUXT_PUBLIC_PADDLE_CLIENT_TOKEN
-NUXT_PUBLIC_PADDLE_ENV
-NUXT_PUBLIC_PADDLE_PRICE_MONTHLY
-NUXT_PUBLIC_PADDLE_PRICE_PASS
+NUXT_STRIPE_SECRET_KEY
+NUXT_STRIPE_WEBHOOK_SECRET
+NUXT_STRIPE_PRODUCT_ID
+NUXT_PUBLIC_STRIPE_PRICE_MONTHLY
+NUXT_PUBLIC_STRIPE_PRICE_PASS
 ```
+
+There is no client token and no environment variable: the prefix of the secret key (`sk_test_`
+or `sk_live_`) picks the mode. Delete the webhook endpoint in the Stripe Dashboard too, or Stripe keeps
+posting to a route that no longer exists.
 
 The CSP needs no edit: `nuxt.config.ts` builds it with `billing` set from whether
-`layers/billing/` exists, so the Paddle origins leave with the layer, and
-`test/security-headers.test.ts` asserts that no Paddle host is left.
+`layers/billing/` exists, and `shared/security-headers.ts` adds the Paddle origins only when it is
+set, so they leave with the layer, and `test/security-headers.test.ts` asserts that no Paddle host
+is left. Until the follow-up PR lands, those origins are Paddle's, not Stripe's.
 
 **10. Fix the legal copy.** [`app/pages/privacy.vue`](app/pages/privacy.vue) and
-[`app/pages/terms.vue`](app/pages/terms.vue) name Paddle as the merchant of record and
-as a subprocessor. Leaving that in is a factual misstatement in a legal document —
-it is not cosmetic. [`app/utils/changelog.ts`](app/utils/changelog.ts) mentions it too.
+[`app/pages/terms.vue`](app/pages/terms.vue) still name Paddle as the merchant of record and
+as a subprocessor (a follow-up PR moves them to Stripe, as Link). Whichever processor they name,
+leaving it in once billing is gone is a factual misstatement in a legal document —
+it is not cosmetic. [`app/utils/changelog.ts`](app/utils/changelog.ts) mentions Paddle too.
 
 **11. Delete emails that no longer have a trigger** — the receipt, payment-failed, and
 access-ended functions in [`server/utils/email-templates.ts`](server/utils/email-templates.ts),
@@ -144,50 +151,60 @@ remaining templates you still send.
 
 ---
 
-## Swap Paddle for Stripe (or Lemon Squeezy, or RevenueCat)
+## Swap Stripe for another provider (Lemon Squeezy, Paddle, RevenueCat)
 
 Do **not** start by deleting things. The entitlement model — one row per subscription,
 status transitions drive email, refunds and chargebacks cascade a revocation — is
 provider-independent and is the part that took the longest to get right. Keep it.
 
-**The adapter boundary is four files**, all inside `layers/billing/`. A fork that vendors the
-layer cannot edit them (`layers:check` fails): drop the layer from `layers.lock.json` and own the
-directory as a fork-owned layer before you start. Everything else reads the `entitlements` table
-and does not care who wrote it:
+**The seam is one event type.** A provider's events are translated into the layer's own
+`BillingEvent` (`layers/billing/server/utils/entitlements.ts`), and everything past
+`applyBillingEvent` is provider-neutral: it reads and writes the `entitlements` table and
+does not care who sent the event. A fork that vendors the layer cannot edit these files
+(`layers:check` fails): drop the layer from `layers.lock.json` and own the directory as a
+fork-owned layer before you start. The provider-specific files, all inside `layers/billing/`:
 
-| File | What it does | Stripe equivalent |
+| File | What it does | What you write instead |
 | --- | --- | --- |
-| [`layers/billing/server/routes/paddle/webhook.post.ts`](layers/billing/server/routes/paddle/webhook.post.ts) | HMAC-verifies, then hands the event to `applyPaddleEvent` | `stripe.webhooks.constructEvent` over the raw body |
-| [`layers/billing/server/utils/paddle.ts`](layers/billing/server/utils/paddle.ts) | Classifies a provider event into an entitlement change | Map `customer.subscription.*` / `charge.refunded` / `charge.dispute.*` onto the same verbs |
-| [`layers/billing/server/utils/paddle-api.ts`](layers/billing/server/utils/paddle-api.ts) | Server-side calls (the self-serve portal link) | Billing Portal session create |
-| [`layers/billing/app/composables/usePaddle.ts`](layers/billing/app/composables/usePaddle.ts) | Opens checkout in the browser | Stripe Checkout redirect or embedded |
+| [`layers/billing/server/utils/stripe-events.ts`](layers/billing/server/utils/stripe-events.ts) | Translates each Stripe event into a `BillingEvent`, fetching a Checkout Session's line items or the invoice behind a refund where the payload lacks them. The mapping table is in its header | The same translation for the new provider's events and verbs |
+| [`layers/billing/server/utils/stripe.ts`](layers/billing/server/utils/stripe.ts) | `verifyStripeSignature`: the `Stripe-Signature` HMAC over the raw body, with a timestamp tolerance | The new provider's signature scheme |
+| [`layers/billing/server/utils/stripe-api.ts`](layers/billing/server/utils/stripe-api.ts) | Server-side calls: Checkout Session create, portal links, subscription cancel, line items, payment refs | The new provider's REST calls for the same jobs |
+| [`layers/billing/server/routes/stripe/webhook.post.ts`](layers/billing/server/routes/stripe/webhook.post.ts) | Verifies, translates, hands the event to `applyBillingEvent`, and maps the outcome to a status code and an ops alert | A route at the new provider's path that does the same three steps |
+| [`layers/billing/server/api/billing/checkout.post.ts`](layers/billing/server/api/billing/checkout.post.ts) and [`portal.post.ts`](layers/billing/server/api/billing/portal.post.ts) | Create the hosted Checkout Session and the portal link for the signed-in account | The same two routes against the new provider |
+| [`layers/billing/app/composables/useCheckout.ts`](layers/billing/app/composables/useCheckout.ts) | Asks the server for a Checkout URL and redirects the browser to it | Keep it for a hosted redirect; an overlay or embedded checkout needs its own script and CSP entries |
+| [`layers/billing/server/utils/stripe-prices.ts`](layers/billing/server/utils/stripe-prices.ts) | The price catalogue: which configured price id is a subscription and which a pass, and the foreign-product check | The same catalogue keyed on the new provider's price ids and `runtimeConfig` names |
+| [`layers/billing/server/utils/billing-refs.ts`](layers/billing/server/utils/billing-refs.ts) | The ref prefixes (`sub_`, `pi_`, `comp_`) that tell a subscription row from a pass row | The new provider's id prefixes |
 
 **Ordered steps:**
 
-1. **Rename the columns, don't repurpose them.** `entitlements.paddle_subscription_id`
-   and `paddle_customer_id` become `provider_subscription_id` / `provider_customer_id`
-   via `bun db:generate`. Keep the **unique index** on the subscription id — it is not
-   a nicety, it is the entire idempotency mechanism for webhook redelivery.
-2. **Reimplement `applyPaddleEvent`** with the same return shape. Read its tests
-   (`layers/billing/test/paddle.test.ts`) first and port them — they encode the rules that cost money
-   when wrong, particularly that **any** approved refund ends the buyer's access, and
-   that a chargeback the merchant later *wins* restores access — the buyer's one-off
-   pass and the referral reward it earned — from `restore_period_end`.
+1. **Rename the columns only if the ids need it.** `entitlements.billing_ref`
+   and `provider_customer_id` are already provider-neutral. Keep the **unique index** on
+   `billing_ref` — it is not a nicety, it is the entire idempotency mechanism for webhook
+   redelivery.
+2. **Write the translation to `BillingEvent`** with the same output shape. Read the
+   existing tests (`layers/billing/test/stripe-events.test.ts` for the translation,
+   `layers/billing/test/entitlements.test.ts` for what it feeds) and port them: they encode the
+   rules that cost money when wrong, particularly that **any** approved refund ends the buyer's
+   access, and that a chargeback the merchant later *wins* restores access — the buyer's one-off
+   pass and the referral reward it earned — from `restore_period_end`. The tests on
+   `applyBillingEvent` and everything after it stay as they are.
 3. **Keep `revokeForAdjustment` and `revokeDerivedEntitlements` untouched.** They live
    in `layers/billing/server/utils/entitlements.ts`, are provider-agnostic, and are what makes a
    refund claw back the referral reward it paid for.
 4. **Keep `layers/billing/server/utils/billing-notifications.ts` › `decideNotification`.** It fires
    on status *transitions*, not events — the reason billing mail here is readable
-   rather than noise. Stripe's event stream is at least as chatty as Paddle's.
-5. **Re-point the deterministic refs** in `layers/billing/server/utils/paddle-refs.ts`. They are how a
+   rather than noise.
+5. **Re-point the deterministic refs** in `layers/billing/server/utils/billing-refs.ts`. They are how a
    grant is idempotent without a ledger table; the derivation is yours to change, the
    determinism is not.
-6. **Update the CSP** in `shared/security-headers.ts`: `js.stripe.com` in `script-src` and
-   `frame-src`, Paddle out. `test/security-headers.test.ts` will tell you if you missed it.
-7. **You are now the merchant of record.** Paddle handled global VAT and sales tax;
-   Stripe does not unless you add Stripe Tax, and you take on the registration and
-   remittance obligations either way. This is a business decision, not a code one —
-   make it deliberately, and update `privacy.vue` / `terms.vue` to match.
+6. **Update the CSP** in `shared/security-headers.ts` for whatever the new provider's checkout
+   loads. A hosted redirect (what `useCheckout.ts` does) needs no origin; an overlay needs its
+   script, frame and connect hosts. `test/security-headers.test.ts` will tell you if you missed it.
+7. **Mind who is the merchant of record.** Stripe Managed Payments makes Stripe, as Link, the
+   merchant of record for digital goods: it handles global VAT and sales tax. A plain
+   processor does not, so after a swap to one you take on the registration and remittance
+   obligations, with Stripe Tax or its equivalent at best calculating them. This is a business
+   decision, not a code one — make it deliberately, and update `privacy.vue` / `terms.vue` to match.
 
 ---
 

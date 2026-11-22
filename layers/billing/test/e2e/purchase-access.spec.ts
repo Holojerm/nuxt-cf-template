@@ -1,11 +1,11 @@
 // Spec 2 — buy → access.
 //
 // Drives a real purchase through the real money path: sign in, POST a signed
-// Paddle webhook exactly as Paddle would deliver it, and prove the dashboard
+// Stripe webhook exactly as Stripe would deliver it, and prove the dashboard
 // unlocks and GET /api/billing/entitlement agrees. Two variants, because the
 // entitlements table tells a pass and a subscription apart by the ref's
-// prefix (layers/billing/server/utils/paddle-refs.ts) and the two exercise different code in
-// applyPaddleEvent (grantPass vs. upsertSubscription) — see
+// prefix (layers/billing/server/utils/billing-refs.ts) and the two exercise different code in
+// applyBillingEvent (grantPass vs. upsertSubscription) — see
 // layers/billing/server/utils/entitlements.ts.
 //
 // Each variant signs in as its own fresh user rather than sharing one, on
@@ -20,22 +20,28 @@ import {
   expectAccess,
   expectUnlocked,
   expectWebhookAccepted,
+  passPurchaseEvent,
+  registerPassSession,
   subscriptionEvent,
   test,
-  transactionCompletedEvent,
   uniqueEmail,
-  uniquePaddleRef,
+  uniqueStripeRef,
   watchForViolations,
 } from './fixtures'
 
 test.describe('buy → access', () => {
-  test('a one-time pass purchase unlocks the dashboard', async ({ signInAs, sendPaddleEvent }) => {
+  test('a one-time pass purchase unlocks the dashboard', async ({ signInAs, sendStripeEvent }) => {
     const email = uniqueEmail('buy-pass')
     const { userId, page, context } = await signInAs(email, 'Pass Buyer')
     const violations = watchForViolations(page)
 
-    const transactionId = uniquePaddleRef('txn_', 'buy-pass')
-    const response = await sendPaddleEvent(transactionCompletedEvent({ userId, transactionId }))
+    // The webhook asks Stripe what the session sold; the stub answers from this.
+    const sessionId = uniqueStripeRef('cs_', 'buy-pass')
+    const paymentIntentId = uniqueStripeRef('pi_', 'buy-pass')
+    await registerPassSession(sessionId)
+    const response = await sendStripeEvent(
+      passPurchaseEvent({ userId, sessionId, paymentIntentId }),
+    )
     await expectWebhookAccepted(response)
 
     // The onboarding checklist ('Get set up', app/components/Onboarding/Checklist.vue)
@@ -66,15 +72,15 @@ test.describe('buy → access', () => {
     await violations.assertClean()
   })
 
-  test('a subscription activation unlocks the dashboard', async ({ signInAs, sendPaddleEvent }) => {
+  test('a subscription activation unlocks the dashboard', async ({ signInAs, sendStripeEvent }) => {
     const email = uniqueEmail('buy-subscription')
     const { userId, page, context } = await signInAs(email, 'Subscriber')
     const violations = watchForViolations(page)
 
-    const subscriptionId = uniquePaddleRef('sub_', 'buy-subscription')
-    const response = await sendPaddleEvent(
+    const subscriptionId = uniqueStripeRef('sub_', 'buy-subscription')
+    const response = await sendStripeEvent(
       subscriptionEvent({
-        eventType: 'subscription.activated',
+        eventType: 'customer.subscription.created',
         userId,
         subscriptionId,
         status: 'active',

@@ -11,12 +11,12 @@
 //     ['active', 'trialing'], so requireSubscription 402s for the whole of
 //     dunning. Access is genuinely gone. Nothing here says "you still have
 //     access until…", because the code does not grant it.
-//   - "Paddle retries the card automatically" — true, on Paddle's dunning
-//     schedule. The schedule itself is not stated: it's configured in Paddle,
+//   - "Stripe retries the card automatically" — true, on Stripe's retry
+//     schedule. The schedule itself is not stated: it's configured in Stripe,
 //     not here, so a number in this copy would be a guess that reads as a
 //     promise.
 //   - No date. `current_period_end` on a past_due row may be the period that
-//     went unpaid or the one Paddle already rolled into — we can't tell from
+//     went unpaid or the one Stripe already rolled into — we can't tell from
 //     the column, so any sentence built on it would be a coin flip. The billing
 //     history table below shows the raw value under its own neutral label,
 //     which is the honest way to present a field you can't interpret.
@@ -37,7 +37,7 @@
 // this component exists to get right. Rationale goes here, not up there.
 
 interface Props {
-  /** False only when there is no Paddle customer to open a portal for. */
+  /** False only when there is no Stripe customer to open a portal for. */
   portalAvailable: boolean
 }
 
@@ -74,7 +74,7 @@ async function updatePaymentMethod(): Promise<void> {
       description:
         code === 'portal_unconfigured'
           ? `The billing portal isn't configured on this deployment yet. Email ${config.public.supportEmail} and we'll update the card or cancel with you.`
-          : `Paddle didn't answer. Try again in a minute, or email ${config.public.supportEmail} and we'll update the card or cancel with you.`,
+          : `Stripe didn't answer. Try again in a minute, or email ${config.public.supportEmail} and we'll update the card or cancel with you.`,
       color: 'error',
     })
   } finally {
@@ -93,7 +93,7 @@ async function updatePaymentMethod(): Promise<void> {
     <template #description>
       <div class="flex flex-col gap-3">
         <p>
-          Your subscription is paused while it's unpaid. Paddle, our payment processor, retries the
+          Your subscription is paused while it's unpaid. Stripe, our payment processor, retries the
           card automatically.
         </p>
 
@@ -102,7 +102,7 @@ async function updatePaymentMethod(): Promise<void> {
 
         <!-- Both ways out, not just the one that keeps us paid: the portal
              button below updates the card, and the same portal cancels. With
-             no Paddle customer at all (never the case for past_due, kept for
+             no Stripe customer at all (never the case for past_due, kept for
              the type) there is nothing to link, so name a human instead. -->
         <p v-if="!portalAvailable" class="text-sm">
           Email {{ config.public.supportEmail }} and we'll update the card or cancel with you.

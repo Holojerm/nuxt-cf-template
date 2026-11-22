@@ -1,8 +1,8 @@
 // Cancellation reasons, asked once on /account immediately before we hand the
-// customer to Paddle's portal.
+// customer to Stripe's billing portal.
 //
 // ── Why here, and why it must not block ──────────────────────────────────────
-// Cancelling happens on Paddle's hosted checkout portal — a different origin,
+// Cancelling happens on Stripe's hosted billing portal — a different origin,
 // where neither a PostHog survey nor anything else of ours can run. The moment
 // just before the redirect is the only place this question can be asked at all.
 //

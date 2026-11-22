@@ -4,10 +4,10 @@
 //
 // The cancellation path is deliberately prominent. Making people email support
 // to stop paying is a dark pattern, it generates the support load you least want,
-// and in several jurisdictions it isn't legal. One button, straight to Paddle.
+// and in several jurisdictions it isn't legal. One button, straight to Stripe's portal.
 //
-// The one thing between that button and Paddle is a question, never an obstacle:
-// cancelling happens on Paddle's hosted portal, a different origin where no
+// The one thing between that button and the portal is a question, never an obstacle:
+// cancelling happens on Stripe's hosted portal, a different origin where no
 // survey of ours can run, so this is the only moment the reason can be asked at
 // all. The prompt's primary button leaves whether or not anything is answered,
 // and no retention offer is inserted — see layers/billing/app/utils/churn.ts.
@@ -91,7 +91,7 @@ async function openBillingPortal(): Promise<void> {
   portalPending.value = true
   try {
     const links = await $fetch('/api/billing/portal', { method: 'POST' })
-    // Deep-link straight to cancel when Paddle gave us one — the person who
+    // Deep-link straight to cancel when Stripe gave us one — the person who
     // clicked "Manage or cancel" on a live subscription usually means cancel,
     // and burying it one screen deeper is the pattern this page exists to avoid.
     const target = links.cancelUrl || links.overviewUrl
@@ -102,13 +102,13 @@ async function openBillingPortal(): Promise<void> {
     const code = (error as { data?: { data?: { code?: string } } }).data?.data?.code
     // Loud, never a dead end: the portal is the cancel path, so when it fails
     // the toast says so and names a human. `portal_unconfigured` is the 503 a
-    // fork gets until NUXT_PADDLE_API_KEY is set (README › Billing).
+    // fork gets until NUXT_STRIPE_SECRET_KEY is set (README › Billing).
     toast.add({
       title: 'Could not open the billing portal',
       description:
         code === 'portal_unconfigured'
           ? `The billing portal isn't configured on this deployment yet. Email ${config.public.supportEmail} and we'll cancel it for you the same day.`
-          : `Paddle didn't answer. Try again in a minute, or email ${config.public.supportEmail} and we'll cancel it for you the same day.`,
+          : `Stripe didn't answer. Try again in a minute, or email ${config.public.supportEmail} and we'll cancel it for you the same day.`,
       color: 'error',
     })
   } finally {
@@ -224,8 +224,8 @@ async function confirmDelete(): Promise<void> {
 
 // Status is never carried by colour alone (DESIGN.md › Accessibility): every
 // state pairs its hue with an icon and a word. `past_due` is amber — reversible
-// risk — and says "payment failed" rather than repeating Paddle's jargon back
-// at someone who has never read Paddle's docs.
+// risk — and says "payment failed" rather than repeating Stripe's jargon back
+// at someone who has never read Stripe's docs.
 // Shared with the admin console's badge (app/utils/admin.ts › billingStateMeta).
 // The two were hand-maintained copies and had already drifted on two of the
 // four states — on screens whose whole point is that support and customer see
@@ -339,8 +339,8 @@ useSeo({
       </BillingPastDueAlert>
 
       <div v-else-if="billing?.active" class="flex flex-col gap-4">
-        <!-- `cancelsAt` first, because Paddle keeps a cancelled subscription at
-             status `active` until the notice period ends — so without this the
+        <!-- `cancelsAt` first, because Stripe keeps a subscription that is set to cancel at
+             status `active` until the period ends — so without this the
              page tells someone who cancelled weeks ago that they renew
              automatically, next to no cancel button. -->
         <!-- Referral days are a pass by shape and not by story, so they get
@@ -472,7 +472,8 @@ useSeo({
       <template #footer>
         <div class="flex flex-col gap-2">
           <p class="text-sm text-muted">
-            Invoices and receipts come from Paddle, our merchant of record.
+            Receipts and your card statement say Link, Stripe's checkout brand: Stripe is our
+            merchant of record.
           </p>
           <!-- Only when there is one to explain. A referral row's "Ends" date
                sits after everything else the account holds, which reads as an
@@ -636,7 +637,7 @@ useSeo({
               :description="
                 billing?.cancelsOnDeletion
                   ? 'We couldn\'t cancel your subscription, so nothing was deleted. Cancel it from the billing portal, then come back and delete.'
-                  : 'Deleting your account wouldn\'t stop the charges — Paddle owns the subscription, not this account. Cancel it from the billing portal, then come back and delete.'
+                  : 'Deleting your account wouldn\'t stop the charges — Stripe owns the subscription, not this account. Cancel it from the billing portal, then come back and delete.'
               "
             />
             <UButton

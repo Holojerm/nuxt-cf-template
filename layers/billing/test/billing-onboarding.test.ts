@@ -31,7 +31,7 @@ describe('onboarding signal from billing', () => {
   it('reads entitlementActive from an active subscription row', async () => {
     await db.insert(schema.entitlements).values({
       userId: USER_ID,
-      paddleSubscriptionId: 'sub_1',
+      billingRef: 'sub_1',
       status: 'active',
     })
     expect(await computeOnboardingInputs(db, USER_ID)).toMatchObject({ entitlementActive: true })
@@ -40,7 +40,7 @@ describe('onboarding signal from billing', () => {
   it('is not active for a past_due subscription: dunning grants no access', async () => {
     await db.insert(schema.entitlements).values({
       userId: USER_ID,
-      paddleSubscriptionId: 'sub_1',
+      billingRef: 'sub_1',
       status: 'past_due',
     })
     expect(await computeOnboardingInputs(db, USER_ID)).toMatchObject({ entitlementActive: false })

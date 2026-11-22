@@ -52,12 +52,12 @@ describe('requireAccess with billing registered', () => {
   it('passes a user with an active subscription and returns the entitlement', async () => {
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: 'sub_gate',
+      billingRef: 'sub_gate',
       status: 'active',
     })
     const grant = await requireAccess({} as never)
     expect(grant.user).toEqual({ id: USER })
-    expect(grant).toMatchObject({ entitlement: { paddleSubscriptionId: 'sub_gate' } })
+    expect(grant).toMatchObject({ entitlement: { billingRef: 'sub_gate' } })
   })
 
   it('passes the product key through to the gate', async () => {
@@ -88,7 +88,7 @@ describe('deletion guards', () => {
   it('lets a pass through (nothing renews it) and refuses a live subscription', async () => {
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: 'txn_pass',
+      billingRef: 'pi_pass',
       status: 'active',
       currentPeriodEnd: new Date(Date.now() + 86_400_000),
     })
@@ -97,7 +97,7 @@ describe('deletion guards', () => {
 
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: 'sub_renews',
+      billingRef: 'sub_renews',
       status: 'active',
     })
     expect(await getDeletionGuards()[0]!.check(db, USER)).toEqual({
@@ -114,7 +114,7 @@ describe('deletion guards', () => {
     })
     await db.insert(schema.entitlements).values({
       userId: USER,
-      paddleSubscriptionId: 'sub_renews',
+      billingRef: 'sub_renews',
       status: 'active',
     })
     expect(await deleteAccount(db, USER)).toMatchObject({

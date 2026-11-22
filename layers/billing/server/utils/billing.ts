@@ -1,4 +1,4 @@
-// Subscription gating built on the entitlements table (populated by the Paddle
+// Subscription gating built on the entitlements table (populated by the Stripe
 // webhook). Auto-imported Nitro-wide like every server util.
 //
 // This file is the H3-facing half: "does the caller get in?". The writes and
@@ -14,8 +14,8 @@ import { findActiveEntitlement } from './entitlements'
 /**
  * The user's granting entitlement for a product, or null.
  *
- * `sub_…` rows are status-driven (Paddle flips the status when they end);
- * `txn_…` passes expire by timestamp because no lifecycle event ever fires.
+ * `sub_…` rows are status-driven (Stripe flips the status when they end);
+ * `pi_…` passes expire by timestamp because no lifecycle event ever fires.
  */
 export async function getEntitlement(
   userId: string,
@@ -44,7 +44,7 @@ export async function requireSubscription(event: H3Event, productKey = 'default'
   return { user, entitlement }
 }
 
-// `isPass` used to live here. It moved to layers/billing/server/utils/paddle-refs.ts, along
+// `isPass` used to live here. It moved to layers/billing/server/utils/billing-refs.ts, along
 // with every other rule about what a ref prefix means, because four files were
 // reading that rule and this one is not a leaf — it reaches back into
 // entitlements.ts, which also needs the predicate. Nitro auto-imports the new

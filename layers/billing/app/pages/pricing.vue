@@ -1,12 +1,16 @@
 <script setup lang="ts">
 // The buy page. Three things it has to get right:
 //   1. Never open a checkout that will fail — a plan with no configured price id
-//      renders disabled with the reason, rather than throwing at Paddle.
+//      renders disabled with the reason, rather than failing at Stripe.
 //   2. Signed-out visitors can read prices; clicking a plan sends them to sign
-//      in first, because the checkout threads `custom_data.userId` and a
-//      purchase without one can't be mapped back to an account by the webhook.
+//      in first, because the server stamps the session's account on the Stripe
+//      Checkout Session and a purchase without one can't be mapped back to an
+//      account by the webhook.
 //   3. Existing subscribers get told they already have access instead of being
 //      sold a second subscription.
+//   4. Stripe sends the buyer back here with ?checkout=success or =canceled.
+//      Success waits, briefly and calmly, for the webhook to grant access (the
+//      redirect itself grants nothing); canceled is just the page again.
 //
 // It is also the page answer engines care most about, so it carries the Offer
 // nodes and the FAQPage — both built from the same arrays the template renders
@@ -28,7 +32,7 @@ definePageMeta({
 
 const config = useRuntimeConfig()
 const { loggedIn } = useUserSession()
-const { openCheckout, ready: paddleReady } = usePaddle()
+const { startCheckout } = useCheckout()
 const plans = usePlans()
 const site = useSiteContext()
 const toast = useToast()
@@ -47,6 +51,41 @@ watch(loggedIn, (value) => {
 
 const pending = ref<string | null>(null)
 
+// ── The return from Stripe ──────────────────────────────────────────────────
+// The webhook, not this redirect, grants access, and it can land a moment after
+// the buyer does. So a success return polls the entitlement for a short while:
+// 'waiting' while it does, 'active' once access shows, 'late' when it did not
+// within the cap (the payment went through; the page says so and names support).
+const returned = checkoutReturnState(route.query)
+const confirming = ref<'idle' | 'waiting' | 'active' | 'late'>('idle')
+const POLL_TRIES = 10
+const POLL_INTERVAL_MS = 2000
+
+async function confirmAccess() {
+  confirming.value = 'waiting'
+  for (let attempt = 0; attempt < POLL_TRIES; attempt++) {
+    await refreshEntitlement()
+    if (entitlement.value?.active) {
+      confirming.value = 'active'
+      return
+    }
+    if (attempt < POLL_TRIES - 1) await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+  }
+  confirming.value = 'late'
+}
+
+onMounted(() => {
+  if (!returned) return
+  // Once per return: the funnel events are UX signals, never money.
+  const posthog = useNuxtApp().$posthog as
+    | { capture: (event: string, properties?: Record<string, unknown>) => void }
+    | undefined
+  posthog?.capture(returned === 'success' ? CHECKOUT_COMPLETED : CHECKOUT_ABANDONED, {
+    product_key: 'default',
+  })
+  if (returned === 'success' && loggedIn.value) confirmAccess()
+})
+
 /** The promoted plan comes from the data, not from a second literal. */
 const featuredId = PLANS.find((plan) => plan.featured)?.id ?? null
 
@@ -59,19 +98,18 @@ async function choose(plan: (typeof plans.value)[number]) {
   pending.value = plan.id
   // `checkout_started` is the funnel's denominator; the plan and the viewport
   // ride on it so "which card sold, on which kind of screen" is one query.
-  const opened = await openCheckout(plan.priceId, 'default', {
-    plan_id: plan.id,
+  const started = await startCheckout(plan.id, {
     viewport: window.innerWidth < 768 ? 'narrow' : 'wide',
   })
+  // On success the browser is already on its way to Stripe; keep the spinner.
+  if (started) return
   pending.value = null
 
-  if (!opened) {
-    toast.add({
-      title: 'Checkout unavailable',
-      description: 'Paddle did not load. Check the client token and try again.',
-      color: 'error',
-    })
-  }
+  toast.add({
+    title: 'Checkout unavailable',
+    description: `We couldn't start the payment. Try again in a minute, or email ${config.public.supportEmail}.`,
+    color: 'error',
+  })
 }
 
 // Why a plan cannot be bought. The operator hints (which env var to set) are
@@ -79,9 +117,7 @@ async function choose(plan: (typeof plans.value)[number]) {
 // plain sentence and never an instruction to a visitor.
 const unavailableHint = computed(() =>
   import.meta.dev
-    ? paddleReady.value
-      ? 'No price ID configured for this plan yet.'
-      : 'Set NUXT_PUBLIC_PADDLE_CLIENT_TOKEN to enable checkout.'
+    ? 'Set NUXT_PUBLIC_STRIPE_PRICE_MONTHLY and NUXT_PUBLIC_STRIPE_PRICE_PASS to enable checkout.'
     : 'Checkout isn’t available yet.',
 )
 
@@ -119,8 +155,32 @@ useSeo({
       </p>
     </div>
 
+    <!-- The return from Stripe. role=status so the change is announced; calm
+         on purpose: a card payment is not an emergency. -->
     <UAlert
-      v-if="gatedFrom"
+      v-if="confirming === 'waiting'"
+      color="info"
+      variant="subtle"
+      icon="i-lucide-loader-circle"
+      title="Thanks, confirming your payment"
+      description="This usually takes a few seconds. You can stay on this page."
+      class="mx-auto max-w-2xl"
+      role="status"
+    />
+
+    <UAlert
+      v-else-if="confirming === 'late'"
+      color="success"
+      variant="subtle"
+      icon="i-lucide-circle-check"
+      title="Your payment went through"
+      :description="`Access will appear shortly. If it hasn't within a few minutes, email ${config.public.supportEmail}.`"
+      class="mx-auto max-w-2xl"
+      role="status"
+    />
+
+    <UAlert
+      v-else-if="gatedFrom"
       color="info"
       variant="subtle"
       icon="i-lucide-lock"
@@ -196,6 +256,11 @@ useSeo({
       </UCard>
     </div>
 
+    <p class="mx-auto max-w-2xl text-center text-sm text-muted">
+      Payment is handled by Stripe, who sell {{ config.public.appName }} to you as the merchant of
+      record. Your receipt and card statement will say Link, Stripe's checkout brand.
+    </p>
+
     <!--
       The FAQ is rendered from the same PRICING_FAQ array that feeds the
       FAQPage JSON-LD above. Answer engines quote these strings; visitors read
@@ -210,8 +275,9 @@ useSeo({
         </div>
       </dl>
       <p class="text-sm text-muted">
-        The <ULink to="/terms" class="text-primary underline underline-offset-2">Terms</ULink> carry
-        the full refund and cancellation policy.
+        The
+        <ULink to="/terms" class="text-primary underline underline-offset-2">Terms</ULink>
+        carry the full refund and cancellation policy.
       </p>
     </section>
   </div>

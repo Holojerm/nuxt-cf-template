@@ -9,7 +9,7 @@ import {
   ANALYTICS_EVENTS,
   EVENT_NAME_PATTERN,
   isAnalyticsEvent,
-  paddleSubscriptionEvent,
+  billingSubscriptionEvent,
 } from '../shared/utils/analytics-events'
 
 describe('analytics event registry', () => {
@@ -22,11 +22,10 @@ describe('analytics event registry', () => {
     expect(isAnalyticsEvent('constructor')).toBe(false)
   })
 
-  it('keeps the names the webhook recorded before the registry existed', () => {
-    // Previously `paddle_${eventType.replace('.', '_')}` — PostHog history is
-    // keyed on these strings, so the mapping must reproduce them exactly.
-    expect(paddleSubscriptionEvent('subscription.past_due')).toBe('paddle_subscription_past_due')
-    expect(paddleSubscriptionEvent('subscription.canceled')).toBe('paddle_subscription_canceled')
-    expect(paddleSubscriptionEvent('subscription.brand_new')).toBe('paddle_subscription_updated')
+  it('maps a subscription event type to its registered name', () => {
+    // Registered names only: an unknown suffix must not mint a new event name.
+    expect(billingSubscriptionEvent('subscription.created')).toBe('billing_subscription_created')
+    expect(billingSubscriptionEvent('subscription.canceled')).toBe('billing_subscription_canceled')
+    expect(billingSubscriptionEvent('subscription.brand_new')).toBe('billing_subscription_updated')
   })
 })

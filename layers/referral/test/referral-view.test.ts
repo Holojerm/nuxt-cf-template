@@ -32,8 +32,8 @@ beforeEach(async () => {
   await db.insert(schema.users).values({ id: USER, email: 'rv@example.com', name: 'RV' })
   const row = (ref: string, days: number) => ({
     userId: USER,
-    paddleCustomerId: 'ctm_1',
-    paddleSubscriptionId: ref,
+    providerCustomerId: 'ctm_1',
+    billingRef: ref,
     productKey: 'default',
     status: 'active',
     currentPeriodEnd: new Date(Date.now() + days * DAY),
@@ -68,7 +68,7 @@ describe('referralKind on the row that describes the plan', () => {
   it('is the kind of the describing row, and null when nothing describes', async () => {
     registerReferral()
     // Only the welcome grant is granting access: it is the row that describes.
-    await env.DB.exec("DELETE FROM entitlements WHERE paddle_subscription_id <> 'welcome_a'")
+    await env.DB.exec("DELETE FROM entitlements WHERE billing_ref <> 'welcome_a'")
     expect((await buildEntitlementView(db, USER)).referralKind).toBe('welcome')
 
     await env.DB.exec('DELETE FROM entitlements')

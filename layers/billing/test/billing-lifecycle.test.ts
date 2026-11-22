@@ -28,7 +28,7 @@ async function addUser(id: string, createdDaysAgo = 30, email = `${id}@example.c
 async function addEntitlement(userId: string, ref: string, endsInDays: number | null) {
   await db.insert(schema.entitlements).values({
     userId,
-    paddleSubscriptionId: ref,
+    billingRef: ref,
     status: 'active',
     currentPeriodEnd: endsInDays === null ? null : daysFromNow(endsInDays),
   })
@@ -69,19 +69,19 @@ describe('lifecycle registration', () => {
 describe('passExpiringStep.due', () => {
   it('picks a paid pass ending within 3 days that nothing takes over from', async () => {
     await addUser('ending')
-    await addEntitlement('ending', 'txn_1', 2)
+    await addEntitlement('ending', 'pi_1', 2)
     await addUser('later')
-    await addEntitlement('later', 'txn_2', 5)
+    await addEntitlement('later', 'pi_2', 5)
     await addUser('renews')
-    await addEntitlement('renews', 'txn_3', 2)
+    await addEntitlement('renews', 'pi_3', 2)
     await addEntitlement('renews', 'sub_4', null)
     await addUser('stacked')
-    await addEntitlement('stacked', 'txn_5', 2)
-    await addEntitlement('stacked', 'txn_6', 32)
+    await addEntitlement('stacked', 'pi_5', 2)
+    await addEntitlement('stacked', 'pi_6', 32)
     await addUser('comped')
     await addEntitlement('comped', 'comp_7', 2)
     await addUser('lapsed')
-    await addEntitlement('lapsed', 'txn_8', -1)
+    await addEntitlement('lapsed', 'pi_8', -1)
 
     const due = await passExpiringStep.due(db, NOW, 100)
     expect(due.map((r) => r.userId)).toEqual(['ending'])
@@ -91,7 +91,7 @@ describe('passExpiringStep.due', () => {
 
   it('sends mandatory mail with no unsubscribe link, whatever the preferences say', async () => {
     await addUser('ending')
-    await addEntitlement('ending', 'txn_1', 2)
+    await addEntitlement('ending', 'pi_1', 2)
     const { deps, sent } = fakeDeps()
 
     await runLifecycle(db, [passExpiringStep], deps, NOW)

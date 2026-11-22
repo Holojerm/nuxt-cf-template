@@ -1,6 +1,6 @@
 // Billing's side of account deletion and export, against a real D1 inside
 // workerd: the live-subscription deletion guard (the one friction this app adds
-// to an exit, because Paddle keeps charging a deleted account otherwise), the
+// to an exit, because Stripe keeps charging a deleted account otherwise), the
 // retention of entitlements under the anonymized `users` row, and the
 // entitlements section of the data export. Core's own deletion/export tests
 // run without billing in test/account.test.ts and test/extensions.test.ts.
@@ -49,7 +49,7 @@ describe('deleteAccount with billing registered', () => {
     await db.insert(schema.entitlements).values({
       id: 'ent-1',
       userId: USER,
-      paddleSubscriptionId: 'txn_abc',
+      billingRef: 'pi_abc',
       productKey: 'default',
       status: 'active',
       currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 10),
@@ -69,7 +69,7 @@ describe('deleteAccount with billing registered', () => {
     await db.insert(schema.entitlements).values({
       id: 'ent-live',
       userId: USER,
-      paddleSubscriptionId: 'sub_live123',
+      billingRef: 'sub_live123',
       productKey: 'default',
       status: 'active',
       currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
@@ -100,7 +100,7 @@ describe('deleteAccount with billing registered', () => {
       await db.insert(schema.entitlements).values({
         id: `ent-${status}`,
         userId: USER,
-        paddleSubscriptionId: `sub_${status}`,
+        billingRef: `sub_${status}`,
         productKey: 'default',
         status,
         currentPeriodEnd: new Date(Date.now() - 1000),
@@ -116,7 +116,7 @@ describe('deleteAccount with billing registered', () => {
       await db.insert(schema.entitlements).values({
         id: `ent-${status}`,
         userId: USER,
-        paddleSubscriptionId: `sub_${status}`,
+        billingRef: `sub_${status}`,
         productKey: 'default',
         status,
         currentPeriodEnd: new Date(Date.now() - 1000),
@@ -132,7 +132,7 @@ describe('deleteAccount with billing registered', () => {
       {
         id: 'ent-comp',
         userId: USER,
-        paddleSubscriptionId: 'comp_abc',
+        billingRef: 'comp_abc',
         productKey: 'default',
         status: 'active',
         currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24),
@@ -140,7 +140,7 @@ describe('deleteAccount with billing registered', () => {
       {
         id: 'ent-pass',
         userId: USER,
-        paddleSubscriptionId: 'txn_abc',
+        billingRef: 'pi_abc',
         productKey: 'default',
         status: 'active',
         currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24),
@@ -154,7 +154,7 @@ describe('deleteAccount with billing registered', () => {
     await db.insert(schema.entitlements).values({
       id: 'ent-other-product',
       userId: USER,
-      paddleSubscriptionId: 'sub_other_product',
+      billingRef: 'sub_other_product',
       productKey: 'addon',
       status: 'trialing',
       currentPeriodEnd: new Date(Date.now() + 1000 * 60 * 60 * 24),
@@ -170,7 +170,7 @@ describe('exportAccount with billing registered', () => {
     await db.insert(schema.entitlements).values({
       id: 'ent-1',
       userId: USER,
-      paddleSubscriptionId: 'txn_abc',
+      billingRef: 'pi_abc',
       productKey: 'default',
       status: 'active',
       currentPeriodEnd: new Date('2026-01-01T00:00:00Z'),
@@ -179,7 +179,7 @@ describe('exportAccount with billing registered', () => {
     expect(result?.entitlements).toEqual([
       {
         id: 'ent-1',
-        paddleSubscriptionId: 'txn_abc',
+        billingRef: 'pi_abc',
         productKey: 'default',
         status: 'active',
         currentPeriodEnd: '2026-01-01T00:00:00.000Z',
@@ -213,7 +213,7 @@ describe('billing liveness agrees across the deletion guard and the cancel count
     { status: 'canceled', scheduled: null, live: false, why: 'terminal' },
     { status: 'refunded', scheduled: null, live: false, why: 'terminal' },
     { status: 'chargeback', scheduled: null, live: false, why: 'terminal' },
-    // The one Paddle does not express in `status` at all: it keeps a cancelled
+    // The one Stripe does not express in `status` at all: it keeps a cancelled
     // subscription `active` for the whole notice period.
     { status: 'active', scheduled: 'cancel', live: false, why: 'cancel at period end' },
     { status: 'active', scheduled: 'pause', live: true, why: 'a pause still resumes and bills' },
@@ -224,7 +224,7 @@ describe('billing liveness agrees across the deletion guard and the cancel count
     await db.insert(schema.entitlements).values({
       id: 'ent-matrix',
       userId: USER,
-      paddleSubscriptionId: 'sub_matrix',
+      billingRef: 'sub_matrix',
       productKey: 'default',
       status: testCase.status,
       scheduledChangeAction: testCase.scheduled,

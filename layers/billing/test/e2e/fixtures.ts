@@ -1,4 +1,4 @@
-// Billing's E2E fixtures: everything about the Paddle money path the browser
+// Billing's E2E fixtures: everything about the Stripe money path the browser
 // suite drives. The generic half (sign-in, unique emails, the console watcher)
 // stays in test/e2e/fixtures.ts, which every layer's specs build on.
 //
@@ -10,8 +10,8 @@
 // therefore just never show up while the suite's server is running.
 //
 // So state is driven THROUGH the server: sign in via POST /api/auth/dev, then
-// create or end entitlements by POSTing signed Paddle webhooks to
-// /paddle/webhook — the exact path a real purchase or cancellation takes,
+// create or end entitlements by POSTing signed Stripe webhooks to
+// /stripe/webhook — the exact path a real purchase or cancellation takes,
 // signature check and all. That's slower than an INSERT and is the point:
 // it's the only way to prove the money path works end to end rather than
 // asserting on state nothing real ever produced.
@@ -22,11 +22,12 @@ import { playwrightPort } from '../../../../scripts/worktree-port'
 import { expect as baseExpect, test as base } from '../../../../test/e2e/fixtures'
 import { workerAddressHeaders } from '../../../../test/lib/worker-address'
 import { billingE2e } from './fork-config'
-import { E2E_PADDLE_PRICES } from './paddle-prices'
-import { signPaddleWebhook } from './sign'
+import { signStripeWebhook } from './sign'
+import { E2E_STRIPE_PRICES } from './stripe-prices'
+import { registerWithStub } from './stripe-stub'
 
 export { expect, uniqueEmail, watchForViolations } from '../../../../test/e2e/fixtures'
-export { signPaddleWebhook }
+export { signStripeWebhook }
 
 export const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -34,94 +35,97 @@ export const DAY_MS = 24 * 60 * 60 * 1000
 // and across reruns, so a ref collides only with itself.
 const REF_TOKEN = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
 
-/** A realistic-shaped, unique Paddle ref for one scenario. */
-export function uniquePaddleRef(prefix: 'sub_' | 'txn_', caseName: string): string {
+/** A realistic-shaped, unique Stripe id for one scenario. */
+export function uniqueStripeRef(prefix: 'sub_' | 'pi_' | 'cs_', caseName: string): string {
   return `${prefix}e2e_${REF_TOKEN}_${caseName}`
 }
 
-// ─── Paddle event builders ───────────────────────────────────────────────────
-// Snake_case, matching layers/billing/server/utils/entitlements.ts's `paddleEventSchema` wire
-// shape field-for-field — see layers/billing/test/entitlements.test.ts for the same
-// convention on the vitest side.
+// ─── Stripe event builders ───────────────────────────────────────────────────
+// Stripe's envelope (`id`, `type`, `created` in seconds, `data.object`), with
+// only the fields layers/billing/server/utils/stripe-events.ts reads.
 
-export interface PaddleEventData {
+export interface StripeWebhookEvent {
   id: string
-  status?: string | null
-  customer_id?: string | null
-  subscription_id?: string | null
-  billed_at?: string | null
-  custom_data?: { userId?: string } | null
-  items?: { price: { id: string } }[] | null
-  current_billing_period?: { ends_at: string } | null
-  scheduled_change?: { action: string; effective_at?: string | null } | null
-  action?: string | null
-  type?: string | null
-  transaction_id?: string | null
+  type: string
+  created: number
+  data: { object: Record<string, unknown> }
 }
 
-export interface PaddleWebhookEvent {
-  event_id: string
-  event_type: string
-  occurred_at: string
-  data: PaddleEventData
-}
-
-export function buildPaddleEvent(eventType: string, data: PaddleEventData): PaddleWebhookEvent {
+export function buildStripeEvent(
+  type: string,
+  object: Record<string, unknown>,
+): StripeWebhookEvent {
   return {
-    event_id: `evt_e2e_${crypto.randomUUID()}`,
-    event_type: eventType,
-    occurred_at: new Date().toISOString(),
-    data,
+    id: `evt_e2e_${crypto.randomUUID()}`,
+    type,
+    created: Math.floor(Date.now() / 1000),
+    data: { object },
   }
 }
 
-/** A one-time pass purchase — `transaction.completed` with no `subscription_id`. */
-export function transactionCompletedEvent(params: {
+/**
+ * A one-time pass purchase: `checkout.session.completed` in payment mode. The
+ * webhook asks Stripe (the stub) what the session sold, so register the session
+ * with `registerPassSession` first. The pass's ref is the PaymentIntent id.
+ */
+export function passPurchaseEvent(params: {
   userId: string
-  transactionId: string
-  billedAt?: Date
-}): PaddleWebhookEvent {
-  return buildPaddleEvent('transaction.completed', {
-    id: params.transactionId,
-    status: 'completed',
-    customer_id: `ctm_${params.transactionId}`,
-    custom_data: { userId: params.userId },
-    items: [{ price: { id: E2E_PADDLE_PRICES.pass } }],
-    billed_at: (params.billedAt ?? new Date()).toISOString(),
+  sessionId: string
+  paymentIntentId: string
+}): StripeWebhookEvent {
+  return buildStripeEvent('checkout.session.completed', {
+    id: params.sessionId,
+    mode: 'payment',
+    payment_status: 'paid',
+    payment_intent: params.paymentIntentId,
+    customer: `cus_${params.sessionId}`,
+    client_reference_id: params.userId,
+    metadata: { userId: params.userId },
   })
 }
 
-/** Any `subscription.*` transition — activation, dunning, cancellation, all one shape. */
+/** Tell the Stripe stub the session sold the pass price. */
+export async function registerPassSession(sessionId: string): Promise<void> {
+  await registerWithStub({
+    sessions: { [sessionId]: [E2E_STRIPE_PRICES.pass] },
+  })
+}
+
+/** Any `customer.subscription.*` transition: activation, dunning, cancellation, all one shape. */
 export function subscriptionEvent(params: {
-  eventType: string
+  eventType:
+    | 'customer.subscription.created'
+    | 'customer.subscription.updated'
+    | 'customer.subscription.deleted'
   userId: string
   subscriptionId: string
   status: string
   currentPeriodEndsAt?: Date | null
-  scheduledChange?: { action: string; effectiveAt?: Date | null } | null
-}): PaddleWebhookEvent {
-  return buildPaddleEvent(params.eventType, {
+  cancelAt?: Date | null
+}): StripeWebhookEvent {
+  return buildStripeEvent(params.eventType, {
     id: params.subscriptionId,
     status: params.status,
-    customer_id: `ctm_${params.subscriptionId}`,
-    custom_data: { userId: params.userId },
-    items: [{ price: { id: E2E_PADDLE_PRICES.monthly } }],
-    current_billing_period: params.currentPeriodEndsAt
-      ? { ends_at: params.currentPeriodEndsAt.toISOString() }
-      : null,
-    scheduled_change: params.scheduledChange
-      ? {
-          action: params.scheduledChange.action,
-          effective_at: params.scheduledChange.effectiveAt?.toISOString() ?? null,
-        }
-      : null,
+    customer: `cus_${params.subscriptionId}`,
+    metadata: { userId: params.userId },
+    cancel_at: params.cancelAt ? Math.floor(params.cancelAt.getTime() / 1000) : null,
+    items: {
+      data: [
+        {
+          price: { id: E2E_STRIPE_PRICES.monthly, product: 'prod_e2e' },
+          current_period_end: params.currentPeriodEndsAt
+            ? Math.floor(params.currentPeriodEndsAt.getTime() / 1000)
+            : null,
+        },
+      ],
+    },
   })
 }
 
 /** Throws with the response body attached — a rejected webhook mid-flow is a confusing failure otherwise. */
 export async function expectWebhookAccepted(response: APIResponse): Promise<void> {
   if (!response.ok()) {
-    throw new Error(`Paddle webhook rejected: ${response.status()} ${await response.text()}`)
+    throw new Error(`Stripe webhook rejected: ${response.status()} ${await response.text()}`)
   }
 }
 
@@ -175,8 +179,8 @@ interface WorkerOverrides {
 
 export const test = base.extend<
   {
-    /** POST a signed, schema-valid Paddle event to /paddle/webhook. */
-    sendPaddleEvent: (event: PaddleWebhookEvent) => Promise<APIResponse>
+    /** POST a signed, schema-valid Stripe event to /stripe/webhook. */
+    sendStripeEvent: (event: StripeWebhookEvent) => Promise<APIResponse>
   },
   WorkerOverrides
 >({
@@ -210,18 +214,18 @@ export const test = base.extend<
         ],
       }
     : {}),
-  sendPaddleEvent: async ({ apiRequest }, use) => {
+  sendStripeEvent: async ({ apiRequest }, use) => {
     await use(async (event) => {
-      // Build the payload, THEN stamp+sign, THEN post — no step in between
-      // that could let the clock drift past the server's 5s tolerance before
-      // the request actually leaves. See signPaddleWebhook's timing contract.
+      // Build the payload, THEN sign, THEN post. The server tolerates five
+      // minutes of clock difference, but a signature is still only valid for
+      // the exact bytes it was made over.
       const body = JSON.stringify(event)
-      const signature = await signPaddleWebhook(body)
-      return apiRequest.post('/paddle/webhook', {
+      const signature = await signStripeWebhook(body)
+      return apiRequest.post('/stripe/webhook', {
         data: body,
         headers: {
           'content-type': 'application/json',
-          'paddle-signature': signature,
+          'stripe-signature': signature,
         },
       })
     })

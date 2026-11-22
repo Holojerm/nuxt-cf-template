@@ -8,9 +8,9 @@ afterEach(() => resetOpsSeverityForTest())
 describe('billing ops severity', () => {
   it('registers a missing webhook secret as critical, and leaves the rest at warning', () => {
     registerBillingExtensions()
-    const unconfigured = classifyOps('paddle_webhook_unconfigured', 1)
+    const unconfigured = classifyOps('stripe_webhook_unconfigured', 1)
     expect(unconfigured.severity).toBe('critical')
-    expect(unconfigured.action).toContain('NUXT_PADDLE_WEBHOOK_SECRET')
-    expect(classifyOps('paddle_webhook_rejected', 1).severity).toBe('warning')
+    expect(unconfigured.action).toContain('NUXT_STRIPE_WEBHOOK_SECRET')
+    expect(classifyOps('stripe_webhook_rejected', 1).severity).toBe('warning')
   })
 })

@@ -1,9 +1,9 @@
 // Webhook-replay parity check for billing.
 //
 // Boots the BUILT Worker (`wrangler dev -c .output/server/wrangler.json`) on a
-// throwaway local D1, posts a fixed set of signed Paddle webhooks in order, and
+// throwaway local D1, posts a fixed set of signed Stripe webhooks in order, and
 // writes one normalised JSON document: every HTTP status, the entitlement /
-// paddle-event / ops-event / audit rows, and the answers other surfaces gave
+// stripe-event / ops-event / audit rows, and the answers other surfaces gave
 // afterwards (entitlement endpoint, export, admin views, fleet counters, the
 // deletion guard, the paywall gate). Run it on two builds and diff the files:
 // identical means the change did not alter what billing does.
@@ -20,22 +20,22 @@
 // .dev.vars the script writes.
 //
 // Needs: a build in `.output/`, `bunx wrangler`, free port. No Cloudflare
-// account, no network, no real Paddle: the secret below is a throwaway and the
-// D1 lives in a temp directory. Never point this at a deployed Worker.
+// account, no network, no real Stripe: the secrets below are throwaways, a stub
+// Stripe API started here answers the webhook's lookups, and the D1 lives in a
+// temp directory. Never point this at a deployed Worker.
 //
 // Options:  --root <dir>   repo to test (default: cwd)
 //           --out <file>   write the dump there (default: stdout)
 //           --port <n>     dev port (default 8799)
 //           --extra-var K=V   extra Worker var, repeatable
-//           --cancel-on-deletion  run as an app with billing.cancelOnDeletion on, against
-//                             a stub Paddle API started here (NUXT_PADDLE_API_BASE): deletion
-//                             cancels live subscriptions first. The dump gains `paddleApi`,
-//                             the calls the stub saw. Without the flag the output is exactly
-//                             that of a build without the option.
+//           --cancel-on-deletion  run as an app with billing.cancelOnDeletion on: deletion
+//                             cancels live subscriptions at the stub Stripe API first. The stub
+//                             runs in every mode (the webhook looks up line items and invoices);
+//                             the dump's `stripeApi` is the calls it saw.
 //           --no-referral  leave the referral loop out (a fork whose `users` table has no
 //                             referral columns, or that never took the referral code)
-//           --shared-account  run as an app that shares its Paddle account: sets
-//                             NUXT_PADDLE_PRODUCT_ID and turns the unmatched-refund
+//           --shared-account  run as an app that shares its Stripe account: sets
+//                             NUXT_STRIPE_PRODUCT_ID and turns the unmatched-refund
 //                             alert off (NUXT_BILLING_ALERT_UNMATCHED_ADJUSTMENTS=false)
 
 import { Database } from 'bun:sqlite'
@@ -53,8 +53,11 @@ import {
   PRODUCT_OWN,
   REFERRAL_CODE,
   REFERRAL_USERS,
+  LINE_ITEMS,
+  PAYMENT_REFS,
   REPLAY_SECRET,
   STUB_ANSWERS,
+  STUB_SECRET_KEY,
   USERS,
   buildSteps,
   type RequestStep,
@@ -166,51 +169,100 @@ const dbFile = findDb()
 }
 
 // ── 2. Worker: throwaway secrets, the built bundle ───────────────────────────
-// A stand-in for api.paddle.com, only for --cancel-on-deletion: the Worker is
-// pointed at it through NUXT_PADDLE_API_BASE. It records what it was asked and
-// answers per subscription id (STUB_ANSWERS), 200 otherwise.
-const STUB_API_KEY = 'pdl_replay_stub_key'
+// A stand-in for api.stripe.com: the Worker is pointed at it through
+// NUXT_STRIPE_API_BASE and always needs it, because the webhook asks Stripe what
+// a Checkout Session sold and which invoice a refunded payment belonged to. It
+// records what it was asked. Subscription DELETEs answer per subscription id
+// (STUB_ANSWERS), 200 otherwise; ids it was never told about answer 404, as
+// Stripe would. The steps are built first so the stub knows what they will ask.
+const steps = buildSteps({ cancelOnDeletion, referral })
 const stubCalls: unknown[] = []
-const stub = cancelOnDeletion
-  ? Bun.serve({
-      port: 0,
-      hostname: '127.0.0.1',
-      async fetch(req) {
-        const id = /^\/subscriptions\/([^/]+)\/cancel$/.exec(new URL(req.url).pathname)?.[1]
-        stubCalls.push({
-          method: req.method,
-          path: new URL(req.url).pathname,
-          authorized: req.headers.get('authorization') === `Bearer ${STUB_API_KEY}`,
-          body: await req.json().catch(() => null),
-        })
-        const answer = (id && STUB_ANSWERS[id]) || { status: 200 }
-        return Response.json(
-          answer.code ? { error: { code: answer.code, detail: 'replay stub' } } : { data: {} },
-          { status: answer.status },
-        )
-      },
+const stubJson = (status: number, body: unknown) => Response.json(body, { status })
+const stub = Bun.serve({
+  port: 0,
+  hostname: '127.0.0.1',
+  async fetch(req) {
+    const url = new URL(req.url)
+    const query = Object.fromEntries(url.searchParams)
+    const form =
+      req.method === 'POST' ? Object.fromEntries(new URLSearchParams(await req.text())) : null
+    const settled = (id: string) => (STUB_ANSWERS[id]?.status ?? 0) === 400
+    stubCalls.push({
+      method: req.method,
+      path: url.pathname,
+      ...(Object.keys(query).length ? { query } : {}),
+      ...(form ? { form } : {}),
+      authorized: req.headers.get('authorization') === `Bearer ${STUB_SECRET_KEY}`,
+      versioned: Boolean(req.headers.get('stripe-version')),
     })
-  : null
+
+    if (req.method === 'POST' && url.pathname === '/v1/checkout/sessions') {
+      return stubJson(200, {
+        id: 'cs_replay_new',
+        url: 'https://checkout.stripe.test/c/pay/cs_replay_new',
+      })
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/billing_portal/sessions') {
+      const flow = form?.['flow_data[type]'] ?? 'overview'
+      return stubJson(200, {
+        url: `https://billing.stripe.test/${form?.customer}/${flow}`,
+      })
+    }
+    const items = /^\/v1\/checkout\/sessions\/([^/]+)\/line_items$/.exec(url.pathname)?.[1]
+    if (req.method === 'GET' && items) {
+      const sold = LINE_ITEMS.get(items)
+      if (!sold) return stubJson(404, { error: { code: 'resource_missing' } })
+      return stubJson(200, {
+        data: [{ price: { id: sold.price, product: sold.product } }],
+      })
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/invoice_payments') {
+      const refs = PAYMENT_REFS.get(query['payment[payment_intent]'] ?? '')
+      if (!refs) return stubJson(200, { data: [] })
+      return stubJson(200, {
+        data: [
+          {
+            invoice: {
+              id: refs.invoiceId,
+              parent: {
+                subscription_details: { subscription: refs.subscriptionId },
+              },
+            },
+          },
+        ],
+      })
+    }
+    const sub = /^\/v1\/subscriptions\/([^/]+)$/.exec(url.pathname)?.[1]
+    if (sub && req.method === 'GET') {
+      if (!settled(sub)) return stubJson(404, { error: { code: 'resource_missing' } })
+      return stubJson(200, { id: sub, status: 'canceled' })
+    }
+    if (sub && req.method === 'DELETE') {
+      const answer = STUB_ANSWERS[sub] ?? { status: 200 }
+      return stubJson(
+        answer.status,
+        answer.code ? { error: { code: answer.code } } : { id: sub, status: 'canceled' },
+      )
+    }
+    return stubJson(404, { error: { code: 'resource_missing' } })
+  },
+})
 
 const extraVars = [
-  ...(stub
-    ? [
-        'NUXT_BILLING_CANCEL_ON_DELETION=true',
-        `NUXT_PADDLE_API_KEY=${STUB_API_KEY}`,
-        `NUXT_PADDLE_API_BASE=http://127.0.0.1:${stub.port}`,
-      ]
-    : []),
+  `NUXT_STRIPE_SECRET_KEY=${STUB_SECRET_KEY}`,
+  `NUXT_STRIPE_API_BASE=http://127.0.0.1:${stub.port}`,
+  ...(cancelOnDeletion ? ['NUXT_BILLING_CANCEL_ON_DELETION=true'] : []),
   ...flagAll('--extra-var'),
   ...(args.includes('--shared-account')
-    ? [`NUXT_PADDLE_PRODUCT_ID=${PRODUCT_OWN}`, 'NUXT_BILLING_ALERT_UNMATCHED_ADJUSTMENTS=false']
+    ? [`NUXT_STRIPE_PRODUCT_ID=${PRODUCT_OWN}`, 'NUXT_BILLING_ALERT_UNMATCHED_ADJUSTMENTS=false']
     : []),
 ]
 writeFileSync(
   join(root, '.output/server/.dev.vars'),
   [
-    `NUXT_PADDLE_WEBHOOK_SECRET=${REPLAY_SECRET}`,
-    `NUXT_PUBLIC_PADDLE_PRICE_PASS=${PRICE_PASS}`,
-    `NUXT_PUBLIC_PADDLE_PRICE_MONTHLY=${PRICE_MONTHLY}`,
+    `NUXT_STRIPE_WEBHOOK_SECRET=${REPLAY_SECRET}`,
+    `NUXT_PUBLIC_STRIPE_PRICE_PASS=${PRICE_PASS}`,
+    `NUXT_PUBLIC_STRIPE_PRICE_MONTHLY=${PRICE_MONTHLY}`,
     `NUXT_SESSION_PASSWORD=${SESSION_PASSWORD}`,
     `NUXT_APP_SECRET=${APP_SECRET}`,
     `NUXT_FLEET_TOKEN=${FLEET_TOKEN}`,
@@ -293,7 +345,13 @@ async function sessionCookie(user: {
     nuxt: 1,
     id: crypto.randomUUID(),
     data: {
-      user: { id: user.id, email: user.email, name: user.name, avatarUrl: null, role: user.role },
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        avatarUrl: null,
+        role: user.role,
+      },
       issuedAt: Math.floor(Date.now() / 1000),
     },
   }
@@ -320,7 +378,7 @@ async function signature(step: WebhookStep): Promise<string> {
   const age = step.signing.kind === 'stale' ? step.signing.ageSeconds : 0
   const ts = Math.floor(Date.now() / 1000) - age
   const secret = step.signing.kind === 'bad_signature' ? 'not-the-secret' : REPLAY_SECRET
-  return `ts=${ts};h1=${await hmacHex(secret, `${ts}:${step.body}`)}`
+  return `t=${ts},v1=${await hmacHex(secret, `${ts}.${step.body}`)}`
 }
 
 // ── 4. Normalisation: drop what legitimately differs run to run ──────────────
@@ -399,8 +457,7 @@ function normaliseBody(path: string, body: unknown): unknown {
       const e = clone.entitlement as Record<string, unknown>
       e.history = sortBy(e.history, 'ref')
     }
-    if ('entitlements' in clone)
-      clone.entitlements = sortBy(clone.entitlements, 'paddleSubscriptionId')
+    if ('entitlements' in clone) clone.entitlements = sortBy(clone.entitlements, 'billingRef')
     if (path.startsWith('/api/admin/users/') && Array.isArray(clone.audit)) clone.audit = []
     if (Array.isArray(clone.auditEntries)) clone.auditEntries = []
   }
@@ -452,15 +509,24 @@ const cookies: Partial<Record<UserKey, string>> = {
 
 async function run(step: Step): Promise<StepResult> {
   if (step.type === 'webhook') {
-    const res = await fetch(`${base}/paddle/webhook`, {
+    const res = await fetch(`${base}/stripe/webhook`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'paddle-signature': await signature(step) },
+      headers: {
+        'content-type': 'application/json',
+        'stripe-signature': await signature(step),
+      },
       body: step.body,
     })
-    return { step: step.name, status: res.status, body: tryJson(await res.text()) }
+    return {
+      step: step.name,
+      status: res.status,
+      body: tryJson(await res.text()),
+    }
   }
   const req = step as RequestStep
-  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  }
   if (req.as === 'fleet') headers.authorization = `Bearer ${FLEET_TOKEN}`
   else if (req.as !== 'anonymous') headers.cookie = cookies[req.as] ?? ''
   const res = await fetch(`${base}${req.path}`, {
@@ -508,10 +574,10 @@ function dumpTables() {
   const iso = (n: number | null) => (n == null ? null : new Date(n * 1000).toISOString())
   const rows = (sql: string) => db.query(sql).all() as Record<string, unknown>[]
   const dump = {
-    entitlements: rows('select * from entitlements order by paddle_subscription_id').map((r) => ({
+    entitlements: rows('select * from entitlements order by billing_ref').map((r) => ({
       user_id: r.user_id,
-      paddle_customer_id: r.paddle_customer_id,
-      paddle_subscription_id: r.paddle_subscription_id,
+      provider_customer_id: r.provider_customer_id,
+      billing_ref: r.billing_ref,
       product_key: r.product_key,
       status: r.status,
       period_start: iso(r.period_start as number | null),
@@ -523,7 +589,7 @@ function dumpTables() {
       first_transaction_id: r.first_transaction_id,
       last_event_at: iso(r.last_event_at as number | null),
     })),
-    paddle_events: rows('select * from paddle_events order by event_id').map((r) => ({
+    billing_events: rows('select * from billing_events order by event_id').map((r) => ({
       event_id: r.event_id,
       event_type: r.event_type,
       occurred_at: iso(r.occurred_at as number | null),
@@ -545,7 +611,7 @@ function dumpTables() {
 try {
   await waitReady()
   const results: StepResult[] = []
-  for (const step of buildSteps({ cancelOnDeletion, referral })) results.push(await run(step))
+  for (const step of steps) results.push(await run(step))
   if (process.env.REPLAY_HOLD) {
     // Debugging aid: leave the Worker up until the named file is deleted.
     writeFileSync(process.env.REPLAY_HOLD, `${cookies.live}\n`)
@@ -565,7 +631,11 @@ try {
       results,
       tables: dumpTables(),
       logs: logRecords(),
-      ...(cancelOnDeletion ? { paddleApi: stubCalls } : {}),
+      // Sorted: the portal's three sessions are minted concurrently.
+      stripeApi: stubCalls
+        .map((call) => JSON.stringify(sortKeys(call)))
+        .sort()
+        .map((j) => JSON.parse(j)),
     }),
   )
   const text = JSON.stringify(dump, null, 2) + '\n'
@@ -574,7 +644,7 @@ try {
   else process.stdout.write(text)
 } finally {
   stopWorker('SIGKILL')
-  stub?.stop(true)
+  stub.stop(true)
   rmSync(join(root, '.output/server/.dev.vars'), { force: true })
   if (!process.env.REPLAY_STATE_DIR) rmSync(stateDir, { recursive: true, force: true })
 }

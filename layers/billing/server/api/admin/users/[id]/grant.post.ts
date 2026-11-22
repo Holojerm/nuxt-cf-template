@@ -59,7 +59,7 @@ export default defineEventHandler(async (event) => {
       statusCode: 409,
       message:
         'This customer has an active subscription. Comp days would stack past its renewal ' +
-        'date, so the paid period consumes them and they gain nothing. Issue a Paddle ' +
+        'date, so the paid period consumes them and they gain nothing. Issue a Stripe ' +
         'credit or discount against the next invoice instead.',
       data: { code: 'active_subscription', subscriptionId: liveSubscription },
     })
@@ -103,7 +103,7 @@ export default defineEventHandler(async (event) => {
       if (result.outcome === 'active_subscription') {
         throw createError({
           statusCode: 409,
-          message: 'This customer has an active subscription — issue a Paddle credit instead.',
+          message: 'This customer has an active subscription — issue a Stripe credit instead.',
           data: { code: 'active_subscription', subscriptionId: result.blockedBy ?? null },
         })
       }

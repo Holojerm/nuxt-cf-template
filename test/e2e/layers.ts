@@ -5,14 +5,14 @@
 // them:
 //
 //   export default {
-//     env: { NUXT_PADDLE_WEBHOOK_SECRET: '…' },   // set on the one shared webServer
+//     env: { NUXT_STRIPE_WEBHOOK_SECRET: '…' },   // set on the one shared webServer
 //     globalSetup: ['./global-setup.ts'],          // warm-ups, run after core's
 //     globalTeardown: ['./global-teardown.ts'],    // child rows, run before core's
 //   } satisfies LayerE2e
 //
 // playwright.config.ts reads each one and adds an `e2e-<name>` project for the
 // directory. A fork that does not vendor the layer has no such directory, so the
-// suite it takes from the template has no billing specs, no Paddle environment
+// suite it takes from the template has no billing specs, no Stripe environment
 // and no webhook warm-up in it, and nothing to delete or stub.
 
 import { existsSync, readdirSync } from 'node:fs'

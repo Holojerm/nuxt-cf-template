@@ -103,7 +103,7 @@ async function submitGrant() {
       title: code === 'active_subscription' ? 'Not the right tool here' : 'Could not grant access',
       description:
         code === 'active_subscription'
-          ? 'This customer has an active subscription, so comp days would be swallowed by the paid period. Issue a Paddle credit against their next invoice instead.'
+          ? 'This customer has an active subscription, so comp days would be swallowed by the paid period. Issue a Stripe credit against their next invoice instead.'
           : 'The grant did not complete. Check the billing history below before retrying.',
       color: code === 'active_subscription' ? 'warning' : 'error',
     })
@@ -185,7 +185,7 @@ async function submitRevoke() {
       title: 'Could not revoke that',
       description:
         code === 'not_comp'
-          ? 'Only comped access can be revoked here. Refunds and cancellations go through Paddle.'
+          ? 'Only comped access can be revoked here. Refunds and cancellations go through Stripe.'
           : code === 'already_expired'
             ? 'That comp had already run out on its own, so there was nothing left to revoke.'
             : 'The revoke did not complete. Check the billing history below before retrying.',
@@ -249,7 +249,7 @@ const planReadsAs = computed(() => {
   const entitlement = viewAs.value?.entitlement
   if (!entitlement) return ''
   if (entitlement.state === 'past_due') {
-    return 'Their last payment did not go through. The subscription is paused while Paddle retries the card.'
+    return 'Their last payment did not go through. The subscription is paused while Stripe retries the card.'
   }
   if (!entitlement.active) return "You don't have an active plan."
   return entitlement.kind === 'pass'
@@ -260,7 +260,7 @@ const planReadsAs = computed(() => {
 /**
  * Why the subscription gate resolves the way it does — the entire question this
  * panel gets opened to answer. `active` alone says whether they get in; it does
- * not say whether anyone can do anything about it, and "payment failed, Paddle
+ * not say whether anyone can do anything about it, and "payment failed, Stripe
  * is retrying" is a different support conversation from "they never subscribed".
  */
 const subscriptionGate = computed(() => {
@@ -268,7 +268,7 @@ const subscriptionGate = computed(() => {
   if (!entitlement) return null
   if (entitlement.active) return 'subscription gate: passes'
   if (entitlement.state === 'past_due') {
-    return 'subscription gate: fails — payment failed, Paddle is retrying'
+    return 'subscription gate: fails — payment failed, Stripe is retrying'
   }
   return 'subscription gate: fails — no active plan'
 })
@@ -465,7 +465,7 @@ useSeo({
                 variant="subtle"
                 icon="i-lucide-circle-alert"
                 title="Not available for an active subscriber"
-                description="Comp days stack from the renewal date, so the customer's next payment covers the same window and they gain nothing. To compensate a subscriber, issue a credit or discount against their next invoice in Paddle — that gives money back rather than time they already have."
+                description="Comp days stack from the renewal date, so the customer's next payment covers the same window and they gain nothing. To compensate a subscriber, issue a credit or discount against their next invoice in Stripe — that gives money back rather than time they already have."
               />
             </div>
 
@@ -576,7 +576,7 @@ useSeo({
                     {{ formatDay(row.currentPeriodEnd) }}
                   </td>
                   <td class="py-2 text-right">
-                    <!-- Comps only. A `sub_` or `txn_` row is money Paddle owns:
+                    <!-- Comps only. A `sub_` or `pi_` row is money Stripe owns:
                          revoking it locally would either be overwritten by the
                          next webhook or take away something the customer paid
                          for with no refund attached. The server refuses those
@@ -600,7 +600,7 @@ useSeo({
             <p class="text-sm text-muted">
               Revoking ends a comp immediately and leaves the row here, marked revoked — it is a
               record of something that happened, not a mistake to erase. Refunds and cancellations
-              go through Paddle.
+              go through Stripe.
             </p>
           </template>
         </UCard>

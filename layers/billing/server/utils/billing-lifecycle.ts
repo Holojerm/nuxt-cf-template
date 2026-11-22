@@ -13,7 +13,7 @@ import * as core from '@nuxthub/db/schema'
 import { ACTIVE_STATUSES } from './entitlements'
 import { passExpiringEmail } from '#server/utils/lifecycle-emails'
 import type { LifecycleDb, LifecycleRecipient, LifecycleStep } from '#server/utils/lifecycle'
-import { SUBSCRIPTION_REF_PREFIX, TRANSACTION_REF_PREFIX } from './paddle-refs'
+import { SUBSCRIPTION_REF_PREFIX, TRANSACTION_REF_PREFIX } from './billing-refs'
 import { likePrefix } from '#server/utils/sql'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -54,7 +54,7 @@ export const passExpiringStep: LifecycleStep = {
                   eq(renewing.userId, tables.entitlements.userId),
                   eq(renewing.productKey, tables.entitlements.productKey),
                   inArray(renewing.status, ACTIVE_STATUSES),
-                  likePrefix(renewing.paddleSubscriptionId, SUBSCRIPTION_REF_PREFIX),
+                  likePrefix(renewing.billingRef, SUBSCRIPTION_REF_PREFIX),
                 ),
               ),
           ),
@@ -67,7 +67,7 @@ export const passExpiringStep: LifecycleStep = {
       .having(
         and(
           lte(ends, sql`${Math.floor((now.getTime() + 3 * DAY_MS) / 1000)}`),
-          sql`max(case when ${likePrefix(tables.entitlements.paddleSubscriptionId, TRANSACTION_REF_PREFIX)} then ${tables.entitlements.currentPeriodEnd} end) = ${ends}`,
+          sql`max(case when ${likePrefix(tables.entitlements.billingRef, TRANSACTION_REF_PREFIX)} then ${tables.entitlements.currentPeriodEnd} end) = ${ends}`,
         ),
       )
       .limit(limit)

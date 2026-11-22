@@ -1,12 +1,12 @@
 // The plans on /pricing.
 //
-// Copy lives here; the Paddle price ids live in runtime config
-// (nuxt.config.ts › public.paddlePrice*) because sandbox and production issue
-// different `pri_…` values and a fork shouldn't need a code change to switch.
+// Copy lives here; the Stripe price ids live in runtime config
+// (nuxt.config.ts › public.stripePrice*) because test and live mode issue
+// different `price_…` values and a fork shouldn't need a code change to switch.
 // usePlans() joins the two and reports which plans are actually purchasable.
 //
 // The `pass` plan is a one-time 30-day purchase, not a subscription — the
-// entitlement layer tells them apart by the Paddle ref (`txn_` vs `sub_`) and
+// entitlement layer tells them apart by the Stripe ref (`pi_` vs `sub_`) and
 // stacks passes rather than resetting them. See layers/billing/server/utils/entitlements.ts.
 //
 // Monthly only — no yearly plan, by rule (~/code/AGENTS.md › Product rules).
@@ -16,7 +16,7 @@
 export interface Plan {
   id: 'monthly' | 'pass'
   name: string
-  /** Display price. Paddle is the source of truth for what's actually charged. */
+  /** Display price. Stripe is the source of truth for what's actually charged. */
   price: string
   /**
    * The same number, machine-readable, for the schema.org Offer on /pricing.
@@ -26,7 +26,7 @@ export interface Plan {
    * worse failure than a duplicated digit.
    */
   amount: number
-  /** ISO 4217, e.g. 'USD'. Must match what Paddle actually charges. */
+  /** ISO 4217, e.g. 'USD'. Must match what Stripe actually charges. */
   currency: string
   cadence: string
   description: string
@@ -82,13 +82,13 @@ export function usePlans(): ComputedRef<ResolvedPlan[]> {
   return computed(() =>
     PLANS.map((plan) => {
       const priceId = {
-        monthly: config.public.paddlePriceMonthly,
-        pass: config.public.paddlePricePass,
+        monthly: config.public.stripePriceMonthly,
+        pass: config.public.stripePricePass,
       }[plan.id]
       return {
         ...plan,
         priceId,
-        purchasable: Boolean(priceId && config.public.paddleClientToken),
+        purchasable: Boolean(priceId),
       }
     }),
   )

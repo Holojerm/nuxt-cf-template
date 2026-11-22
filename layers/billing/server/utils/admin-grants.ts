@@ -9,7 +9,7 @@
 // layers/billing/test/admin-grants.test.ts can drive real grants against a real D1.
 //
 // ── Why this is a thin wrapper and not its own write path ────────────────────
-// It calls grantPass() — the exact function the Paddle webhook calls — rather
+// It calls grantPass() — the exact function the Stripe webhook calls — rather
 // than inserting an entitlement itself. Stacking, idempotency, and the
 // truncate-to-whole-seconds rule are money logic that already exists, is
 // already tested, and must not exist twice: a second copy diverges on the first
@@ -17,22 +17,22 @@
 // wrong expiry date and no way to tell which path wrote it.
 //
 // ── The ref, and why its prefix matters ──────────────────────────────────────
-// `entitlements.paddle_subscription_id` holds a unique Paddle ref, and the
+// `entitlements.billing_ref` holds a unique Stripe ref, and the
 // prefix on that ref is load-bearing (see the header of entitlements.ts):
 //
-//   - `sub_…` rows follow Paddle's status lifecycle. findActiveEntitlement()
+//   - `sub_…` rows follow Stripe's subscription status. findActiveEntitlement()
 //     grants access to a `sub_` row on status ALONE, ignoring the date, because
-//     Paddle is expected to flip the status when it ends. A comp pass using
+//     Stripe is expected to flip the status when it ends. A comp pass using
 //     that prefix would be permanent access that no webhook ever revokes and
 //     no expiry ever catches. Never mint one.
 //   - Anything else grants access only while current_period_end is in the
 //     future — which is exactly the semantics comp access wants.
 //
-// So the prefix here is `comp_`, not `txn_`: both expire by date, but `txn_`
-// claims a Paddle transaction exists behind it. Reconciling revenue against a
-// transaction id that Paddle has never heard of is a bad afternoon. `comp_`
+// So the prefix here is `comp_`, not `pi_`: both expire by date, but `pi_`
+// claims a Stripe PaymentIntent exists behind it. Reconciling revenue against a
+// payment id that Stripe has never heard of is a bad afternoon. `comp_`
 // says what it is, reads as a comp in the billing history on /account, and is
-// greppable in a way "the rows with no matching Paddle transaction" is not.
+// greppable in a way "the rows with no matching Stripe payment" is not.
 
 // Imported explicitly rather than leaning on the Nitro auto-import: this file
 // is loaded directly by the workerd vitest suite, where nothing is injected.
@@ -49,10 +49,10 @@ import {
   toSeconds,
 } from './entitlements'
 import type { EntitlementDb } from './entitlements'
-import { COMP_REF_PREFIX, compRef, isCompRef } from './paddle-refs'
+import { COMP_REF_PREFIX, compRef, isCompRef } from './billing-refs'
 import type { Entitlement } from '../db/schema'
 
-// COMP_REF_PREFIX / compRef / isCompRef moved to ./paddle-refs — every rule
+// COMP_REF_PREFIX / compRef / isCompRef moved to ./billing-refs — every rule
 // about what a ref prefix means now lives in one leaf. MAX_COMP_PASSES moved to
 // #shared/utils/comps, because the admin page builds its selector from the same
 // ceiling this file validates against and the two had already been typed twice.
@@ -152,7 +152,7 @@ export interface GrantCompPassesResult {
  * description is a reason not to use it, offered to someone under time pressure
  * who will read "grant" and tell the customer they've been given a free month.
  * A refusal that names the right instrument is better support than a grant that
- * quietly does nothing. The right instrument is a Paddle credit or discount
+ * quietly does nothing. The right instrument is a Stripe credit or coupon
  * against the next invoice, which is money back rather than time forward.
  *
  * `past_due` subscriptions are deliberately NOT blocked: access is already
@@ -185,7 +185,7 @@ export async function grantCompPasses(
   //
   // `accessSubscriptionIds`, not `cancellableSubscriptionIds`: the question a
   // comp asks is "would these days be redundant", which is about access, not
-  // about whether Paddle can still bill. During dunning access is paused, so
+  // about whether Stripe can still bill. During dunning access is paused, so
   // "here's a week while you sort the card out" is a real support action and
   // the days are genuine. It scans the whole history,
   // which matters — findActiveEntitlement returns a single row ordered by end
@@ -237,7 +237,7 @@ export async function grantCompPasses(
       .insert(tables.entitlements)
       .values({
         userId: params.userId,
-        paddleSubscriptionId: ref,
+        billingRef: ref,
         productKey,
         status: 'active',
         periodStart: starts[index]!,
@@ -248,7 +248,7 @@ export async function grantCompPasses(
       // so this should never fire — it is here so a retried request cannot
       // double-grant.
       .onConflictDoUpdate({
-        target: tables.entitlements.paddleSubscriptionId,
+        target: tables.entitlements.billingRef,
         set: { updatedAt: new Date() },
       }),
   )
@@ -317,22 +317,22 @@ export interface RevokeCompResult {
  * Take back a comp grant — the inverse of grantCompPasses().
  *
  * ── Why this had to exist ────────────────────────────────────────────────────
- * Every other way an entitlement ends is driven by Paddle: revokeForAdjustment()
- * handles refunds and chargebacks, and it matches on refs Paddle sends. A
- * `comp_` row has no Paddle side, so nothing could ever end one early. An admin
+ * Every other way an entitlement ends is driven by Stripe: revokeForAdjustment()
+ * handles refunds and chargebacks, and it matches on refs Stripe sends. A
+ * `comp_` row has no Stripe side, so nothing could ever end one early. An admin
  * who granted twelve passes by mistake had no remedy inside the product — the
  * fix was hand-written SQL against production, which is both the least
  * auditable thing available and the exact operation this console exists to
  * replace.
  *
  * ── Comps only, and that is a hard rule ─────────────────────────────────────
- * A `sub_` or `txn_` row is refused (`not_comp`). Paddle is the source of truth
- * for anything money touched: setting a local status on a subscription Paddle
+ * A `sub_` or `pi_` row is refused (`not_comp`). Stripe is the source of truth
+ * for anything money touched: setting a local status on a subscription Stripe
  * still considers live gets silently overwritten by the next `subscription.*`
  * event, so it would look like it worked and quietly stop working. Worse, on a
  * paid pass it would take away access the customer *bought* with no refund
  * attached — support reaching past the billing system to un-sell something.
- * Refunds go through Paddle, and the webhook brings the result back.
+ * Refunds go through Stripe, and the webhook brings the result back.
  *
  * ── What "revoked" does to the row ──────────────────────────────────────────
  * The same two things revokeForAdjustment() does, for the same reason: a
@@ -369,7 +369,7 @@ export async function revokeCompPass(
     params.row ??
     (await db.query.entitlements.findFirst({
       where: and(
-        eq(tables.entitlements.paddleSubscriptionId, ref),
+        eq(tables.entitlements.billingRef, ref),
         // Scoped to the owner, so a ref from one account cannot revoke on another.
         eq(tables.entitlements.userId, userId),
       ),
@@ -402,7 +402,7 @@ export async function revokeCompPass(
     // second, later `current_period_end` over the first.
     .where(
       and(
-        eq(tables.entitlements.paddleSubscriptionId, ref),
+        eq(tables.entitlements.billingRef, ref),
         eq(tables.entitlements.userId, userId),
         inArray(tables.entitlements.status, ACTIVE_STATUSES),
       ),
