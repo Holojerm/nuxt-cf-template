@@ -77,7 +77,8 @@ conversion rate, so its bets are channel bets: which source sends people at all.
    any lesson that shaped the pick.
 
    Each bet is an issue labelled `growth-bet` containing:
-   - its type: `channel`, `activation`, `monetisation` or `retention`
+   - its type, as one line exactly `Type: <channel|activation|monetisation|retention>` (for
+     example `Type: channel`), which fleet parses
    - the hypothesis, in one sentence
    - the decision metric for its type, and which `product` metric it serves
    - for a flagged bet: the flag name (`useFlag()` / `useFlagVariant()`), the split, and the

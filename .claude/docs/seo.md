@@ -83,17 +83,96 @@ asset, so the Worker bundle does not grow. `bun run build` runs `scripts/og-imag
 - `public/og/` is gitignored and absent under `bun dev`, so a dev render links to a missing
   file; run `bun run og:build` to see them locally.
 
-## Search console verification (once per domain, by hand)
+## Page collections (one page per row of product data)
 
-Both consoles want the owner's own login, so an agent cannot finish this. Use DNS, not a
-meta tag: it survives redesigns and needs no deploy.
+A fork with data it already owns (a catalogue, scenarios, rules, glossary entries) declares a
+**collection** and gets a real page per row: `useSeo()` with the row's own title and
+description, canonical, breadcrumb, JSON-LD where a type fits, an entry in `sitemap.xml` and
+`llms.txt`, and an IndexNow submission whenever the row's `lastmod` moves. It is core, not a
+layer: it is the SEO contract above extended (each collection is a `registerPublicPageSource()`,
+each page a `useSeo()` call), and `seo:check` must enforce it without importing a layer.
 
-1. **Google Search Console** → Add property → *Domain* → copy the `google-site-verification=…`
-   TXT value. Add it at the apex with `cf` (find the command with
-   `cf cli search "create dns record"`). Verify, then Sitemaps → submit `/sitemap.xml`.
-2. **Bing Webmaster Tools** → *Import from Google Search Console* (fastest; carries the
-   sitemap), or add the site and verify by DNS the same way.
-3. Both report indexed pages, query impressions and inbound links, which nothing else here can.
+- **Declare** it with `definePageCollection<Row>({ … })` (`shared/utils/page-collections.ts`) and
+  list it in `server/utils/page-collections-app.ts`, which the app owns. That list is the one
+  declaration: `server/plugins/page-collections.ts` registers it, `seo:check` builds it, and the
+  a11y sweep reads its route prefixes. Keep the definition module alias-free (relative imports),
+  as the gate loads it outside Nuxt.
+- **Fields**: `key`; `route` (`/glossary/[slug]`, one `[slug]` last); `slug` (the row field
+  holding the URL segment); `heading` (llms.txt section and breadcrumb name of `indexPath`);
+  `title`, `description` and `h1` as `{field}` templates; `sections` (`{ heading, field }`, a
+  string renders as paragraphs split on blank lines, a string list as a list); optional `facts`
+  (`{ label, field }`), `schema` (`{ type, properties: { name: 'term' } }`), `lastmod` (a field
+  holding `YYYY-MM-DD`), `minWords` (raise the thin floor), `llms: false`; and `rows(db)`. When
+  `rows` reads D1, give `examples`: real rows the gate builds instead.
+- **Page file** at the route, calling `useCollectionPage('<key>')`, which fetches
+  `GET /api/collection-pages/<key>/<slug>` and is the page's one `useSeo()` call (the gate fails a
+  page that also calls `useSeo()`). Render the result with `<CollectionPage :page />` or from
+  the same fields. It still declares an inert `publicPage`, like `/blog/[slug]`. Give the
+  collection an index page that links every published row (`GET /api/collection-pages/<key>`),
+  or the pages are reachable only from the sitemap.
+- **Every fact comes from the row.** The fixed copy (templates, section headings, fact labels) is
+  the same on every page and may hold no digits and no quotation marks; JSON-LD may describe only
+  fields the page renders, and no review, rating or testimonial type or property. Nothing else
+  can put text on a generated page.
+- **Guards** (`shared/utils/page-guards.ts`, one function in the Worker and the gate). A row is
+  not published when its page is thin (under `THIN_PAGE_MIN_WORDS`, 80, words of row text), its
+  title or description is out of bounds or repeats a hand-written page's or an earlier row's, or
+  its body is a near-copy of an earlier page (`NEAR_COPY_SIMILARITY`: 0.8 Jaccard over word
+  3-shingles). In the Worker an unpublished row is a 404 and absent from both documents, logged
+  as `page_collection_row_unpublished`; in `seo:check` it fails the build, for every static row
+  and every example. Fix the row from the product data; never pad it.
+- **Rows are read at most every five minutes per isolate**, so a new row is live within that.
+  A `rows()` that throws makes sitemap.xml and llms.txt `no-store`, like a failed blog query.
+- **Worked example**: the glossary, `shared/page-collections/glossary.ts` with its terms in
+  `glossary-terms.ts` (app-owned), at `/glossary` and `/glossary/<slug>`. A fork replaces the
+  terms with its own or removes the glossary (TEARDOWN.md).
+
+## Search Console (owner steps, then fleet reads it)
+
+Nothing in an app collects Search Console. Fleet will collect it with one read-only identity
+and serve it on each product's scoreboard (`GET /api/scoreboard/<slug>`), which the
+`seo-content` routine reads. Until then the `search` field is absent, and the routine skips its
+click-based steps.
+
+**Owner steps** (both consoles want the owner's own Google account, so an agent cannot do
+these), once per domain: `drawthesystem.com`, `woolholm.com` (a Domain property covers
+`app.woolholm.com`), `pocket-film-school.com`.
+
+1. **Verify by DNS.** Google Search Console → Add property → *Domain* → enter the apex → copy the
+   `google-site-verification=…` TXT value. Add it as a TXT record at the apex in Cloudflare
+   (`cf cli search "create dns record"`; the mini's token cannot edit DNS, so from the laptop or
+   the dashboard), then Verify. DNS rather than a meta tag: it survives redesigns and needs no
+   deploy.
+2. **Submit the sitemap**: the property → Sitemaps → `https://<prod host>/sitemap.xml`.
+3. **Make fleet's identity**, once for all three: in Google Cloud console, create a project
+   (`fleet-search`), enable the *Google Search Console API*, and create a service account in it
+   with no project roles. Create a JSON key for it and save it in 1Password's `Agents` vault as
+   `Fleet Search Console service account`, so fleet can be given it as a secret with
+   `op read … | bunx wrangler secret put`.
+4. **Grant it read access**: in each property, Settings → Users and permissions → Add user →
+   the service account's `…@….iam.gserviceaccount.com` address → Permission **Restricted**
+   (read-only; it cannot change settings or submit anything).
+5. **Bing Webmaster Tools** (optional): *Import from Google Search Console*, which carries the
+   verification and the sitemap.
+
+**The contract** fleet serves, inside the scoreboard JSON:
+
+```ts
+search?: {
+  range: { from: string; to: string } // YYYY-MM-DD, inclusive, UTC: the last 28 days Search Console has finished
+  pages: {
+    path: string // the page's path on the product's own origin, e.g. /glossary/magic-link
+    clicks: number // clicks in range
+    impressions: number // impressions in range
+    position: number // average position in range, 1 = top
+    clicksPrev: number // clicks in the 28 days before range.from
+  }[]
+}
+```
+
+Absent means no access or no collection yet, never zero traffic. A page is listed when it had an
+impression in either window, so a page that lost every click still shows, with `clicks: 0`. Search Console reports a day only once it has finished processing it (about
+two days late), which is why `range.to` is not today.
 
 ## Blog content (@nuxt/content)
 
