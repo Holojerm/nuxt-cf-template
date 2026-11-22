@@ -194,7 +194,12 @@ async function normalizeCheckoutSession(
   }
 }
 
-/** What a refund or dispute is keyed on: the invoice for a subscription payment, else the PaymentIntent. */
+/**
+ * What a refund or dispute is keyed on: the invoice for a subscription payment
+ * (what a referral reward is keyed on), else the PaymentIntent (a pass row's
+ * ref). Managed Payments writes an invoice for a one-time payment too, so an
+ * invoice alone does not make it a subscription payment.
+ */
 async function paymentRefs(
   paymentIntentId: string | null,
   fallbackId: string,
@@ -202,9 +207,10 @@ async function paymentRefs(
 ): Promise<{ transaction_id: string; subscription_id: string | null }> {
   if (!paymentIntentId) return { transaction_id: fallbackId, subscription_id: null }
   const refs = await deps.paymentRefs(paymentIntentId)
+  const subscriptionId = refs?.subscriptionId ?? null
   return {
-    transaction_id: refs?.invoiceId ?? paymentIntentId,
-    subscription_id: refs?.subscriptionId ?? null,
+    transaction_id: subscriptionId ? (refs?.invoiceId ?? paymentIntentId) : paymentIntentId,
+    subscription_id: subscriptionId,
   }
 }
 
