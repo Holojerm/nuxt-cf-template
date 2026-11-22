@@ -29,8 +29,8 @@
 //   7. Generated pages (page collections) meet rules 1 to 4 per row, plus the
 //      three guards: no thin page, no repeated title or description (against
 //      each other and the hand-written pages above), no near-copy. A page file
-//      at a collection's route renders it with useCollectionPage(), which is
-//      its useSeo() call. There is no escape hatch for these: a row that fails
+//      at a collection's route fetches it with useCollectionPage() and calls
+//      useCollectionSeo(page), which is its useSeo() call. There is no escape hatch for these: a row that fails
 //      is fixed from the product data or left out.
 //
 // Escape hatch: `seo-check-ignore` in a comment on the same line or the line
@@ -100,18 +100,27 @@ for (const { dir, file } of pageFiles) {
 
   // ── 1. exactly one useSeo() ────────────────────────────────────────────────
   //
-  // A generated page's one call is inside useCollectionPage(), which fetches
-  // the row's built page and hands it to useSeo(). Its title and description
-  // are held to rule 4 per row, by rule 7 below, rather than read from here.
+  // A generated page's one call is useCollectionSeo(page), which hands the
+  // row's built page to useSeo(). Its title and description are held to rule 4
+  // per row, by rule 7 below, rather than read from here.
   const seoCalls = source.match(/\buseSeo\s*\(/g)?.length ?? 0
   const collection = collectionCall(source)
   if (collection.kind !== 'none') {
+    const collectionSeoCalls = source.match(/\buseCollectionSeo\s*\(/g)?.length ?? 0
     if (seoCalls > 0) {
       problems.push({
         file: relativePath,
         rule: 'useSeo() beside useCollectionPage()',
-        detail: 'useCollectionPage() already calls useSeo() for this page',
+        detail: 'useCollectionSeo() is this page\'s useSeo() call',
         remedy: 'drop the useSeo() call; the collection definition sets title and description',
+      })
+    }
+    if (collectionSeoCalls !== 1) {
+      problems.push({
+        file: relativePath,
+        rule: collectionSeoCalls === 0 ? 'missing useCollectionSeo()' : 'duplicate useCollectionSeo()',
+        detail: `called ${collectionSeoCalls} times`,
+        remedy: 'call useCollectionSeo(page) once, right after `const page = await useCollectionPage(…)`',
       })
     }
     if (collection.kind === 'unreadable') {

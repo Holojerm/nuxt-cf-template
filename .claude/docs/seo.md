@@ -104,9 +104,11 @@ each page a `useSeo()` call), and `seo:check` must enforce it without importing 
   (`{ label, field }`), `schema` (`{ type, properties: { name: 'term' } }`), `lastmod` (a field
   holding `YYYY-MM-DD`), `minWords` (raise the thin floor), `llms: false`; and `rows(db)`. When
   `rows` reads D1, give `examples`: real rows the gate builds instead.
-- **Page file** at the route, calling `useCollectionPage('<key>')`, which fetches
-  `GET /api/collection-pages/<key>/<slug>` and is the page's one `useSeo()` call (the gate fails a
-  page that also calls `useSeo()`). Render the result with `<CollectionPage :page />` or from
+- **Page file** at the route: `const page = await useCollectionPage('<key>')` fetches
+  `GET /api/collection-pages/<key>/<slug>` (a 404 for an unpublished row), then
+  `useCollectionSeo(page)` is the page's one `useSeo()` call. Two calls because `useSeo()` must
+  run in the page's own setup after the await; the gate fails a page missing the second or also
+  calling `useSeo()`. Render the result with `<CollectionPage :page />` or from
   the same fields. It still declares an inert `publicPage`, like `/blog/[slug]`. Give the
   collection an index page that links every published row (`GET /api/collection-pages/<key>`),
   or the pages are reachable only from the sitemap.

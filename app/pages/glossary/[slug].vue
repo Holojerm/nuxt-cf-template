@@ -4,7 +4,7 @@
 // The `publicPage` block is inert as a sitemap entry, as on /blog/[slug]: the
 // route is one pattern, and the real URLs come from the collection's public
 // page source. It is here because `seo:check` holds every indexable page to
-// declaring itself. `useCollectionPage()` is this page's one `useSeo()` call.
+// declaring itself. `useCollectionSeo()` is this page's one `useSeo()` call.
 
 definePageMeta({
   publicPage: {
@@ -16,6 +16,7 @@ definePageMeta({
 })
 
 const page = await useCollectionPage('glossary')
+useCollectionSeo(page)
 </script>
 
 <template>
