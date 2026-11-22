@@ -14,6 +14,10 @@ import {
   type LifecycleStepDefinition,
 } from '../server/utils/lifecycle-definitions'
 import { ANNOUNCEMENTS_PER_WEEK, LIFECYCLE_SEQUENCE } from '../server/utils/lifecycle-sequence'
+import {
+  IMMEDIATE_LIFECYCLE_STEPS,
+  TEMPLATE_LIFECYCLE_STEPS,
+} from '../server/utils/lifecycle-steps'
 import { stepKey } from '../server/utils/fleet-email'
 
 const BRAND = { appName: 'My App', appUrl: 'https://my-app.example' }
@@ -50,6 +54,17 @@ describe('the lifecycle sequence', () => {
     // A renamed id re-sends that email to every account. Add ids; never change one.
     const ids = LIFECYCLE_SEQUENCE.map((definition) => definition.id)
     expect(ids).toEqual(expect.arrayContaining(['welcome', 'activation_nudge', 'win_back']))
+  })
+
+  it('never runs a step that is switched off', () => {
+    // `enabled: false` is how a step is held back (the template ships `win_back`
+    // that way). It must keep the step out of the daily run and out of sign-up.
+    const off = LIFECYCLE_SEQUENCE.filter((definition) => definition.enabled === false)
+    const running = [...TEMPLATE_LIFECYCLE_STEPS, ...IMMEDIATE_LIFECYCLE_STEPS].map(
+      (step) => step.id,
+    )
+    for (const definition of off) expect(running).not.toContain(definition.id)
+    expect(TEMPLATE_LIFECYCLE_STEPS).toHaveLength(LIFECYCLE_SEQUENCE.length - off.length)
   })
 
   it('sets a weekly announcement cap of at least one', () => {

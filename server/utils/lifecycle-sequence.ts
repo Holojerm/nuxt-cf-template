@@ -9,7 +9,8 @@
 //   forDays    stop trying this many days later, so a step never reaches back
 //              over every account the app has ever had
 //   when       optional: `activated` or `not_activated` (finished onboarding)
-//   enabled    false switches a step off without deleting it
+//   enabled    false switches a step off without deleting it. `win_back` ships
+//              that way: delete its `enabled: false` line to start sending it
 //
 // Copy may use {{appName}} and {{name}}, nothing else. `button.path` is a path
 // on this app. `footnote` says why the reader got the email.
@@ -64,6 +65,9 @@ export const LIFECYCLE_SEQUENCE: readonly LifecycleStepDefinition[] = [
   },
   {
     id: 'win_back',
+    // Off until the app decides to write to people who stopped coming: the first
+    // run after it is switched on mails every account inside the window below.
+    enabled: false,
     notification: 'tips',
     since: 'last_sign_in',
     afterDays: 45,
