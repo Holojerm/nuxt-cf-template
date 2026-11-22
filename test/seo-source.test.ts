@@ -317,8 +317,6 @@ describe('page collections in the gate', () => {
     expect((await check([needsDb])).map((problem) => problem.rule)).toEqual([
       'rows need a database',
     ])
-    expect(await check([{ ...needsDb, examples: distinct }])).toEqual(
-      [],
-    )
+    expect(await check([{ ...needsDb, examples: distinct }])).toEqual([])
   })
 })

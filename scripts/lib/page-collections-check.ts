@@ -83,7 +83,12 @@ export async function checkPageCollections(input: {
   for (const collection of input.collections) {
     const where = `${input.listFile} › ${collection.key}`
     for (const problem of checkCollectionDefinition(collection)) {
-      report(where, 'collection definition', problem, 'fix the definition; the Worker refuses it too')
+      report(
+        where,
+        'collection definition',
+        problem,
+        'fix the definition; the Worker refuses it too',
+      )
     }
     if (keys.has(collection.key)) {
       report(where, 'duplicate collection key', collection.key, 'give each collection its own key')
@@ -91,7 +96,8 @@ export async function checkPageCollections(input: {
     keys.set(collection.key, collection)
     const prefix = collectionPrefix(collection)
     const owner = prefixes.get(prefix)
-    if (owner) report(where, 'shared route prefix', `${prefix} is also ${owner}'s`, 'one route each')
+    if (owner)
+      report(where, 'shared route prefix', `${prefix} is also ${owner}'s`, 'one route each')
     prefixes.set(prefix, collection.key)
 
     const pages = input.pageFiles.filter((page) => page.key === collection.key)

@@ -21,11 +21,7 @@ const parent = computed(() => (props.page.breadcrumb.length > 1 ? props.page.bre
       <p class="text-lg text-toned">{{ page.description }}</p>
     </header>
 
-    <section
-      v-for="section in page.sections"
-      :key="section.heading"
-      class="flex flex-col gap-3"
-    >
+    <section v-for="section in page.sections" :key="section.heading" class="flex flex-col gap-3">
       <h2 class="text-xl text-highlighted">{{ section.heading }}</h2>
       <p v-for="(paragraph, index) in section.paragraphs" :key="index" class="text-default">
         {{ paragraph }}

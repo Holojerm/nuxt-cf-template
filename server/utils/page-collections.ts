@@ -8,7 +8,11 @@
 // dates), and the page API is a public route. server/plugins/page-collections.ts
 // registers the template's collections and the app's own list.
 
-import type { CollectionPageView, CollectionRow, PageCollection } from '#shared/utils/page-collections'
+import type {
+  CollectionPageView,
+  CollectionRow,
+  PageCollection,
+} from '#shared/utils/page-collections'
 import {
   buildCollectionPage,
   checkCollectionDefinition,
@@ -81,7 +85,10 @@ async function readState(db: ExtensionDb): Promise<CollectionsState> {
       try {
         return { collection: collection as PageCollection, rows: await collection.rows(db) }
       } catch (error) {
-        logEvent('warn', 'page_collection_rows_failed', { key: collection.key, error: String(error) })
+        logEvent('warn', 'page_collection_rows_failed', {
+          key: collection.key,
+          error: String(error),
+        })
         failed.add(collection.key)
         return { collection: collection as PageCollection, rows: [] }
       }
@@ -119,7 +126,8 @@ export async function getCollectionPage(
   const state = await publishedState(db)
   const found = state.pages.find((page) => page.key === key && page.path === path)
   if (!found) return null
-  return buildCollectionPage(collection as PageCollection, found.row, { origin, today: today() }).page
+  return buildCollectionPage(collection as PageCollection, found.row, { origin, today: today() })
+    .page
 }
 
 /** The published pages of one collection, for its index page. */

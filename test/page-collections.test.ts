@@ -121,7 +121,11 @@ describe('publishCollections', () => {
       [
         {
           collection: things,
-          rows: [row('one'), row('two', { name: 'Name one' }), row('three', { summary: row('one').summary })],
+          rows: [
+            row('one'),
+            row('two', { name: 'Name one' }),
+            row('three', { summary: row('one').summary }),
+          ],
         },
       ],
       OPTIONS,

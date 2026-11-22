@@ -65,7 +65,11 @@ export function jaccard(a: Set<string>, b: Set<string>): number {
  */
 export function publishCollections(
   input: { collection: PageCollection; rows: readonly CollectionRow[] }[],
-  options: { origin: string; today: string; taken?: { titles?: string[]; descriptions?: string[] } },
+  options: {
+    origin: string
+    today: string
+    taken?: { titles?: string[]; descriptions?: string[] }
+  },
 ): PublishedSet {
   const pages: PublishedSet['pages'] = []
   const rejected: RejectedRow[] = []

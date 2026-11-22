@@ -181,7 +181,10 @@ export function fieldText(value: FieldValue): string {
   if (value === null || value === undefined) return ''
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : ''
   if (typeof value === 'string') return value.trim()
-  return value.map((item) => item.trim()).filter(Boolean).join(', ')
+  return value
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join(', ')
 }
 
 function fill(template: string, row: CollectionRow, missing: Set<string>): string {
@@ -297,7 +300,18 @@ export function buildCollectionPage(
   }
 
   return {
-    page: { key: collection.key, path, title, description, h1, sections, facts, breadcrumb, lastmod, schema },
+    page: {
+      key: collection.key,
+      path,
+      title,
+      description,
+      h1,
+      sections,
+      facts,
+      breadcrumb,
+      lastmod,
+      schema,
+    },
     problems,
   }
 }
