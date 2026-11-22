@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
   })
   if (!user) throw createError({ statusCode: 404, message: 'User not found' })
 
-  // Refusing a paid ref BEFORE the audit row, not after. A `sub_`/`txn_` ref is
+  // Refusing a paid ref BEFORE the audit row, not after. A `sub_`/`pi_` ref is
   // a rejected request rather than a performed action — the console never
   // offers the control, so reaching here means a hand-made call — and the audit
   // trail stays a list of things that happened to customers. The 422 names the

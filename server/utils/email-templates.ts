@@ -50,7 +50,7 @@ export function welcomeEmail(brand: Branding, opts: { name: string }): EmailCont
   return composeEmail('welcome', `Welcome to ${brand.appName}`, brand, { name: opts.name })
 }
 
-/** Money changed hands. Paddle sends the tax receipt; this confirms access. */
+/** Money changed hands. Stripe sends the receipt, as Link; this confirms access. */
 export function purchaseEmail(
   brand: Branding,
   opts: { name: string; kind: 'subscription' | 'pass'; endsAt: Date | null },

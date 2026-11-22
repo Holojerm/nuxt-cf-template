@@ -33,7 +33,7 @@ const features = [
     icon: 'i-lucide-credit-card',
     title: 'Billing you can trust',
     description:
-      'Paddle as merchant of record. Refunds and chargebacks revoke access, one-time passes stack, redeliveries are idempotent — and all of it is covered by tests.',
+      'Stripe, selling as Link, as merchant of record. Refunds and chargebacks revoke access, one-time passes stack, redeliveries are idempotent — and all of it is covered by tests.',
   },
   {
     icon: 'i-lucide-gauge',
@@ -92,7 +92,7 @@ useSeo({
     <!-- Hero -->
     <section class="mx-auto flex max-w-3xl flex-col items-center gap-6 text-center">
       <UBadge color="neutral" variant="subtle" size="lg">
-        Nuxt 4 · Cloudflare Workers · D1 · Paddle
+        Nuxt 4 · Cloudflare Workers · D1 · Stripe
       </UBadge>
       <h1 class="text-4xl text-highlighted sm:text-5xl">Ship the product, not the plumbing</h1>
       <p class="max-w-2xl text-lg text-muted">

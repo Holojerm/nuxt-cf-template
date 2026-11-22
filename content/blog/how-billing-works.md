@@ -1,6 +1,6 @@
 ---
 title: 'How the billing model works: subscriptions and one-time passes'
-description: 'Two products share one entitlements table, told apart by the Paddle reference prefix. Here is how access is granted, stacked, and revoked.'
+description: 'Two products share one entitlements table, told apart by the Stripe reference prefix. Here is how access is granted, stacked, and revoked.'
 date: '2026-06-18'
 author: 'My Company Ltd'
 ---
@@ -21,13 +21,13 @@ differently, they behave differently on refund, and a customer support answer th
 them is a customer support answer that is wrong.
 
 They still share a table, because what they produce is identical: a period of access with an
-end date. What tells them apart is the Paddle reference stored alongside the row. A
-subscription arrives as `sub_…` and a one-time purchase as `txn_…`, and that prefix is the
-only signal needed to pick the right lifecycle:
+end date. What tells them apart is the Stripe reference stored alongside the row. A
+subscription arrives as `sub_…` and a one-time purchase as `pi_…`, the payment behind it, and
+that prefix is the only signal needed to pick the right lifecycle:
 
-- A `sub_…` row follows Paddle's status. Paddle says `active`, the row says active. Paddle
+- A `sub_…` row follows Stripe's status. Stripe says `active`, the row says active. Stripe
   says `canceled`, access ends at the period boundary that was already paid for.
-- A `txn_…` row has no lifecycle. No event will ever fire for it again. It grants access
+- A `pi_…` row has no lifecycle. No event will ever fire for it again. It grants access
   while its end date is in the future and nothing at all after that.
 
 That difference has a consequence people meet on their second purchase: **passes stack**. Buy
@@ -58,7 +58,7 @@ period they paid for; a refund is that period being unwound. The webhook handler
 as different events because customers do, and because a refunded month that still grants
 access is a bug you find in your revenue numbers rather than in your logs.
 
-`past_due` is the awkward middle: the card failed, Paddle will retry, and the person has not
+`past_due` is the awkward middle: the card failed, Stripe will retry, and the person has not
 done anything wrong. The template treats it as **not** granting access, and pairs that with a
 banner and one email — the payment-failed email is the single most valuable transactional
 message a subscription business sends, and it only works if you have not already trained

@@ -465,12 +465,12 @@ describe('faqSchema', () => {
   })
 
   it('maps each item to a Question/Answer pair', () => {
-    const node = faqSchema([{ question: 'Who charges my card?', answer: 'Paddle does.' }])
+    const node = faqSchema([{ question: 'Who charges my card?', answer: 'Stripe does.' }])
     expect(node?.mainEntity).toEqual([
       {
         '@type': 'Question',
         name: 'Who charges my card?',
-        acceptedAnswer: { '@type': 'Answer', text: 'Paddle does.' },
+        acceptedAnswer: { '@type': 'Answer', text: 'Stripe does.' },
       },
     ])
   })

@@ -1,6 +1,6 @@
 // The seam between sendEmail() and Cloudflare Queues.
 //
-// Moving mail off the request path means a Paddle webhook no longer pays
+// Moving mail off the request path means a Stripe webhook no longer pays
 // Resend's latency inline, and a transient Resend failure is retried by the
 // platform instead of dropped (sendEmail() never throws and held no message).
 //

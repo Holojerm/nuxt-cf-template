@@ -130,7 +130,7 @@ export interface DeletionBlock {
 
 /**
  * A veto over account deletion, asked before anything is touched. For the rare
- * case where deleting would hurt the person, not the app (billing: Paddle would
+ * case where deleting would hurt the person, not the app (billing: Stripe would
  * keep charging a card nobody can look up). First registered guard to refuse
  * wins. Must be a read: nothing here may write.
  */

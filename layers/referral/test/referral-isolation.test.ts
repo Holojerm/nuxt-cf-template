@@ -85,7 +85,7 @@ describe('referral without billing', () => {
       .insert(schema.users)
       .values({ id: 'ref', email: 'ref@example.com', name: 'ref', referredBy: CODE })
 
-    const result = await rewardReferrerForFirstPurchase(db, 'ref', { earnedFromRef: 'txn_1' })
+    const result = await rewardReferrerForFirstPurchase(db, 'ref', { earnedFromRef: 'pi_1' })
 
     expect(result.outcome).toBe('unavailable')
     expect(await db.query.entitlements.findMany()).toEqual([])
@@ -116,7 +116,7 @@ describe('referral without billing', () => {
         event_id: 'e1',
         event_type: 'transaction.completed',
         occurred_at: '',
-        data: { id: 'txn_1' },
+        data: { id: 'pi_1' },
       },
       outcome: { kind: 'pass', userId: 'ref', granted: true, endsAt: new Date(), stackedOn: null },
     })
@@ -131,7 +131,7 @@ describe('billing without referral', () => {
   it('has no referral fields on the billing view', async () => {
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
-      billingRef: 'txn_1',
+      billingRef: 'pi_1',
       productKey: 'default',
       status: 'active',
       currentPeriodEnd: new Date(Date.now() + 86_400_000),
@@ -147,7 +147,7 @@ describe('billing without referral', () => {
     await expect(
       runBillingOutcomeHandlers({
         db,
-        event: { event_id: 'e1', event_type: 'x', occurred_at: '', data: { id: 'txn_1' } },
+        event: { event_id: 'e1', event_type: 'x', occurred_at: '', data: { id: 'pi_1' } },
         outcome: { kind: 'ignored', reason: 'unhandled_event' },
       }),
     ).resolves.toBeUndefined()
@@ -158,7 +158,7 @@ describe('billing without referral', () => {
     clearBillingOutcomeHandlersForTest()
     await runBillingOutcomeHandlers({
       db,
-      event: { event_id: 'e1', event_type: 'x', occurred_at: '', data: { id: 'txn_1' } },
+      event: { event_id: 'e1', event_type: 'x', occurred_at: '', data: { id: 'pi_1' } },
       outcome: {
         kind: 'pass',
         userId: 'referrer',

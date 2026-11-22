@@ -8,7 +8,7 @@
 // No layer imports another, and core imports none (bun run layers:check). So:
 //   - a code per account, `referred_by`, the welcome days after sign-in:
 //     registerSignupContributor() (server/utils/signup-contributors.ts)
-//   - the reward and the clawback's paperwork on a Paddle event:
+//   - the reward and the clawback's paperwork on a billing event:
 //     registerBillingOutcomeHandler() (server/utils/billing-outcome.ts)
 //   - `referral` / `referralKind` on the billing view:
 //     registerEntitlementViewFields() (server/utils/entitlement-view-fields.ts)

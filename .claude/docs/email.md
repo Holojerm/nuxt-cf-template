@@ -118,7 +118,7 @@ one load-bearing email rather than a courtesy: `POST /api/auth/magic-link` inspe
 
 `sendEmail()` (Resend over fetch) **never throws** — it's always called from
 something more important than the email, and a mail outage must not 500 a login
-or make Paddle replay a money event. Unset `NUXT_RESEND_API_KEY` = logged no-op.
+or make Stripe replay a money event. Unset `NUXT_RESEND_API_KEY` = logged no-op.
 
 **It enqueues rather than POSTs when the `EMAIL_QUEUE` binding exists** (production
 and preview, never `bun dev` — the dev preset has no `queue()` handler, so a local
@@ -155,7 +155,7 @@ Five rules that each cost real mail when they were broken:
   opposite flag would turn `retry()` into a silent no-op. Don't remove it.
 
 Billing emails are decided by `layers/billing/server/utils/billing-notifications.ts` › `decideNotification` on **status transitions**,
-not on events: Paddle fires `subscription.updated` for trivial changes, and
+not on events: Stripe fires `customer.subscription.updated` for trivial changes, and
 emailing per event trains people to filter you — taking the payment-failed email
 with it. Add a case to that function, not an ad-hoc send in a handler.
 

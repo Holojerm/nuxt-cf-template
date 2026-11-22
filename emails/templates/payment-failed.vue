@@ -5,7 +5,7 @@
       declined.
     </EmailParagraph>
     <EmailParagraph>
-      Paddle will retry it over the next few days. If it keeps failing, your access will stop.
+      The charge will be retried over the next few days. If it keeps failing, your access will stop.
       Updating your card now avoids that entirely.
     </EmailParagraph>
     <EmailButton href="{{appUrl}}/account">Update payment method</EmailButton>
