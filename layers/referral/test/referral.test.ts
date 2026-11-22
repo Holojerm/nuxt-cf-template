@@ -358,7 +358,7 @@ describe('grantRefereeWelcome', () => {
     expect(result.days).toBe(REFERRAL_WELCOME_DAYS)
 
     const granting = await findActiveEntitlement(db, 'referee')
-    expect(granting?.paddleSubscriptionId).toBe(
+    expect(granting?.billingRef).toBe(
       await welcomeRefForEmail('referee@example.com', SALT),
     )
     // The referrer is paid on the referee's first PURCHASE and not before.
@@ -430,7 +430,7 @@ describe('rewardReferrerForFirstPurchase', () => {
     expect(result.endsAt?.getTime()).toBe(atSecond(NOW.getTime() + PASS_DAYS * DAY_MS))
 
     const granting = await findActiveEntitlement(db, 'referrer')
-    expect(granting?.paddleSubscriptionId).toBe(referralRewardRef('referee'))
+    expect(granting?.billingRef).toBe(referralRewardRef('referee'))
 
     const [audit] = await db.select().from(schema.auditLog)
     expect(audit?.action).toBe('referral.rewarded')
@@ -490,7 +490,7 @@ describe('rewardReferrerForFirstPurchase', () => {
     for (let i = 0; i < REFERRAL_MAX_REWARDS; i++) {
       await db.insert(schema.entitlements).values({
         userId: 'referrer',
-        paddleSubscriptionId: referralRewardRef(`historic-${i}`),
+        billingRef: referralRewardRef(`historic-${i}`),
         status: 'active',
         currentPeriodEnd: new Date(NOW.getTime() - DAY_MS),
       })
@@ -507,7 +507,7 @@ describe('rewardReferrerForFirstPurchase', () => {
     // person's own arrival; only `referral_` rows are referrals they earned.
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
-      paddleSubscriptionId: (await welcomeRefForEmail('referrer@example.com', SALT))!,
+      billingRef: (await welcomeRefForEmail('referrer@example.com', SALT))!,
       status: 'active',
       currentPeriodEnd: new Date(NOW.getTime() - DAY_MS),
     })
@@ -560,7 +560,7 @@ describe('rewardReferrerForFirstPurchase', () => {
     const renewsAt = new Date(atSecond(NOW.getTime() + 20 * DAY_MS))
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
-      paddleSubscriptionId: 'sub_live',
+      billingRef: 'sub_live',
       status: 'active',
       currentPeriodEnd: renewsAt,
     })
@@ -577,7 +577,7 @@ describe('rewardReferrerForFirstPurchase', () => {
     const rows = await db
       .select()
       .from(schema.entitlements)
-      .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
+      .where(eq(schema.entitlements.billingRef, referralRewardRef('referee')))
     expect(rows).toHaveLength(1)
   })
 
@@ -589,7 +589,7 @@ describe('rewardReferrerForFirstPurchase', () => {
     // `sub_` row, which is what makes paying the subscriber safe.
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
-      paddleSubscriptionId: 'sub_live',
+      billingRef: 'sub_live',
       status: 'active',
       currentPeriodEnd: new Date(atSecond(NOW.getTime() + 20 * DAY_MS)),
     })
@@ -713,7 +713,7 @@ describe('the refund cascade', () => {
 
   async function rewardRow(refereeId = 'referee') {
     return await db.query.entitlements.findFirst({
-      where: eq(schema.entitlements.paddleSubscriptionId, referralRewardRef(refereeId)),
+      where: eq(schema.entitlements.billingRef, referralRewardRef(refereeId)),
     })
   }
 
@@ -775,7 +775,7 @@ describe('the refund cascade', () => {
     // A reward granted 29 days ago: one free day left on it.
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
-      paddleSubscriptionId: referralRewardRef('referee'),
+      billingRef: referralRewardRef('referee'),
       status: 'active',
       periodStart: new Date(atSecond(NOW.getTime() - 29 * DAY_MS)),
       currentPeriodEnd: new Date(atSecond(NOW.getTime() + DAY_MS)),
@@ -799,7 +799,7 @@ describe('the refund cascade', () => {
     // purchase taken out of their account.
     expect(await daysLeft('referrer')).toBe(PASS_DAYS)
     const pass = await db.query.entitlements.findFirst({
-      where: eq(schema.entitlements.paddleSubscriptionId, 'txn_referrer_pass'),
+      where: eq(schema.entitlements.billingRef, 'txn_referrer_pass'),
     })
     // The pass slid, it did not shrink: both ends moved together.
     const passEnd = pass!.currentPeriodEnd!.getTime()
@@ -811,7 +811,7 @@ describe('the refund cascade', () => {
     // subscription is what the first reward's window opens on.
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
-      paddleSubscriptionId: 'sub_live',
+      billingRef: 'sub_live',
       status: 'active',
       currentPeriodEnd: new Date(atSecond(NOW.getTime() + 20 * DAY_MS)),
     })
@@ -827,7 +827,7 @@ describe('the refund cascade', () => {
     await db
       .update(schema.entitlements)
       .set({ status: 'canceled' })
-      .where(eq(schema.entitlements.paddleSubscriptionId, 'sub_live'))
+      .where(eq(schema.entitlements.billingRef, 'sub_live'))
 
     const reversed = await revokeForAdjustment(db, {
       action: 'chargeback',
@@ -847,7 +847,7 @@ describe('the refund cascade', () => {
     const [row] = await db
       .select()
       .from(schema.entitlements)
-      .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
+      .where(eq(schema.entitlements.billingRef, referralRewardRef('referee')))
     expect(row?.earnedFromRef).toBe('txn_first')
   })
 
@@ -869,7 +869,7 @@ describe('the refund cascade', () => {
     const [row] = await db
       .select()
       .from(schema.entitlements)
-      .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
+      .where(eq(schema.entitlements.billingRef, referralRewardRef('referee')))
     expect(row?.status).toBe(DERIVED_REVOKED_STATUS)
     // Kept so the reversal below can put the window back.
     expect(row?.restorePeriodEnd).not.toBeNull()
@@ -946,7 +946,7 @@ describe('the refund cascade', () => {
     const [before] = await db
       .select()
       .from(schema.entitlements)
-      .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
+      .where(eq(schema.entitlements.billingRef, referralRewardRef('referee')))
 
     await revokeForAdjustment(db, { action: 'chargeback', transactionId: 'txn_first' })
     expect(await findActiveEntitlement(db, 'referrer')).toBeNull()
@@ -963,7 +963,7 @@ describe('the refund cascade', () => {
     const [after] = await db
       .select()
       .from(schema.entitlements)
-      .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
+      .where(eq(schema.entitlements.billingRef, referralRewardRef('referee')))
     expect(after?.status).toBe('active')
     // The original window, not a fresh one starting today.
     expect(after?.currentPeriodEnd?.getTime()).toBe(before?.currentPeriodEnd?.getTime())
@@ -1033,7 +1033,7 @@ describe('the refund cascade', () => {
     expect((await rewardRow())?.status).toBe(DERIVED_REVOKED_STATUS)
 
     const purchase = await db.query.entitlements.findFirst({
-      where: eq(schema.entitlements.paddleSubscriptionId, 'txn_first'),
+      where: eq(schema.entitlements.billingRef, 'txn_first'),
     })
     expect(purchase?.status).toBe('refunded')
   })
@@ -1041,7 +1041,7 @@ describe('the refund cascade', () => {
   it('restores a SUBSCRIPTION chargeback whatever Paddle wrote over the status', async () => {
     await db.insert(schema.entitlements).values({
       userId: 'referee',
-      paddleSubscriptionId: 'sub_referee',
+      billingRef: 'sub_referee',
       status: 'active',
       currentPeriodEnd: new Date(atSecond(NOW.getTime() + 30 * DAY_MS)),
     })
@@ -1074,7 +1074,7 @@ describe('the refund cascade', () => {
   it('still refuses to restore when that subscription purchase was refunded', async () => {
     await db.insert(schema.entitlements).values({
       userId: 'referee',
-      paddleSubscriptionId: 'sub_referee',
+      billingRef: 'sub_referee',
       status: 'active',
       currentPeriodEnd: new Date(atSecond(NOW.getTime() + 30 * DAY_MS)),
     })
@@ -1138,7 +1138,7 @@ describe('the refund cascade', () => {
     await grantPass(db, { userId: 'referee', transactionId: 'txn_old', billedAt: NOW })
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
-      paddleSubscriptionId: referralRewardRef('referee'),
+      billingRef: referralRewardRef('referee'),
       status: 'active',
       currentPeriodEnd: new Date(atSecond(NOW.getTime() - 200 * DAY_MS)),
       earnedFromRef: 'txn_old',
@@ -1153,7 +1153,7 @@ describe('the refund cascade', () => {
     const [row] = await db
       .select()
       .from(schema.entitlements)
-      .where(eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')))
+      .where(eq(schema.entitlements.billingRef, referralRewardRef('referee')))
     expect(row?.status).toBe('active')
     expect(row?.currentPeriodEnd?.getTime()).toBe(atSecond(NOW.getTime() - 200 * DAY_MS))
   })
@@ -1165,7 +1165,7 @@ describe('the refund cascade', () => {
     await grantPass(db, { userId: 'referee', transactionId: 'txn_first', billedAt: NOW })
     await db.insert(schema.entitlements).values({
       userId: 'referrer',
-      paddleSubscriptionId: referralRewardRef('referee'),
+      billingRef: referralRewardRef('referee'),
       status: 'active',
       currentPeriodEnd: new Date(atSecond(NOW.getTime() + 30 * DAY_MS)),
     })
@@ -1327,7 +1327,7 @@ describe('deleting an account does not refill the welcome trial', () => {
     const legacyRef = await legacyWelcomeRefForEmail('referee@example.com', LEGACY_SALT)
     await db.insert(schema.entitlements).values({
       userId: 'referee',
-      paddleSubscriptionId: legacyRef!,
+      billingRef: legacyRef!,
       status: 'active',
       currentPeriodEnd: new Date(atSecond(NOW.getTime() - DAY_MS)),
     })
@@ -1426,7 +1426,7 @@ describe('subscription rewards keyed on the first transaction', () => {
 
   async function reward() {
     return await db.query.entitlements.findFirst({
-      where: eq(schema.entitlements.paddleSubscriptionId, referralRewardRef('referee')),
+      where: eq(schema.entitlements.billingRef, referralRewardRef('referee')),
     })
   }
 
@@ -1450,7 +1450,7 @@ describe('subscription rewards keyed on the first transaction', () => {
     })
 
     // The buyer's own period closes; nothing derived from that money existed.
-    expect(result).toMatchObject({ outcome: 'revoked', paddleRef: 'sub_referee', derived: [] })
+    expect(result).toMatchObject({ outcome: 'revoked', billingRef: 'sub_referee', derived: [] })
     expect(await findActiveEntitlement(db, 'referee')).toBeNull()
     expect((await reward())?.status).toBe('active')
     expect(await findActiveEntitlement(db, 'referrer')).not.toBeNull()

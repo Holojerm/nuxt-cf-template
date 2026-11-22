@@ -1,7 +1,7 @@
 // Spec 3 — cancel → lose access.
 //
 // The mirror image of Spec 2: a subscription that was genuinely granting
-// access stops, through the same real webhook path a Paddle cancellation
+// access stops, through the same real webhook path a Stripe cancellation
 // takes, and every surface that promises access has to agree it's gone —
 // the gate (layers/billing/app/middleware/subscription.ts), the account page, and
 // GET /api/billing/entitlement. Plus the case that isn't a cancellation at
@@ -28,24 +28,24 @@ import {
   subscriptionEvent,
   test,
   uniqueEmail,
-  uniquePaddleRef,
+  uniqueStripeRef,
   watchForViolations,
 } from './fixtures'
 
 test.describe('cancel → lose access', () => {
   test('canceling a subscription revokes dashboard access', async ({
     signInAs,
-    sendPaddleEvent,
+    sendStripeEvent,
   }) => {
     const email = uniqueEmail('cancel-subscription')
     const { userId, page, context } = await signInAs(email, 'Canceling Subscriber')
     const violations = watchForViolations(page)
 
-    const subscriptionId = uniquePaddleRef('sub_', 'cancel-subscription')
+    const subscriptionId = uniqueStripeRef('sub_', 'cancel-subscription')
     await expectWebhookAccepted(
-      await sendPaddleEvent(
+      await sendStripeEvent(
         subscriptionEvent({
-          eventType: 'subscription.activated',
+          eventType: 'customer.subscription.created',
           userId,
           subscriptionId,
           status: 'active',
@@ -60,9 +60,9 @@ test.describe('cancel → lose access', () => {
     await expectUnlocked(page)
 
     await expectWebhookAccepted(
-      await sendPaddleEvent(
+      await sendStripeEvent(
         subscriptionEvent({
-          eventType: 'subscription.canceled',
+          eventType: 'customer.subscription.deleted',
           userId,
           subscriptionId,
           status: 'canceled',
@@ -90,17 +90,17 @@ test.describe('cancel → lose access', () => {
 
   test('a past_due subscription routes the gated page to /account, not /pricing', async ({
     signInAs,
-    sendPaddleEvent,
+    sendStripeEvent,
   }) => {
     const email = uniqueEmail('past-due-subscription')
     const { userId, page, context } = await signInAs(email, 'Dunning Subscriber')
     const violations = watchForViolations(page)
 
-    const subscriptionId = uniquePaddleRef('sub_', 'past-due-subscription')
+    const subscriptionId = uniqueStripeRef('sub_', 'past-due-subscription')
     await expectWebhookAccepted(
-      await sendPaddleEvent(
+      await sendStripeEvent(
         subscriptionEvent({
-          eventType: 'subscription.activated',
+          eventType: 'customer.subscription.created',
           userId,
           subscriptionId,
           status: 'active',
@@ -110,9 +110,9 @@ test.describe('cancel → lose access', () => {
     )
 
     await expectWebhookAccepted(
-      await sendPaddleEvent(
+      await sendStripeEvent(
         subscriptionEvent({
-          eventType: 'subscription.updated',
+          eventType: 'customer.subscription.updated',
           userId,
           subscriptionId,
           status: 'past_due',

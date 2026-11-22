@@ -362,7 +362,7 @@ export interface DeadReference extends Reference {
 function nuxtRuntimeConfigEnvNames(root: string): Set<string> {
   const names = new Set<string>()
   // The app's own config and every layer's: a layer declares the keys its
-  // feature reads (billing: the Paddle names), and a doc naming one is true.
+  // feature reads (billing: the Stripe names), and a doc naming one is true.
   const configs = [
     join(root, 'nuxt.config.ts'),
     ...layerDirs(root).map((dir) => join(dir, 'nuxt.config.ts')),

@@ -1,6 +1,6 @@
 // `billing.cancelOnDeletion`: deleting an account first cancels every live
-// Paddle subscription, immediately, and refuses (409, the guard's code) if any
-// cancel fails. Real D1 inside workerd, real Paddle client; only the network
+// Stripe subscription, immediately, and refuses (409, the guard's code) if any
+// cancel fails. Real D1 inside workerd, real Stripe client; only the network
 // edge is faked (global fetch) and the runtime config the client reads.
 
 import { env } from 'cloudflare:test'
@@ -9,6 +9,7 @@ import { drizzle } from 'drizzle-orm/d1'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '~~/server/db/schema'
+import { STRIPE_API_VERSION } from '../server/utils/stripe-api'
 import { deleteAccount } from '~~/server/utils/account'
 import {
   clearExtensionsForTest,
@@ -24,29 +25,32 @@ import { clearUnknownUserExpectationsForTest } from '../server/utils/billing-exp
 
 const db = drizzle(env.DB, { schema })
 const USER = 'user-cancel'
-const KEY = 'pdl_sdbx_apikey_super_secret'
+const KEY = 'sk_test_super_secret_key'
 const FUTURE = new Date(Date.now() + 86_400_000)
 
-interface PaddleCall {
+interface StripeCall {
   url: string
   method: string
   authorization: string | null
-  body: unknown
+  stripeVersion: string | null
 }
 
-let calls: PaddleCall[]
+let calls: StripeCall[]
 let errorLog: ReturnType<typeof vi.spyOn>
-let config: { paddle: { apiKey: string; apiBase: string }; public: { paddleEnv: string } }
-/** Per subscription id: how the fake Paddle answers. Default: 200. */
+let config: { stripe: { secretKey: string; apiBase: string } }
+/** Per subscription id: how the fake Stripe answers the DELETE. Default: 200. */
 let answers: Record<string, () => Response | Promise<Response>>
+/** Per subscription id: what the follow-up GET says. Default: still active. */
+let lookups: Record<string, () => Response | Promise<Response>>
 
-const paddleError = (status: number, code: string, detail = 'customer@example.com leaked?') =>
-  new Response(JSON.stringify({ error: { code, detail } }), { status })
+const stripeError = (status: number, code: string, message = 'customer@example.com leaked?') =>
+  new Response(JSON.stringify({ error: { code, message } }), { status })
 
 beforeEach(async () => {
   calls = []
   answers = {}
-  config = { paddle: { apiKey: KEY, apiBase: '' }, public: { paddleEnv: 'sandbox' } }
+  lookups = {}
+  config = { stripe: { secretKey: KEY, apiBase: '' } }
   vi.stubGlobal('useRuntimeConfig', () => config)
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const headers = new Headers(init.headers)
@@ -54,9 +58,12 @@ beforeEach(async () => {
       url,
       method: init.method ?? 'GET',
       authorization: headers.get('authorization'),
-      body: JSON.parse(String(init.body)),
+      stripeVersion: headers.get('stripe-version'),
     })
-    const id = decodeURIComponent(url.split('/subscriptions/')[1]!.split('/')[0]!)
+    const id = decodeURIComponent(url.split('/subscriptions/')[1]!)
+    if (init.method === 'GET') {
+      return await (lookups[id] ?? (() => new Response('{"status":"active"}')))()
+    }
     return await (answers[id] ?? (() => new Response('{}', { status: 200 })))()
   })
   errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -84,7 +91,7 @@ afterEach(() => {
 async function entitle(ref: string, status = 'active', extra: Record<string, unknown> = {}) {
   await db.insert(schema.entitlements).values({
     userId: USER,
-    paddleSubscriptionId: ref,
+    billingRef: ref,
     status,
     currentPeriodEnd: FUTURE,
     ...extra,
@@ -99,17 +106,17 @@ const opsRows = () => db.select().from(schema.opsEvents)
 describe('option on: cancel, then delete', () => {
   beforeEach(() => registerBillingExtensions({ cancelOnDeletion: true }))
 
-  it('cancels a live subscription immediately through the Paddle API, then deletes', async () => {
+  it('cancels a live subscription immediately through the Stripe API, then deletes', async () => {
     await entitle('sub_live1')
 
     expect(await deleteAccount(db, USER)).toEqual({ outcome: 'deleted' })
 
     expect(calls).toEqual([
       {
-        url: 'https://sandbox-api.paddle.com/subscriptions/sub_live1/cancel',
-        method: 'POST',
+        url: 'https://api.stripe.com/v1/subscriptions/sub_live1',
+        method: 'DELETE',
         authorization: `Bearer ${KEY}`,
-        body: { effective_from: 'immediately' },
+        stripeVersion: STRIPE_API_VERSION,
       },
     ])
     expect((await userRow())?.email).toBe(`deleted-${USER}@deleted.invalid`)
@@ -117,23 +124,17 @@ describe('option on: cancel, then delete', () => {
     expect(await db.query.entitlements.findMany()).toHaveLength(1)
   })
 
-  it('uses the production host for a production deployment, and an API base override', async () => {
+  it('honours an API base override', async () => {
     await entitle('sub_prod')
-    config.public.paddleEnv = 'production'
+    config.stripe.apiBase = 'http://127.0.0.1:9999/'
     await deleteAccount(db, USER)
-    expect(calls[0]?.url).toBe('https://api.paddle.com/subscriptions/sub_prod/cancel')
-
-    await db.update(schema.users).set({ email: 'cancel@example.com' })
-    await db.update(schema.entitlements).set({ status: 'active' })
-    config.paddle.apiBase = 'http://127.0.0.1:9999/'
-    await deleteAccount(db, USER)
-    expect(calls[1]?.url).toBe('http://127.0.0.1:9999/subscriptions/sub_prod/cancel')
+    expect(calls[0]?.url).toBe('http://127.0.0.1:9999/v1/subscriptions/sub_prod')
   })
 
   it('audits before the call, with subscription ids only, ahead of account.deleted', async () => {
     await entitle('sub_audit')
     answers.sub_audit = async () => {
-      // The intent row must already be there when Paddle is called.
+      // The intent row must already be there when Stripe is called.
       expect(await auditActions()).toEqual(['account.subscription_cancel_requested'])
       return new Response('{}', { status: 200 })
     }
@@ -180,21 +181,22 @@ describe('option on: cancel, then delete', () => {
     // Not live: terminal, cancel already scheduled, a pass, a comp.
     await entitle('sub_dead', 'canceled')
     await entitle('sub_scheduled', 'active', { scheduledChangeAction: 'cancel' })
-    await entitle('txn_pass')
+    await entitle('pi_pass')
     await entitle('comp_gift')
 
     expect((await deleteAccount(db, USER)).outcome).toBe('deleted')
 
     expect(calls.map((c) => c.url.split('/subscriptions/')[1]).sort()).toEqual([
-      'sub_a/cancel',
-      'sub_b/cancel',
-      'sub_c/cancel',
-      'sub_d/cancel',
+      'sub_a',
+      'sub_b',
+      'sub_c',
+      'sub_d',
     ])
+    expect(calls.every((c) => c.method === 'DELETE')).toBe(true)
   })
 
-  it('does not call Paddle for a pass holder, and deletes as before', async () => {
-    await entitle('txn_pass')
+  it('does not call Stripe for a pass holder, and deletes as before', async () => {
+    await entitle('pi_pass')
     await entitle('comp_gift')
 
     expect(await deleteAccount(db, USER)).toEqual({ outcome: 'deleted' })
@@ -203,26 +205,39 @@ describe('option on: cancel, then delete', () => {
     expect(await auditActions()).toEqual(['account.deleted'])
   })
 
-  it.each([['subscription_is_canceled_action_invalid'], ['subscription_update_when_canceled']])(
-    'treats Paddle’s %s as success: it is final, so deletion goes on',
-    async (code) => {
-      await entitle('sub_gone')
-      answers.sub_gone = () => paddleError(400, code)
+  it('treats an already-canceled subscription as success: the 4xx is followed by a GET that says canceled', async () => {
+    await entitle('sub_gone')
+    answers.sub_gone = () => stripeError(400, 'resource_missing')
+    lookups.sub_gone = () => new Response('{"status":"canceled"}')
 
-      expect((await deleteAccount(db, USER)).outcome).toBe('deleted')
-      expect(await opsRows()).toEqual([])
-    },
-  )
+    expect((await deleteAccount(db, USER)).outcome).toBe('deleted')
+    expect(await opsRows()).toEqual([])
+    expect(calls.map((c) => c.method)).toEqual(['DELETE', 'GET'])
+  })
+
+  it('treats a subscription Stripe no longer has (404 on the lookup) as already canceled', async () => {
+    await entitle('sub_gone')
+    answers.sub_gone = () => stripeError(400, 'resource_missing')
+    lookups.sub_gone = () => stripeError(404, 'resource_missing')
+
+    expect((await deleteAccount(db, USER)).outcome).toBe('deleted')
+    expect(await opsRows()).toEqual([])
+  })
 
   it.each([
     [
-      'a missing subscription.write permission (403)',
-      () => paddleError(403, 'forbidden'),
+      'a key without the subscriptions permission (403)',
+      () => stripeError(403, 'forbidden'),
       '403',
       'forbidden',
     ],
-    ['a server error (500)', () => paddleError(500, 'internal_error'), '500', 'internal_error'],
-    ['an unrelated 400', () => paddleError(400, 'invalid_field'), '400', 'invalid_field'],
+    ['a server error (500)', () => stripeError(500, 'api_error'), '500', 'api_error'],
+    [
+      'an unrelated 400',
+      () => stripeError(400, 'parameter_invalid_empty'),
+      '400',
+      'parameter_invalid_empty',
+    ],
     [
       'a non-JSON gateway page (502)',
       () => new Response('<html>bad gateway</html>', { status: 502 }),
@@ -231,7 +246,9 @@ describe('option on: cancel, then delete', () => {
     ],
     [
       'a network failure',
-      () => Promise.reject(new TypeError('connect failed')),
+      async () => {
+        throw new TypeError('connect failed')
+      },
       '0',
       'network_error',
     ],
@@ -251,12 +268,12 @@ describe('option on: cancel, then delete', () => {
     expect((await userRow())?.email).toBe('cancel@example.com')
     expect(await auditActions()).toEqual(['account.subscription_cancel_requested'])
 
-    // One ops event: the id and Paddle's status and code, and nothing else.
+    // One ops event: the id and Stripe's status and code, and nothing else.
     const [event] = await opsRows()
     expect(await opsRows()).toHaveLength(1)
     expect(event).toMatchObject({
       kind: 'deletion_cancel_failed',
-      detail: `sub_stuck: Paddle status ${status}, code ${code} — account deletion refused, nothing deleted`,
+      detail: `sub_stuck: Stripe status ${status}, code ${code} — account deletion refused, nothing deleted`,
     })
     const everything = JSON.stringify([event, errorLog.mock.calls])
     expect(everything).not.toContain(KEY)
@@ -266,21 +283,21 @@ describe('option on: cancel, then delete', () => {
 
   it('refuses when no API key is configured, rather than skipping the cancel', async () => {
     await entitle('sub_nokey')
-    config.paddle.apiKey = ''
+    config.stripe.secretKey = ''
 
     expect(await deleteAccount(db, USER)).toMatchObject({
       outcome: 'blocked',
       code: 'live_subscription',
     })
     expect(calls).toEqual([])
-    expect((await opsRows())[0]?.detail).toContain('Paddle status 0, code unconfigured')
+    expect((await opsRows())[0]?.detail).toContain('Stripe status 0, code unconfigured')
   })
 
   it('stops at the first failure, leaves the rest uncalled, and the account intact', async () => {
     await entitle('sub_1')
     await entitle('sub_2')
     const [first] = await db.select().from(schema.entitlements)
-    answers[first!.paddleSubscriptionId] = () => paddleError(403, 'forbidden')
+    answers[first!.billingRef] = () => stripeError(403, 'forbidden')
 
     expect((await deleteAccount(db, USER)).outcome).toBe('blocked')
 
@@ -290,7 +307,7 @@ describe('option on: cancel, then delete', () => {
 
   it('can be retried: a second attempt after a failure cancels and deletes', async () => {
     await entitle('sub_retry')
-    answers.sub_retry = () => paddleError(500, 'internal_error')
+    answers.sub_retry = () => stripeError(500, 'api_error')
     expect((await deleteAccount(db, USER)).outcome).toBe('blocked')
 
     delete answers.sub_retry
@@ -312,7 +329,7 @@ describe('deletionRefusalCode', () => {
   it('is the code of a failed cancel', async () => {
     registerBillingExtensions({ cancelOnDeletion: true, deletionRefusalCode: 'billing_live' })
     await entitle('sub_code')
-    answers.sub_code = () => paddleError(403, 'forbidden')
+    answers.sub_code = () => stripeError(403, 'forbidden')
 
     expect(await deleteAccount(db, USER)).toMatchObject({
       outcome: 'blocked',
@@ -345,7 +362,7 @@ describe('option off (the default): exactly the guard, as before', () => {
     [{}],
     [{ cancelOnDeletion: false }],
     [{ guardDeletion: true, cancelOnDeletion: false }],
-  ])('refuses a live subscription and never calls Paddle (%j)', async (options) => {
+  ])('refuses a live subscription and never calls Stripe (%j)', async (options) => {
     registerBillingExtensions(options)
     expect(getDeletionResolvers()).toEqual([])
     expect(getDeletionGuards().map((g) => g.key)).toEqual(['billing'])

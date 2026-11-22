@@ -1,6 +1,6 @@
-// Billing's nightly sweep of applied Paddle event ids (`paddle_events`), run
+// Billing's nightly sweep of applied event ids (`billing_events`), run
 // the way the purge task runs a contributor, against a real D1 inside workerd.
-// The dedupe row has to outlive Paddle's retry schedule, so it has its own
+// The dedupe row has to outlive Stripe's retry schedule, so it has its own
 // window (30 days), not the 24h grace the credential tables use. Core's token
 // sweep is in test/purge.test.ts.
 
@@ -12,7 +12,7 @@ import * as schema from '~~/server/db/schema'
 import { clearExtensionsForTest, getPurgeContributors } from '~~/server/utils/extensions'
 import { purgeExpiredTokens } from '~~/server/utils/purge'
 import {
-  PADDLE_EVENT_RETENTION_SECONDS,
+  BILLING_EVENT_RETENTION_SECONDS,
   registerBillingExtensions,
 } from '../server/utils/billing-extensions'
 
@@ -25,39 +25,39 @@ const DAY = 24 * HOUR
 const RECENTLY = new Date(NOW - 1 * HOUR)
 
 beforeEach(async () => {
-  await env.DB.exec('DELETE FROM paddle_events')
+  await env.DB.exec('DELETE FROM billing_events')
 })
 
-describe('billing purge contributor — applied Paddle event ids', () => {
+describe('billing purge contributor — applied event ids', () => {
   beforeEach(() => registerBillingExtensions())
   afterEach(() => clearExtensionsForTest())
 
   /** Billing's sweep, run the way the purge task runs a contributor. */
-  async function sweepPaddleEvents(options: { now: number; limit?: number }) {
-    const contributor = getPurgeContributors().find((c) => c.key === 'paddleEvents')
+  async function sweepBillingEvents(options: { now: number; limit?: number }) {
+    const contributor = getPurgeContributors().find((c) => c.key === 'billingEvents')
     expect(contributor).toBeDefined()
     return contributor!.run(db, options)
   }
 
   async function addEvent(eventId: string, receivedAt: Date): Promise<void> {
     await db
-      .insert(schema.paddleEvents)
+      .insert(schema.billingEvents)
       .values({ eventId, eventType: 'subscription.updated', occurredAt: receivedAt, receivedAt })
   }
 
   it('keeps an event id for the whole retention window, not just the grace window', async () => {
-    // Paddle retries for days; a row swept after 24h would let a late
+    // Stripe retries for days; a row swept after 24h would let a late
     // redelivery re-apply. Inside retention it stays, past it it goes.
-    await addEvent('evt-old', new Date(NOW - (PADDLE_EVENT_RETENTION_SECONDS + 60) * 1000))
+    await addEvent('evt-old', new Date(NOW - (BILLING_EVENT_RETENTION_SECONDS + 60) * 1000))
     await addEvent('evt-week', new Date(NOW - 7 * DAY))
     await addEvent('evt-fresh', RECENTLY)
 
-    const result = await sweepPaddleEvents({ now: NOW })
+    const result = await sweepBillingEvents({ now: NOW })
 
     expect(result).toEqual({ count: 1, truncated: false })
     // The token sweep itself no longer touches the table.
-    expect(await purgeExpiredTokens(db, { now: NOW })).not.toHaveProperty('paddleEvents')
-    const remaining = await db.select({ id: schema.paddleEvents.eventId }).from(schema.paddleEvents)
+    expect(await purgeExpiredTokens(db, { now: NOW })).not.toHaveProperty('billingEvents')
+    const remaining = await db.select({ id: schema.billingEvents.eventId }).from(schema.billingEvents)
     expect(remaining.map((row) => row.id).sort()).toEqual(['evt-fresh', 'evt-week'])
   })
 })

@@ -169,7 +169,7 @@ export function createServer(env: Env): McpServer {
       // Three clauses, and only the first is obvious:
       //   1. status IN ('active','trialing') — ACTIVE_STATUSES. `past_due` is
       //      deliberately absent: access is paused for the whole of dunning.
-      //   2. `sub_` rows pass on status ALONE. Paddle owns their lifecycle and
+      //   2. `sub_` rows pass on status ALONE. Stripe owns their lifecycle and
       //      flips the status when they end, so their date is not a gate.
       //   3. EVERYTHING ELSE must still be in its window. `txn_` passes and
       //      `comp_` grants never receive a lifecycle event, so status stays
@@ -186,7 +186,7 @@ export function createServer(env: Env): McpServer {
       const entitlement = await env.DB.prepare(
         `SELECT status, product_key, current_period_end FROM entitlements
          WHERE user_id = ?1 AND product_key = ?2 AND status IN ('active', 'trialing')
-           AND (paddle_subscription_id LIKE 'sub\\_%' ESCAPE '\\'
+           AND (billing_ref LIKE 'sub\\_%' ESCAPE '\\'
                 OR current_period_end > ?3)
          ORDER BY current_period_end DESC`,
       )

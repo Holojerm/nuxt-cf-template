@@ -1,19 +1,24 @@
-// Webhook-replay fixtures: signed Paddle events in Paddle Billing's real
-// shapes, for scripts that post them to a running Worker and compare what it
-// did. Everything here is invented test data: price ids, customer ids and the
-// signing secret are throwaway values, and no Paddle account is involved.
+// Webhook-replay fixtures: signed Stripe events in Stripe's real shapes, for
+// scripts that post them to a running Worker and compare what it did. Everything
+// here is invented test data: price ids, customer ids and the signing secret are
+// throwaway values, and no Stripe account is involved. The two lookups the
+// webhook makes (a session's line items, the invoice behind a payment) are
+// answered by a stub the script starts; what it answers is recorded in
+// LINE_ITEMS and PAYMENT_REFS as the steps are built.
 //
 // Dates are far-future constants (2099) on purpose. A pass or period that ends
 // "now + 30 days" would make `/api/billing/entitlement` differ from one run to
 // the next; a constant keeps every dump byte-stable. Ordering between events
-// is carried by `occurred_at`, which is what the server orders on.
+// is carried by `created`, which is what the server orders on.
 
-export const REPLAY_SECRET = 'replay-test-secret-not-a-real-key'
-export const PRICE_PASS = 'pri_replay_pass'
-export const PRICE_MONTHLY = 'pri_replay_monthly'
-/** The Paddle product this app sells (only consulted where a product filter exists). */
-export const PRODUCT_OWN = 'pro_replay_own'
-export const PRODUCT_FOREIGN = 'pro_replay_foreign'
+export const REPLAY_SECRET = 'whsec_replay_test_secret_not_a_real_key'
+/** The key the Worker is given; only the stub ever sees it. */
+export const STUB_SECRET_KEY = 'sk_test_replay_stub_key'
+export const PRICE_PASS = 'price_replay_pass'
+export const PRICE_MONTHLY = 'price_replay_monthly'
+/** The Stripe product this app sells (only consulted where a product filter exists). */
+export const PRODUCT_OWN = 'prod_replay_own'
+export const PRODUCT_FOREIGN = 'prod_replay_foreign'
 
 export interface ReplayUser {
   id: string
@@ -24,17 +29,37 @@ export interface ReplayUser {
 
 export const USERS: Record<'buyer' | 'live' | 'free' | 'admin', ReplayUser> = {
   /** Runs the whole purchase / renewal / refund scenario. */
-  buyer: { id: 'usr_replay_buyer', email: 'buyer@replay.test', name: 'Buyer', role: 'user' },
+  buyer: {
+    id: 'usr_replay_buyer',
+    email: 'buyer@replay.test',
+    name: 'Buyer',
+    role: 'user',
+  },
   /** Ends the run with a live subscription, to exercise the deletion guard. */
-  live: { id: 'usr_replay_live', email: 'live@replay.test', name: 'Live', role: 'user' },
+  live: {
+    id: 'usr_replay_live',
+    email: 'live@replay.test',
+    name: 'Live',
+    role: 'user',
+  },
   /** Never buys anything: the paywall gate must refuse them. */
-  free: { id: 'usr_replay_free', email: 'free@replay.test', name: 'Free', role: 'user' },
-  admin: { id: 'usr_replay_admin', email: 'admin@replay.test', name: 'Admin', role: 'admin' },
+  free: {
+    id: 'usr_replay_free',
+    email: 'free@replay.test',
+    name: 'Free',
+    role: 'user',
+  },
+  admin: {
+    id: 'usr_replay_admin',
+    email: 'admin@replay.test',
+    name: 'Admin',
+    role: 'admin',
+  },
 }
 
 /**
  * Only in the `--cancel-on-deletion` run, each holding a live subscription the
- * stub Paddle API answers differently when account deletion tries to cancel it.
+ * stub Stripe API answers differently when account deletion tries to cancel it.
  * Kept out of USERS so the default run's users table is untouched.
  */
 export const CANCEL_USERS: Record<'blocked' | 'settled', ReplayUser> = {
@@ -137,13 +162,21 @@ export type UserKey =
   | keyof typeof REFERRAL_USERS
   | keyof typeof MAGIC_LINK_SIGNUPS
 
-/** What the stub answers for a subscription id; everything else gets 200. */
+/**
+ * What the stub answers when the cancel-on-deletion run DELETEs a subscription;
+ * everything else gets 200. A 400 also reads back as already cancelled.
+ */
 export const STUB_ANSWERS: Record<string, { status: number; code?: string }> = {
-  sub_replay_blocked: { status: 403, code: 'forbidden' },
-  sub_replay_settled: { status: 400, code: 'subscription_is_canceled_action_invalid' },
+  sub_replay_blocked: { status: 403, code: 'permission' },
+  sub_replay_settled: { status: 400, code: 'resource_already_canceled' },
 }
 
-/** `ts` offsets the signature timestamp from now, in seconds (negative = old). */
+/** Checkout Session id → what it sold, for the stub's line-items answer. */
+export const LINE_ITEMS = new Map<string, { price: string; product: string }>()
+/** PaymentIntent id → the invoice and subscription behind it, for the stub's invoice_payments answer. */
+export const PAYMENT_REFS = new Map<string, { invoiceId: string; subscriptionId: string }>()
+
+/** `ageSeconds` backdates the signature timestamp from now. */
 export type Signing =
   | { kind: 'valid' }
   | { kind: 'bad_signature' }
@@ -171,94 +204,88 @@ export interface RequestStep {
 export type Step = WebhookStep | RequestStep
 
 let seq = 0
-const T = (day: number, hour = 0) =>
-  new Date(Date.UTC(2099, 0, day, hour)).toISOString().replace('.000Z', 'Z')
+/** A 2099 instant in unix seconds: the unit Stripe stamps events and periods in. */
+const S = (day: number, hour = 0) => Math.floor(Date.UTC(2099, 0, day, hour) / 1000)
 
-interface EventOptions {
-  id: string
-  eventId?: string
-  type: string
-  at: string
-  data: Record<string, unknown>
-}
-
-function event({ id, eventId, type, at, data }: EventOptions): string {
+function event(type: string, at: number, object: Record<string, unknown>): string {
   seq += 1
   return JSON.stringify({
-    event_id: eventId ?? `evt_replay_${String(seq).padStart(3, '0')}`,
-    event_type: type,
-    occurred_at: at,
-    notification_id: `ntf_replay_${seq}`,
-    data: { id, ...data },
+    id: `evt_replay_${String(seq).padStart(3, '0')}`,
+    type,
+    created: at,
+    livemode: false,
+    data: { object },
   })
 }
 
-function item(priceId: string, productId: string) {
-  return {
-    status: 'active',
-    quantity: 1,
-    recurring: priceId === PRICE_MONTHLY,
-    price: { id: priceId, product_id: productId, description: 'replay', type: 'standard' },
-    product: { id: productId, name: 'replay' },
-  }
-}
-
+/** A Stripe subscription object, `extra` overriding any field. */
 function subscription(
   userId: string | null,
   id: string,
   status: string,
-  periodEnds: string,
+  periodEnds: number,
   extra: Record<string, unknown> = {},
   priceId = PRICE_MONTHLY,
   productId = PRODUCT_OWN,
 ) {
   return {
+    id,
     status,
-    customer_id: `ctm_${id}`,
-    address_id: 'add_replay',
-    currency_code: 'USD',
-    collection_mode: 'automatic',
-    custom_data: userId ? { userId } : null,
-    items: [item(priceId, productId)],
-    current_billing_period: { starts_at: T(1), ends_at: periodEnds },
-    billing_cycle: { frequency: 1, interval: 'month' },
-    scheduled_change: null,
+    customer: `cus_${id}`,
+    metadata: userId ? { userId } : {},
+    cancel_at_period_end: false,
+    cancel_at: null,
+    latest_invoice: null,
+    items: {
+      data: [
+        {
+          current_period_end: periodEnds,
+          price: { id: priceId, product: productId },
+        },
+      ],
+    },
     ...extra,
   }
 }
 
-function transaction(
+/**
+ * A paid one-time Checkout Session. Registers what the stub will say it sold,
+ * because the webhook asks: the payload carries no line items.
+ */
+function passSession(
   userId: string | null,
-  id: string,
-  extra: Record<string, unknown> = {},
+  name: string,
   priceId = PRICE_PASS,
   productId = PRODUCT_OWN,
 ) {
+  const id = `cs_replay_${name}`
+  LINE_ITEMS.set(id, { price: priceId, product: productId })
   return {
-    status: 'completed',
-    customer_id: `ctm_${id}`,
-    address_id: 'add_replay',
-    currency_code: 'USD',
-    origin: 'web',
-    subscription_id: null,
-    custom_data: userId ? { userId } : null,
-    items: [{ price: { id: priceId, product_id: productId }, quantity: 1 }],
-    billed_at: T(1),
-    ...extra,
+    id,
+    mode: 'payment',
+    payment_status: 'paid',
+    payment_intent: `pi_replay_${name}`,
+    customer: `cus_replay_${name}`,
+    client_reference_id: userId,
+    metadata: userId ? { userId } : {},
   }
 }
 
-function adjustment(id: string, transactionId: string, extra: Record<string, unknown> = {}) {
+function charge(name: string) {
   return {
-    action: 'refund',
-    type: 'full',
-    status: 'approved',
-    transaction_id: transactionId,
-    subscription_id: null,
-    customer_id: `ctm_${transactionId}`,
-    reason: 'replay',
-    currency_code: 'USD',
-    ...extra,
+    id: `ch_replay_${name}`,
+    payment_intent: `pi_replay_${name}`,
+    refunded: true,
+    amount_refunded: 1800,
+  }
+}
+
+function dispute(name: string, status: string) {
+  return {
+    id: `dp_replay_${name}`,
+    status,
+    charge: `ch_replay_${name}`,
+    payment_intent: `pi_replay_${name}`,
   }
 }
 
@@ -301,8 +328,8 @@ export interface BuildOptions {
    */
   referral?: boolean
   /**
-   * Run as an app with `billing.cancelOnDeletion` on, against a stub Paddle API:
-   * deletion cancels live subscriptions first. Off (the default), the steps are
+   * Run as an app with `billing.cancelOnDeletion` on: deletion cancels live
+   * subscriptions at the stub Stripe API first. Off (the default), the steps are
    * exactly those of a build without the option.
    */
   cancelOnDeletion?: boolean
@@ -311,6 +338,8 @@ export interface BuildOptions {
 /** The full replay, in delivery order. */
 export function buildSteps(options: BuildOptions = {}): Step[] {
   seq = 0
+  LINE_ITEMS.clear()
+  PAYMENT_REFS.clear()
   const buyer = USERS.buyer.id
   const live = USERS.live.id
   const steps: Step[] = []
@@ -318,6 +347,9 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
   // ── Before anything is bought ───────────────────────────────────────────────
   // Pages the billing UI provides. SSR status and title only: markup is build-specific.
   steps.push(get('page: /pricing (public)', '/pricing', 'anonymous'))
+  steps.push(
+    get('page: /pricing (returned from Stripe)', '/pricing?checkout=canceled', 'anonymous'),
+  )
   steps.push(get('page: /dashboard (signed out)', '/dashboard', 'anonymous'))
   steps.push(get('page: /files (signed out)', '/files', 'anonymous'))
   steps.push(get('seo: sitemap lists the pricing page', '/sitemap.xml', 'anonymous'))
@@ -325,43 +357,57 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
   steps.push(get('entitlement: nothing bought yet', '/api/billing/entitlement', 'buyer'))
   steps.push(get('paywall gate: free user is refused (402)', '/api/files', 'free'))
   steps.push(get('onboarding: plan step open', '/api/onboarding', 'buyer'))
+  steps.push(
+    post('checkout: signed out is refused (401)', '/api/billing/checkout', 'anonymous', {
+      plan: 'pass',
+    }),
+    post('checkout: an unknown plan is refused (400)', '/api/billing/checkout', 'buyer', {
+      plan: 'lifetime',
+    }),
+    post('checkout: a session for the pass (200)', '/api/billing/checkout', 'buyer', {
+      plan: 'pass',
+    }),
+  )
 
-  // ── A one-time pass (transaction.completed, not recurring) ──────────────────
+  // ── A one-time pass (checkout.session.completed in payment mode) ────────────
   const pass1 = hook(
     'pass purchase',
-    event({
-      id: 'txn_replay_pass1',
-      type: 'transaction.completed',
-      at: T(1, 1),
-      data: transaction(buyer, 'txn_replay_pass1', { billed_at: T(1, 1) }),
-    }),
+    event('checkout.session.completed', S(1, 1), passSession(buyer, 'pass1')),
   )
   steps.push(pass1)
   steps.push(get('entitlement: after pass', '/api/billing/entitlement', 'buyer'))
-  // Same delivery again (Paddle retry): must be a no-op.
-  steps.push({ ...pass1, name: 'duplicate delivery of the pass (same event_id)' })
-  // A new event id for the same transaction: grantPass' unique ref refuses it.
+  // Same delivery again (a Stripe retry): must be a no-op.
+  steps.push({
+    ...pass1,
+    name: 'duplicate delivery of the pass (same event id)',
+  })
+  // A new event id for the same payment: grantPass' unique ref refuses it.
   steps.push(
     hook(
-      'same transaction under a new event id',
-      event({
-        id: 'txn_replay_pass1',
-        type: 'transaction.completed',
-        at: T(1, 2),
-        data: transaction(buyer, 'txn_replay_pass1', { billed_at: T(1, 1) }),
-      }),
+      'same payment under a new event id',
+      event('checkout.session.completed', S(1, 2), passSession(buyer, 'pass1')),
     ),
   )
   // A second pass bought while the first runs: stacks on the first's end.
   steps.push(
     hook(
       'second pass stacks',
-      event({
-        id: 'txn_replay_pass2',
-        type: 'transaction.completed',
-        at: T(2, 1),
-        data: transaction(buyer, 'txn_replay_pass2', { billed_at: T(2, 1) }),
+      event('checkout.session.completed', S(2, 1), passSession(buyer, 'pass2')),
+    ),
+  )
+  // A card that settles later: `completed` arrives unpaid and grants nothing,
+  // the async event is the one that says the money landed.
+  steps.push(
+    hook(
+      'delayed-payment session completed unpaid (grants nothing)',
+      event('checkout.session.completed', S(2, 2), {
+        ...passSession(buyer, 'delayed'),
+        payment_status: 'unpaid',
       }),
+    ),
+    hook(
+      'delayed payment succeeds (grants the pass)',
+      event('checkout.session.async_payment_succeeded', S(2, 3), passSession(buyer, 'delayed')),
     ),
   )
 
@@ -370,103 +416,96 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
   steps.push(
     hook(
       'subscription A created',
-      event({
-        id: subA,
-        type: 'subscription.created',
-        at: T(3, 1),
-        data: subscription(buyer, subA, 'active', T(10), { transaction_id: 'txn_replay_a_first' }),
-      }),
+      event(
+        'customer.subscription.created',
+        S(3, 1),
+        subscription(buyer, subA, 'active', S(10), {
+          latest_invoice: 'in_replay_a_first',
+        }),
+      ),
     ),
   )
   steps.push(
     hook(
-      'subscription A activated',
-      event({
-        id: subA,
-        type: 'subscription.activated',
-        at: T(3, 2),
-        data: subscription(buyer, subA, 'active', T(10)),
-      }),
+      'subscription A first payment confirmed (updated, same status)',
+      event(
+        'customer.subscription.updated',
+        S(3, 2),
+        subscription(buyer, subA, 'active', S(10), {
+          latest_invoice: 'in_replay_a_first',
+        }),
+      ),
     ),
   )
   steps.push(get('entitlement: subscription live', '/api/billing/entitlement', 'buyer'))
-  // The renewal's transaction: owned by subscription.* events, so ignored here.
+  // A renewal's invoice: owned by customer.subscription.* events, not subscribed to.
   steps.push(
     hook(
-      'renewal transaction.completed (ignored)',
-      event({
-        id: 'txn_replay_a_renewal',
-        type: 'transaction.completed',
-        at: T(10, 1),
-        data: transaction(buyer, 'txn_replay_a_renewal', { subscription_id: subA }, PRICE_MONTHLY),
+      'renewal invoice.paid (not handled, acknowledged)',
+      event('invoice.paid', S(10, 1), {
+        id: 'in_replay_a_renewal',
+        subscription: subA,
       }),
     ),
   )
   steps.push(
     hook(
       'subscription A renewed (new period)',
-      event({
-        id: subA,
-        type: 'subscription.updated',
-        at: T(10, 2),
-        data: subscription(buyer, subA, 'active', T(17)),
-      }),
+      event(
+        'customer.subscription.updated',
+        S(10, 2),
+        subscription(buyer, subA, 'active', S(17), {
+          latest_invoice: 'in_replay_a_renewal',
+        }),
+      ),
     ),
   )
   steps.push(
     hook(
       'subscription A past_due',
-      event({
-        id: subA,
-        type: 'subscription.past_due',
-        at: T(17, 1),
-        data: subscription(buyer, subA, 'past_due', T(17)),
-      }),
+      event(
+        'customer.subscription.updated',
+        S(17, 1),
+        subscription(buyer, subA, 'past_due', S(17)),
+      ),
     ),
   )
   steps.push(get('entitlement: past_due', '/api/billing/entitlement', 'buyer'))
   steps.push(
     hook(
       'subscription A recovered',
-      event({
-        id: subA,
-        type: 'subscription.updated',
-        at: T(18, 1),
-        data: subscription(buyer, subA, 'active', T(24)),
-      }),
+      event('customer.subscription.updated', S(18, 1), subscription(buyer, subA, 'active', S(24))),
     ),
   )
-  const subAUpdated = event({
-    id: subA,
-    type: 'subscription.updated',
-    at: T(19, 1),
-    data: subscription(buyer, subA, 'active', T(24), {
-      scheduled_change: { action: 'cancel', effective_at: T(24) },
-    }),
-  })
-  steps.push(hook('subscription A cancel scheduled', subAUpdated))
+  steps.push(
+    hook(
+      'subscription A cancel scheduled',
+      event(
+        'customer.subscription.updated',
+        S(19, 1),
+        subscription(buyer, subA, 'active', S(24), {
+          cancel_at_period_end: true,
+          cancel_at: S(24),
+        }),
+      ),
+    ),
+  )
   steps.push(get('entitlement: cancel scheduled', '/api/billing/entitlement', 'buyer'))
   // Out of order: a delayed older `active` update arrives after the cancel was scheduled.
   steps.push(
     hook(
       'out of order: older update arrives late (stale)',
-      event({
-        id: subA,
-        type: 'subscription.updated',
-        at: T(18, 12),
-        data: subscription(buyer, subA, 'active', T(24)),
-      }),
+      event('customer.subscription.updated', S(18, 12), subscription(buyer, subA, 'active', S(24))),
     ),
   )
   steps.push(
     hook(
-      'subscription A canceled (scheduled change applied)',
-      event({
-        id: subA,
-        type: 'subscription.canceled',
-        at: T(24, 1),
-        data: subscription(buyer, subA, 'canceled', T(24)),
-      }),
+      'subscription A deleted (scheduled cancel applied)',
+      event(
+        'customer.subscription.deleted',
+        S(24, 1),
+        subscription(buyer, subA, 'canceled', S(24)),
+      ),
     ),
   )
 
@@ -475,25 +514,25 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
   steps.push(
     hook(
       'subscription B created',
-      event({
-        id: subB,
-        type: 'subscription.created',
-        at: T(5, 1),
-        data: subscription(buyer, subB, 'active', T(12)),
-      }),
+      event('customer.subscription.created', S(5, 1), subscription(buyer, subB, 'active', S(12))),
     ),
   )
   steps.push(
     hook(
-      'subscription B canceled immediately',
-      event({
-        id: subB,
-        type: 'subscription.canceled',
-        at: T(5, 2),
-        data: subscription(buyer, subB, 'canceled', T(12), {
-          canceled_at: T(5, 2),
-        }),
-      }),
+      'subscription B deleted immediately',
+      event('customer.subscription.deleted', S(5, 2), subscription(buyer, subB, 'canceled', S(12))),
+    ),
+  )
+
+  // A card that needs a challenge: nothing is bought until the first payment lands.
+  steps.push(
+    hook(
+      'subscription D created incomplete (no row)',
+      event(
+        'customer.subscription.created',
+        S(6, 1),
+        subscription(buyer, 'sub_replay_d', 'incomplete', S(13)),
+      ),
     ),
   )
 
@@ -502,48 +541,23 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
   steps.push(
     hook(
       'out of order: subscription C updated (past_due) first',
-      event({
-        id: subC,
-        type: 'subscription.updated',
-        at: T(8, 2),
-        data: subscription(buyer, subC, 'past_due', T(15)),
-      }),
+      event('customer.subscription.updated', S(8, 2), subscription(buyer, subC, 'past_due', S(15))),
     ),
   )
   steps.push(
     hook(
       'out of order: subscription C created arrives late (stale)',
-      event({
-        id: subC,
-        type: 'subscription.created',
-        at: T(8, 1),
-        data: subscription(buyer, subC, 'active', T(15)),
-      }),
+      event('customer.subscription.created', S(8, 1), subscription(buyer, subC, 'active', S(15))),
     ),
   )
 
   // ── Refunds ─────────────────────────────────────────────────────────────────
-  steps.push(
-    hook(
-      'refund of the first pass',
-      event({
-        id: 'adj_replay_1',
-        type: 'adjustment.created',
-        at: T(20, 1),
-        data: adjustment('adj_replay_1', 'txn_replay_pass1'),
-      }),
-    ),
-  )
+  steps.push(hook('refund of the first pass', event('charge.refunded', S(20, 1), charge('pass1'))))
   steps.push(get('entitlement: after refund', '/api/billing/entitlement', 'buyer'))
   steps.push(
     hook(
       'refund matching nothing (unmatched adjustment)',
-      event({
-        id: 'adj_replay_2',
-        type: 'adjustment.created',
-        at: T(20, 2),
-        data: adjustment('adj_replay_2', 'txn_replay_nobody'),
-      }),
+      event('charge.refunded', S(20, 2), charge('nobody')),
     ),
   )
 
@@ -551,52 +565,37 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
   steps.push(
     hook(
       'foreign product (another app sharing the account)',
-      event({
-        id: 'txn_replay_foreign',
-        type: 'transaction.completed',
-        at: T(21, 1),
-        data: transaction(buyer, 'txn_replay_foreign', {}, 'pri_replay_other', PRODUCT_FOREIGN),
-      }),
+      event(
+        'checkout.session.completed',
+        S(21, 1),
+        passSession(buyer, 'foreign', 'price_replay_other', PRODUCT_FOREIGN),
+      ),
     ),
   )
   steps.push(
     hook(
       'unrecognised price on our own product',
-      event({
-        id: 'txn_replay_unpriced',
-        type: 'transaction.completed',
-        at: T(21, 2),
-        data: transaction(buyer, 'txn_replay_unpriced', {}, 'pri_replay_unlisted', PRODUCT_OWN),
-      }),
+      event(
+        'checkout.session.completed',
+        S(21, 2),
+        passSession(buyer, 'unpriced', 'price_replay_unlisted', PRODUCT_OWN),
+      ),
     ),
   )
   steps.push(
     hook(
-      'unknown user (custom_data names no account)',
-      event({
-        id: 'txn_replay_ghost',
-        type: 'transaction.completed',
-        at: T(21, 3),
-        data: transaction('usr_replay_ghost', 'txn_replay_ghost'),
-      }),
+      'unknown user (metadata names no account)',
+      event('checkout.session.completed', S(21, 3), passSession('usr_replay_ghost', 'ghost')),
     ),
   )
   steps.push(
     hook(
-      'no user (no custom_data at all)',
-      event({
-        id: 'txn_replay_anon',
-        type: 'transaction.completed',
-        at: T(21, 4),
-        data: transaction(null, 'txn_replay_anon'),
-      }),
+      'no user (no metadata at all)',
+      event('checkout.session.completed', S(21, 4), passSession(null, 'anon')),
     ),
   )
   steps.push(
-    hook(
-      'unhandled event type',
-      event({ id: 'cus_replay_1', type: 'customer.updated', at: T(21, 5), data: {} }),
-    ),
+    hook('unhandled event type', event('customer.updated', S(21, 5), { id: 'cus_replay_1' })),
   )
 
   // ── Hostile deliveries ──────────────────────────────────────────────────────
@@ -604,26 +603,22 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
   steps.push(hook('well-formed JSON, wrong shape', JSON.stringify({ hello: 'world' })))
   steps.push(
     hook(
+      'handled type with an unreadable object',
+      event('charge.refunded', S(22, 3), { nope: true }),
+    ),
+  )
+  steps.push(
+    hook(
       'bad signature',
-      event({
-        id: 'txn_replay_forged',
-        type: 'transaction.completed',
-        at: T(22, 1),
-        data: transaction(buyer, 'txn_replay_forged'),
-      }),
+      event('checkout.session.completed', S(22, 1), passSession(buyer, 'forged')),
       { kind: 'bad_signature' },
     ),
   )
   steps.push(
     hook(
-      'stale timestamp (60s old)',
-      event({
-        id: 'txn_replay_late',
-        type: 'transaction.completed',
-        at: T(22, 2),
-        data: transaction(buyer, 'txn_replay_late'),
-      }),
-      { kind: 'stale', ageSeconds: 60 },
+      'stale timestamp (10 minutes old)',
+      event('checkout.session.completed', S(22, 2), passSession(buyer, 'late')),
+      { kind: 'stale', ageSeconds: 600 },
     ),
   )
 
@@ -631,12 +626,11 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
   steps.push(
     hook(
       'live customer: subscription created',
-      event({
-        id: 'sub_replay_live',
-        type: 'subscription.created',
-        at: T(25, 1),
-        data: subscription(live, 'sub_replay_live', 'active', T(28)),
-      }),
+      event(
+        'customer.subscription.created',
+        S(25, 1),
+        subscription(live, 'sub_replay_live', 'active', S(28)),
+      ),
     ),
   )
 
@@ -646,12 +640,11 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
       steps.push(
         hook(
           `${user.name.toLowerCase()} customer: subscription created`,
-          event({
-            id,
-            type: 'subscription.created',
-            at: T(25, 2),
-            data: subscription(user.id, id, 'active', T(28)),
-          }),
+          event(
+            'customer.subscription.created',
+            S(25, 2),
+            subscription(user.id, id, 'active', S(28)),
+          ),
         ),
       )
     }
@@ -683,7 +676,7 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
     }),
   )
   if (options.cancelOnDeletion) {
-    // With the option on the same customer is not refused: Paddle (the stub) is
+    // With the option on the same customer is not refused: Stripe (the stub) is
     // asked to cancel, then the account is deleted; a refused cancel refuses the
     // deletion; and the cancel's echo for a deleted customer is a 200 no-op.
     steps.push(
@@ -705,17 +698,14 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
       ),
       hook(
         'the cancel’s echo for the deleted customer (200, no alert)',
-        event({
-          id: 'sub_replay_live',
-          type: 'subscription.canceled',
-          at: T(26, 1),
-          data: subscription(live, 'sub_replay_live', 'canceled', T(28), {
-            canceled_at: T(26, 1),
-          }),
-        }),
+        event(
+          'customer.subscription.deleted',
+          S(26, 1),
+          subscription(live, 'sub_replay_live', 'canceled', S(28)),
+        ),
       ),
       post(
-        'delete account: already cancelled at Paddle counts as cancelled (200)',
+        'delete account: already cancelled at Stripe counts as cancelled (200)',
         '/api/account/delete',
         'settled',
         {
@@ -735,17 +725,12 @@ export function buildSteps(options: BuildOptions = {}): Step[] {
       confirmEmail: USERS.free.email,
     }),
   )
-  // The stub run has a key configured; this step is the no-key refusal.
-  if (!options.cancelOnDeletion) {
-    steps.push({
-      type: 'request',
-      name: 'portal link without an API key (503)',
-      method: 'POST',
-      path: '/api/billing/portal',
-      as: 'buyer',
-      json: {},
-    })
-  }
+  // The stub mints the portal sessions. A customer with no billing history has
+  // nothing to open.
+  steps.push(
+    post('portal links for the buyer (200)', '/api/billing/portal', 'buyer', {}),
+    post('portal links with no billing history (404)', '/api/billing/portal', 'admin', {}),
+  )
   return steps
 }
 
@@ -781,49 +766,36 @@ function referralSteps(): Step[] {
   )
 
   // ── The referrer's half: paid when a referee first pays ────────────────────
-  const passTxn = 'txn_replay_ref_pass'
-  const passPurchase = event({
-    id: passTxn,
-    type: 'transaction.completed',
-    at: T(3, 3),
-    data: transaction(refereePass.id, passTxn, { billed_at: T(3, 3) }),
-  })
-  steps.push(hook('referee buys a pass (referrer is rewarded)', passPurchase))
   steps.push(
     hook(
-      'the same transaction under a new event id (no second reward)',
-      event({
-        id: passTxn,
-        type: 'transaction.completed',
-        at: T(3, 4),
-        data: transaction(refereePass.id, passTxn, { billed_at: T(3, 3) }),
-      }),
+      'referee buys a pass (referrer is rewarded)',
+      event('checkout.session.completed', S(3, 3), passSession(refereePass.id, 'ref_pass')),
+    ),
+  )
+  steps.push(
+    hook(
+      'the same payment under a new event id (no second reward)',
+      event('checkout.session.completed', S(3, 4), passSession(refereePass.id, 'ref_pass')),
     ),
   )
   const subId = 'sub_replay_ref_sub'
-  const subFirstTxn = 'txn_replay_ref_sub_first'
+  const subFirstInvoice = 'in_replay_ref_sub_first'
   steps.push(
     hook(
-      'referee subscribes (second reward, keyed on the first transaction)',
-      event({
-        id: subId,
-        type: 'subscription.created',
-        at: T(4, 3),
-        data: subscription(refereeSub.id, subId, 'active', T(11), {
-          transaction_id: subFirstTxn,
+      'referee subscribes (second reward, keyed on the first invoice)',
+      event(
+        'customer.subscription.created',
+        S(4, 3),
+        subscription(refereeSub.id, subId, 'active', S(11), {
+          latest_invoice: subFirstInvoice,
         }),
-      }),
+      ),
     ),
   )
   steps.push(
     hook(
       'the twin buys a pass (self-referral, no reward)',
-      event({
-        id: 'txn_replay_ref_twin',
-        type: 'transaction.completed',
-        at: T(4, 4),
-        data: transaction(twin.id, 'txn_replay_ref_twin', { billed_at: T(4, 4) }),
-      }),
+      event('checkout.session.completed', S(4, 4), passSession(twin.id, 'ref_twin')),
     ),
   )
   steps.push(
@@ -832,41 +804,26 @@ function referralSteps(): Step[] {
   )
 
   // ── Reversals: the reward goes with the purchase, and comes back with it ────
+  // The subscription's first payment: a dispute names its PaymentIntent, and the
+  // stub says which invoice and subscription that was.
+  PAYMENT_REFS.set('pi_replay_ref_sub_first', {
+    invoiceId: subFirstInvoice,
+    subscriptionId: subId,
+  })
   steps.push(
     hook(
       'refund of the referee’s pass (reward revoked)',
-      event({
-        id: 'adj_replay_ref_1',
-        type: 'adjustment.created',
-        at: T(6, 1),
-        data: adjustment('adj_replay_ref_1', passTxn),
-      }),
+      event('charge.refunded', S(6, 1), charge('ref_pass')),
     ),
     get('entitlement: referrer after the refund', '/api/billing/entitlement', 'referrer'),
     get('share card: referrer after the refund', '/api/referral/me', 'referrer'),
     hook(
       'chargeback on the referee’s subscription (reward revoked)',
-      event({
-        id: 'adj_replay_ref_2',
-        type: 'adjustment.created',
-        at: T(6, 2),
-        data: adjustment('adj_replay_ref_2', subFirstTxn, {
-          action: 'chargeback',
-          subscription_id: subId,
-        }),
-      }),
+      event('charge.dispute.created', S(6, 2), dispute('ref_sub_first', 'needs_response')),
     ),
     hook(
       'the chargeback is won (reward restored)',
-      event({
-        id: 'adj_replay_ref_3',
-        type: 'adjustment.updated',
-        at: T(6, 3),
-        data: adjustment('adj_replay_ref_3', subFirstTxn, {
-          action: 'chargeback_reverse',
-          subscription_id: subId,
-        }),
-      }),
+      event('charge.dispute.closed', S(6, 3), dispute('ref_sub_first', 'won')),
     ),
     get('entitlement: referrer after the reversal', '/api/billing/entitlement', 'referrer'),
     get('share card: referrer after the reversal', '/api/referral/me', 'referrer'),

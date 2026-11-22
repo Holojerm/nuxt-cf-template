@@ -1,7 +1,7 @@
 // What the billing feature contributes to core: the deletion guard, the data
 // export's entitlements, the admin one-customer and "view as" payloads, fleet
-// counters and the paid funnel stage, the onboarding signal, the paddle-event
-// purge, the `pass_expiring` lifecycle step, the paywall gate itself and the
+// counters and the paid funnel stage, the onboarding signal, the purge of applied
+// webhook event ids (`billing_events`), the `pass_expiring` lifecycle step, the paywall gate itself and the
 // earned-access provider other features grant days through.
 // Registered once per isolate by this layer's layers/billing/server/plugins/billing.ts; tests call
 // registerBillingExtensions() directly. See server/utils/extensions.ts.
@@ -10,7 +10,7 @@
 // behaves as a free product: deletion unguarded, `requireAccess` allowing any
 // signed-in user, no `entitlements` fleet group, funnel `paid` at 0.
 
-import { and, count, countDistinct, desc, eq, inArray, like, lt, or } from 'drizzle-orm'
+import { and, count, countDistinct, desc, eq, inArray, lt, or } from 'drizzle-orm'
 import * as tables from '../db/schema'
 import { requireSubscription } from './billing'
 import {
@@ -18,7 +18,7 @@ import {
   createCancelOnDeletionResolver,
   findLiveSubscriptionRefs,
   isCancelEchoAfterDeletion,
-  paddleCancelFromConfig,
+  stripeCancelFromConfig,
 } from './billing-deletion'
 import type { CancelSubscription } from './billing-deletion'
 import { registerUnknownUserExpectation } from './billing-expectations'
@@ -46,11 +46,13 @@ import { registerEarnedAccess } from '#server/utils/earned-access'
 import { registerEntitlementViewFields } from '#server/utils/entitlement-view-fields'
 import { registerOpsSeverity } from '#server/utils/ops-severity'
 import { PURGE_BATCH_LIMIT } from '#server/utils/purge'
+import { likePrefix } from '#server/utils/sql'
+import { SUBSCRIPTION_REF_PREFIX, TRANSACTION_REF_PREFIX } from './billing-refs'
 
 /** One entitlement as the data export shows it. */
 export interface AccountExportEntitlement {
   id: string
-  paddleSubscriptionId: string
+  billingRef: string
   productKey: string
   status: string
   currentPeriodEnd: string | null
@@ -83,11 +85,11 @@ declare module '#server/utils/entitlement-view-fields' {
   }
 }
 
-/** How long an applied Paddle event_id stays deduplicated. Paddle retries for ~3 days; 30 covers a manual replay. */
-export const PADDLE_EVENT_RETENTION_SECONDS = 30 * 24 * 60 * 60
+/** How long an applied Stripe event id stays deduplicated. Stripe retries a live-mode delivery for up to 3 days; 30 covers a manual replay. */
+export const BILLING_EVENT_RETENTION_SECONDS = 30 * 24 * 60 * 60
 
 /**
- * Is there a subscription behind this account that Paddle might still bill —
+ * Is there a subscription behind this account that Stripe might still bill —
  * across every product it might have bought, not just `'default'`.
  *
  * Deliberately NOT `getBillingOverview(db, userId)`, which scopes to one
@@ -121,18 +123,18 @@ export interface BillingOptions {
   /**
    * Register the deletion guard (refuse while a live subscription exists).
    * Default true. An app whose own deletion flow cancels the subscription at
-   * Paddle first, and fails closed itself, sets this false: the guard would
+   * Stripe first, and fails closed itself, sets this false: the guard would
    * refuse before that cancel could run, because the row only turns `canceled`
-   * when Paddle's webhook arrives.
+   * when Stripe's webhook arrives.
    */
   guardDeletion?: boolean
   /**
-   * Cancel the person's live subscriptions at Paddle, immediately, when they
+   * Cancel the person's live subscriptions at Stripe, immediately, when they
    * delete their account, instead of refusing until they have done it in the
    * portal. Default false. On, billing registers a DeletionResolver in place of
    * the guard (so `guardDeletion` is moot) and deletion fails closed: if any
-   * cancel fails the 409 is the guard's, same code. Needs `subscription.write`
-   * on NUXT_PADDLE_API_KEY. See billing-deletion.ts.
+   * cancel fails the 409 is the guard's, same code. A restricted key needs
+   * Subscriptions: write on NUXT_STRIPE_SECRET_KEY. See billing-deletion.ts.
    */
   cancelOnDeletion?: boolean
   /**
@@ -157,7 +159,7 @@ export interface BillingOptions {
   stackAtBilledAt?: boolean
 }
 
-/** Test seam: replace the Paddle call the cancel-on-deletion resolver makes. */
+/** Test seam: replace the Stripe call the cancel-on-deletion resolver makes. */
 export interface BillingExtensionDeps {
   cancelSubscription?: CancelSubscription
 }
@@ -168,19 +170,19 @@ export function registerBillingExtensions(
 ): void {
   // Every other billing kind is a warning, the default. A missing webhook
   // secret is not: every billing event is refused, so customers pay and get
-  // nothing until it is set (Paddle keeps retrying, so nothing is lost yet).
+  // nothing until it is set (Stripe keeps retrying, so nothing is lost yet).
   registerOpsSeverity({
-    paddle_webhook_unconfigured: {
+    stripe_webhook_unconfigured: {
       severity: 'critical',
       action:
-        'Paid customers are not getting access. Set NUXT_PADDLE_WEBHOOK_SECRET on the Worker; Paddle redelivers the refused events on its own.',
+        'Paid customers are not getting access. Set NUXT_STRIPE_WEBHOOK_SECRET and NUXT_STRIPE_SECRET_KEY on the Worker; Stripe redelivers the refused events on its own.',
     },
   })
   if (options.passDays !== undefined) setPassDays(options.passDays)
   if (options.notify !== undefined) setBillingNotify(options.notify)
   if (options.stackAtBilledAt !== undefined) setStackAtBilled(options.stackAtBilledAt)
 
-  // Deleting the `users` row does not touch Paddle, which owns the
+  // Deleting the `users` row does not touch Stripe, which owns the
   // subscription's billing lifecycle independently: refusing up front, and
   // pointing at the portal, is the one place friction protects the customer.
   // The wire contract (409, data.code) is read by app/pages/account.vue.
@@ -189,11 +191,11 @@ export function registerBillingExtensions(
   if (options.cancelOnDeletion === true) {
     // The resolver is the guard here: it refuses, with the guard's code, when it
     // cannot cancel. Registering the guard too would refuse before it could run,
-    // because a row only turns `canceled` when Paddle's webhook arrives.
+    // because a row only turns `canceled` when Stripe's webhook arrives.
     registerDeletionResolver(
       createCancelOnDeletionResolver({
         refusalCode,
-        cancel: deps.cancelSubscription ?? paddleCancelFromConfig(),
+        cancel: deps.cancelSubscription ?? stripeCancelFromConfig(),
       }),
     )
     // The echo of our own cancel (`subscription.canceled`) arrives after the
@@ -215,7 +217,7 @@ export function registerBillingExtensions(
         return {
           code: refusalCode,
           message:
-            'Deleting your account would not stop the charges — Paddle owns the subscription, ' +
+            'Deleting your account would not stop the charges: Stripe owns the subscription, ' +
             'not this account. Cancel it from the billing portal first, then delete your account.',
           data: { subscriptionId },
         }
@@ -235,7 +237,7 @@ export function registerBillingExtensions(
       })
       return rows.map((entitlement) => ({
         id: entitlement.id,
-        paddleSubscriptionId: entitlement.paddleSubscriptionId,
+        billingRef: entitlement.billingRef,
         productKey: entitlement.productKey,
         status: entitlement.status,
         currentPeriodEnd: entitlement.currentPeriodEnd?.toISOString() ?? null,
@@ -273,7 +275,7 @@ export function registerBillingExtensions(
   registerFunnelStageContributor({
     key: 'paid',
     async count(db, cohort) {
-      // `txn_` passes and `sub_` subscriptions are Paddle's ids; `comp_` and the
+      // `pi_` passes and `sub_` subscriptions are Stripe's ids; `comp_` and the
       // referral grants are minted here and must not read as revenue.
       const [paid] = await db
         .select({ total: countDistinct(tables.entitlements.userId) })
@@ -282,8 +284,8 @@ export function registerBillingExtensions(
           and(
             inArray(tables.entitlements.userId, cohort),
             or(
-              like(tables.entitlements.paddleSubscriptionId, 'txn_%'),
-              like(tables.entitlements.paddleSubscriptionId, 'sub_%'),
+              likePrefix(tables.entitlements.billingRef, TRANSACTION_REF_PREFIX),
+              likePrefix(tables.entitlements.billingRef, SUBSCRIPTION_REF_PREFIX),
             ),
           ),
         )
@@ -298,22 +300,22 @@ export function registerBillingExtensions(
     },
   })
 
-  // Its own window, not `graceSeconds`: the dedup row has to outlive Paddle's
+  // Its own window, not `graceSeconds`: the dedup row has to outlive Stripe's
   // retry schedule, and a 24h grace would let a day-old redelivery re-apply.
   registerPurgeContributor({
-    key: 'paddleEvents',
+    key: 'billingEvents',
     async run(db, options) {
       const { now = Date.now(), limit = PURGE_BATCH_LIMIT } = options
-      const cutoff = new Date(now - PADDLE_EVENT_RETENTION_SECONDS * 1000)
+      const cutoff = new Date(now - BILLING_EVENT_RETENTION_SECONDS * 1000)
       const dead = db
-        .select({ eventId: tables.paddleEvents.eventId })
-        .from(tables.paddleEvents)
-        .where(lt(tables.paddleEvents.receivedAt, cutoff))
+        .select({ eventId: tables.billingEvents.eventId })
+        .from(tables.billingEvents)
+        .where(lt(tables.billingEvents.receivedAt, cutoff))
         .limit(limit)
       const deleted = await db
-        .delete(tables.paddleEvents)
-        .where(inArray(tables.paddleEvents.eventId, dead))
-        .returning({ eventId: tables.paddleEvents.eventId })
+        .delete(tables.billingEvents)
+        .where(inArray(tables.billingEvents.eventId, dead))
+        .returning({ eventId: tables.billingEvents.eventId })
       return { count: deleted.length, truncated: deleted.length >= limit }
     },
   })

@@ -45,14 +45,14 @@ export default defineEventHandler(async (event) => {
   if (!isCompRef(body.ref)) {
     throw createError({
       statusCode: 422,
-      message: 'Only comped access can be revoked here — refunds go through Paddle',
+      message: 'Only comped access can be revoked here — refunds go through Stripe',
       data: { code: 'not_comp' },
     })
   }
 
   const target = await db.query.entitlements.findFirst({
     where: and(
-      eq(schema.entitlements.paddleSubscriptionId, body.ref),
+      eq(schema.entitlements.billingRef, body.ref),
       eq(schema.entitlements.userId, user.id),
     ),
     columns: { currentPeriodEnd: true, status: true, productKey: true },

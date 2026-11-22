@@ -6,12 +6,13 @@
 // real D1 binding without booting Nitro, so refunds, stacking, and idempotency
 // are covered by tests rather than by hope.
 //
-// Two entitlement shapes share the table, told apart by the Paddle ref stored
-// in `paddle_subscription_id`:
-//   - `sub_…` — auto-renewing subscription; Paddle's status lifecycle is the
+// Two entitlement shapes share the table, told apart by the Stripe ref stored
+// in `billing_ref`:
+//   - `sub_…` — auto-renewing subscription; Stripe's subscription status is the
 //     source of truth.
-//   - `txn_…` — one-time 30-day pass; no lifecycle events ever fire for it, so
-//     it grants access only while current_period_end is in the future.
+//   - `pi_…` — one-time pass, keyed on its PaymentIntent; no lifecycle events
+//     ever fire for it, so it grants access only while current_period_end is in
+//     the future.
 
 import { and, desc, eq, gt, inArray, isNotNull, or } from 'drizzle-orm'
 import { z } from 'zod'
@@ -23,8 +24,8 @@ import { users } from '#server/db/schema'
 // directly and nothing is injected there.
 import { likePrefix } from '#server/utils/sql'
 import type { ExtensionDb } from '#server/utils/extensions'
-import { SUBSCRIPTION_REF_PREFIX, isSubscriptionRef } from './paddle-refs'
-import { resolvePaddlePrice, type PaddlePriceCatalogue } from './paddle-prices'
+import { SUBSCRIPTION_REF_PREFIX, isSubscriptionRef } from './billing-refs'
+import { resolvePrice, type PriceCatalogue } from './stripe-prices'
 import { logEvent } from '#server/utils/log'
 
 /** The Drizzle client shape — matches the `db` NuxtHub auto-imports. */
@@ -154,7 +155,7 @@ export const REVOKED_STATUSES: readonly string[] = [
  * ── Not the same question as ACTIVE_STATUSES, and the difference is money ────
  * ACTIVE_STATUSES answers "does this grant access right now" — an ACCESS rule,
  * which is why `past_due` is absent from it (a lapsed card should not keep the
- * product open). Whether Paddle will bill again is a different question with a
+ * product open). Whether Stripe will bill again is a different question with a
  * different answer for the same row: `past_due` and `paused` are precisely the
  * states that RESUME billing, one after a dunning retry succeeds and one when
  * the customer unpauses.
@@ -178,11 +179,11 @@ export interface BillingLivenessRow {
 }
 
 /**
- * Will Paddle ever bill this subscription row again?
+ * Will Stripe ever bill this subscription row again?
  *
  * Two conditions, and the second is the one that reads as a bug when it is
  * missing. A status of `active` with `scheduled_change: { action: 'cancel' }`
- * is what Paddle stores for the entire notice period after somebody cancels —
+ * is what a customer's cancel at period end leaves in the row for the entire notice period —
  * they keep access until the date, and the status does not move until then. So
  * "status is not terminal" alone reported a cancelled subscription as live for
  * up to a year, and the deletion guard told those customers to go and cancel a
@@ -221,7 +222,7 @@ export async function findActiveEntitlement(
         // Escaped, because `_` is a LIKE wildcard: the obvious
         // `like(col, 'sub_%')` also matches `subs_fake`, and the `sub_` branch
         // is the one that grants access WITHOUT checking the expiry date.
-        likePrefix(tables.entitlements.paddleSubscriptionId, SUBSCRIPTION_REF_PREFIX),
+        likePrefix(tables.entitlements.billingRef, SUBSCRIPTION_REF_PREFIX),
         gt(tables.entitlements.currentPeriodEnd, now),
       ),
     ),
@@ -232,11 +233,11 @@ export async function findActiveEntitlement(
 
 export interface GrantPassParams {
   userId: string
-  /** Paddle transaction id (`txn_…`) — the row's unique Paddle ref. */
+  /** The pass's Stripe PaymentIntent id (`pi_…`) — the row's unique ref. */
   transactionId: string
   customerId?: string | null
   productKey?: string
-  /** When Paddle billed the transaction; defaults to now. */
+  /** When the payment was made; defaults to now. */
   billedAt?: Date
   /** `occurred_at` of the event that reported it; defaults to `billedAt`. */
   occurredAt?: Date
@@ -263,7 +264,7 @@ export interface GrantPassResult {
  * otherwise revoking one of them takes nothing away at all: see
  * revokeDerivedEntitlements.
  *
- * Idempotent: Paddle redelivers webhooks, and the unique index on the Paddle
+ * Idempotent: Stripe redelivers webhooks, and the unique index on the
  * ref means a redelivery updates `updated_at` and nothing else.
  */
 export async function grantPass(
@@ -291,8 +292,8 @@ export async function grantPass(
     .insert(tables.entitlements)
     .values({
       userId,
-      paddleCustomerId: customerId,
-      paddleSubscriptionId: transactionId, // the column holds the Paddle ref, txn_ or sub_
+      providerCustomerId: customerId,
+      billingRef: transactionId, // the column holds the Stripe ref, pi_ or sub_
       productKey,
       status: 'active',
       // Both ends of the window, truncated the same way — see `period_start` in
@@ -302,7 +303,7 @@ export async function grantPass(
       lastEventAt: params.occurredAt ?? billedAt,
     })
     .onConflictDoUpdate({
-      target: tables.entitlements.paddleSubscriptionId,
+      target: tables.entitlements.billingRef,
       set: { updatedAt: new Date() },
     })
     .returning({ currentPeriodEnd: tables.entitlements.currentPeriodEnd })
@@ -323,15 +324,15 @@ export interface UpsertSubscriptionParams {
   status: string
   currentPeriodEnd?: Date | null
   /**
-   * Paddle's pending cancel/pause/resume, or null when there isn't one.
+   * The pending cancel (or pause/resume), or null when there isn't one.
    *
    * Explicitly nullable rather than optional-and-omitted: `null` is a fact the
    * upsert has to write (see the note there), not an absence it may skip.
    */
   scheduledChange?: { action: string; effectiveAt: Date | null } | null
   /**
-   * Paddle's `occurred_at` for the event. When set, an event older than the
-   * row's `lastEventAt` is refused: Paddle documents out-of-order delivery,
+   * The event's `occurred_at`. When set, an event older than the
+   * row's `lastEventAt` is refused: Stripe does not guarantee delivery order,
    * and a delayed `subscription.updated{active}` must not undo a cancel.
    */
   occurredAt?: Date
@@ -345,7 +346,7 @@ export interface UpsertSubscriptionResult {
   /** false when the event was refused; `skipped` says why. */
   applied: boolean
   skipped?: 'stale' | 'terminal'
-  /** What the reward for this subscription is keyed on: the first transaction, if Paddle ever told us. */
+  /** What the reward for this subscription is keyed on: the first invoice, if the `created` event ever told us. */
   firstTransactionId: string | null
 }
 
@@ -354,7 +355,7 @@ export interface UpsertSubscriptionResult {
  * `subscription.*` event carries the full entity, so one upsert keyed on the
  * subscription id keeps status + period end current.
  *
- * Reports the prior status because Paddle sends a `subscription.updated` for
+ * Reports the prior status because Stripe sends a `customer.subscription.updated` for
  * every trivial change (a card edit, a metadata tweak). The webhook emails on
  * *transitions* — active → past_due, new → active — and a caller that can't see
  * the old status has to either skip the emails or send duplicates.
@@ -364,7 +365,7 @@ export async function upsertSubscription(
   params: UpsertSubscriptionParams,
 ): Promise<UpsertSubscriptionResult> {
   const prior = await db.query.entitlements.findFirst({
-    where: eq(tables.entitlements.paddleSubscriptionId, params.subscriptionId),
+    where: eq(tables.entitlements.billingRef, params.subscriptionId),
     columns: { status: true, lastEventAt: true, restorePeriodEnd: true, firstTransactionId: true },
   })
   const previousStatus = prior?.status ?? null
@@ -372,7 +373,7 @@ export async function upsertSubscription(
 
   // Ordering guard, then the terminal guard. `refunded`/`chargeback` are set
   // by adjustments only; a routine subscription.updated arriving afterwards
-  // (Paddle sends one for a card edit) must not flip the row back to active.
+  // (Stripe sends one for a card edit) must not flip the row back to active.
   // The one lifecycle event that may: a NEW billing period, i.e. one ending
   // after the period the adjustment closed (`restorePeriodEnd`). The customer
   // paid again, so the refunded period stays refunded and the new one counts.
@@ -391,8 +392,8 @@ export async function upsertSubscription(
 
   const values = {
     userId: params.userId,
-    paddleCustomerId: params.customerId ?? null,
-    paddleSubscriptionId: params.subscriptionId,
+    providerCustomerId: params.customerId ?? null,
+    billingRef: params.subscriptionId,
     productKey: params.productKey ?? 'default',
     status: params.status,
     currentPeriodEnd: params.currentPeriodEnd ?? null,
@@ -410,11 +411,11 @@ export async function upsertSubscription(
     .insert(tables.entitlements)
     .values(values)
     .onConflictDoUpdate({
-      target: tables.entitlements.paddleSubscriptionId,
+      target: tables.entitlements.billingRef,
       set: {
         status: values.status,
         currentPeriodEnd: values.currentPeriodEnd,
-        paddleCustomerId: values.paddleCustomerId,
+        providerCustomerId: values.providerCustomerId,
         scheduledChangeAction: values.scheduledChangeAction,
         scheduledChangeAt: values.scheduledChangeAt,
         // Callers without an occurredAt (seed, admin tooling) keep the stored one.
@@ -429,21 +430,22 @@ export async function upsertSubscription(
   return { previousStatus, applied: true, firstTransactionId }
 }
 
-/** The adjustment fields we care about (Paddle `adjustment.created|updated`). */
+/** The adjustment fields we care about (`adjustment.created|updated`, which stripe-events.ts builds from a refunded charge or a dispute). */
 export interface AdjustmentInput {
   action: string
   status?: string | null
   /**
    * `full` or `partial`, and NOTHING may branch on it — it is carried for the
-   * log line only. Paddle labels an item-level 100% refund of a single-item
-   * transaction `partial`, and the field is absent often enough to be
-   * `.nullish()` in the event schema, so every rule ever keyed on this word has
-   * failed open. See revokeForAdjustment.
+   * log line only. stripe-events.ts sets `full` only when the charge is wholly
+   * refunded (`charge.refunded`), so the label says how much of the charge came
+   * back, not whether the sale came undone, and any rule keyed on it fails open
+   * for a partial refund the policy still treats as a refund. See
+   * revokeForAdjustment.
    */
   type?: string | null
   transactionId?: string | null
   subscriptionId?: string | null
-  /** Paddle's `occurred_at`; when set, an adjustment older than the row's `lastEventAt` is refused. */
+  /** The event's `occurred_at`; when set, an adjustment older than the row's `lastEventAt` is refused. */
   occurredAt?: Date
 }
 
@@ -467,7 +469,7 @@ export interface DerivedChange {
 export interface RevokeResult {
   outcome: RevokeOutcome
   userId?: string
-  paddleRef?: string
+  billingRef?: string
   /**
    * Rows that existed BECAUSE of this purchase and were revoked or restored
    * alongside it. Empty on every ordinary adjustment.
@@ -483,7 +485,7 @@ export interface RevokeResult {
 /**
  * Did this adjustment name an entitlement we have no record of?
  *
- * The question the webhook's `paddle_adjustment_unmatched` alert is really
+ * The question the webhook's `stripe_adjustment_unmatched` alert is really
  * asking: "money went back out for something we never granted". It has exactly
  * one true answer, the outcome. Asking it as "is there no userId on the result"
  * is a different question with a different answer on every REVERSAL: a won
@@ -499,9 +501,10 @@ export function adjustmentMatchedNothing(result: RevokeResult): boolean {
 /**
  * Does this adjustment mean the customer's money went back?
  *
- * - `refund` only counts once Paddle has APPROVED it. Refunds land as
- *   `pending_approval` first, and yanking access before approval would punish
- *   people whose refund is later rejected.
+ * - `refund` only counts once it is `approved`. stripe-events.ts emits that
+ *   status for `charge.refunded`, which fires only after a refund has
+ *   succeeded; a refund that is pending or failed never reaches here, so access
+ *   is not pulled for a refund that may still be rejected.
  * - `chargeback` counts immediately: the bank has already pulled the funds.
  *   Only an explicit reject/reverse takes it back off the table.
  * - `credit`, `chargeback_warning`, and the `*_reverse` actions never revoke.
@@ -515,8 +518,10 @@ function isRevoking({ action, status }: AdjustmentInput): boolean {
 /**
  * Is this the bank giving the money BACK — a chargeback the merchant won?
  *
- * Paddle spells it two ways and both have to count: a distinct
- * `chargeback_reverse` action, and a `chargeback` carrying `status: 'reversed'`.
+ * Two spellings count: a distinct `chargeback_reverse` action, and a
+ * `chargeback` carrying `status: 'reversed'`. stripe-events.ts produces the
+ * second (a `won` dispute, or `charge.dispute.funds_reinstated`); the first is
+ * still accepted because the layer's event shape allows it.
  * Neither reaches isRevoking(), which is correct for the customer's own row,
  * and which is exactly why a reversal used to leave the REFERRER revoked
  * forever on a dispute the merchant went on to win.
@@ -572,7 +577,7 @@ function unspentMs(start: Date | null | undefined, end: Date, at: Date): number 
  * sooner. Leaving paid rows out would strand the free days as a hole in the
  * middle of the stack, which is the bug this whole mechanism exists to fix.
  *
- * `sub_` rows are the exception: Paddle owns their dates, and one written here
+ * `sub_` rows are the exception: Stripe owns their dates, and one written here
  * is either overwritten by the next webhook or takes away access somebody is
  * still paying for. Spent windows stay out too, for the reason the revoke skips
  * them — dragging a date that is already past rewrites how much access somebody
@@ -597,7 +602,7 @@ async function stackTail(
     if (sibling.id === row.id) continue
     const siblingEnd = sibling.currentPeriodEnd
     if (!siblingEnd || siblingEnd < end) continue
-    if (isSubscriptionRef(sibling.paddleSubscriptionId)) continue
+    if (isSubscriptionRef(sibling.billingRef)) continue
     if (siblingEnd > now) tail.push(sibling)
   }
   return tail
@@ -661,7 +666,7 @@ async function slideStack(
  *     caller; wired into revokeForAdjustment it protects every caller there
  *     will ever be, including the admin tooling somebody adds later.
  *
- * A `sub_` row is skipped even if something ever tags one: Paddle owns those,
+ * A `sub_` row is skipped even if something ever tags one: Stripe owns those,
  * and a local status written onto one is either overwritten by the next webhook
  * or takes away access the customer paid for.
  *
@@ -684,7 +689,7 @@ export async function revokeDerivedEntitlements(
 
   const changed: DerivedChange[] = []
   for (const found of scanned) {
-    if (isSubscriptionRef(found.paddleSubscriptionId)) continue
+    if (isSubscriptionRef(found.billingRef)) continue
 
     // Re-read rather than trust the scan: compacting the previous row's stack
     // may have moved this one, and revoking against the stale date would stamp
@@ -735,7 +740,7 @@ export async function revokeDerivedEntitlements(
 
     if (updated.length) {
       changed.push({
-        ref: row.paddleSubscriptionId,
+        ref: row.billingRef,
         userId: row.userId,
         periodEnd: row.currentPeriodEnd,
       })
@@ -824,7 +829,7 @@ export async function restoreDerivedEntitlements(
 
     if (restored.length) {
       changed.push({
-        ref: row.paddleSubscriptionId,
+        ref: row.billingRef,
         userId: row.userId,
         periodEnd: restorePeriodEnd,
       })
@@ -848,19 +853,19 @@ async function reverseAdjustment(
   occurredAt: Date | undefined,
 ): Promise<RevokeResult> {
   const derived: DerivedChange[] = []
-  let paddleRef: string | undefined
+  let billingRef: string | undefined
 
   const rows = new Map<string, Entitlement>()
   for (const ref of refs) {
     const row = await db.query.entitlements.findFirst({
-      where: eq(tables.entitlements.paddleSubscriptionId, ref),
+      where: eq(tables.entitlements.billingRef, ref),
     })
     if (!row) continue
-    if (isStale(row, occurredAt)) return { outcome: 'stale', paddleRef: ref }
+    if (isStale(row, occurredAt)) return { outcome: 'stale', billingRef: ref }
     rows.set(ref, row)
   }
   const refundedSubscription = [...rows.values()].some(
-    (row) => isSubscriptionRef(row.paddleSubscriptionId) && row.status === REVOKED_STATUS.refund,
+    (row) => isSubscriptionRef(row.billingRef) && row.status === REVOKED_STATUS.refund,
   )
   if (refundedSubscription) return { outcome: 'reversed', derived }
 
@@ -868,7 +873,7 @@ async function reverseAdjustment(
     const row = rows.get(ref)
     if (row) {
       if (row.status === REVOKED_STATUS.chargeback) {
-        paddleRef ??= ref
+        billingRef ??= ref
         if (row.restorePeriodEnd) {
           await db
             .update(tables.entitlements)
@@ -889,12 +894,12 @@ async function reverseAdjustment(
         } else {
           // Charged back before the column was written: the window it had is
           // gone. Worth a line — a customer owed days only a comp can give back.
-          logEvent('warn', 'entitlement_reversal_unrestorable', { paddleRef: ref })
+          logEvent('warn', 'entitlement_reversal_unrestorable', { billingRef: ref })
         }
-      } else if (isSubscriptionRef(row.paddleSubscriptionId)) {
+      } else if (isSubscriptionRef(row.billingRef)) {
         // Overwritten by a later lifecycle event (a new period); the reward's
         // own `restore_period_end` still says whether there is anything to put back.
-        paddleRef ??= ref
+        billingRef ??= ref
       } else {
         // A `txn_` row is ours alone — nothing overwrites its status, so it is
         // trustworthy evidence: not `chargeback` means not a dispute we won.
@@ -906,7 +911,7 @@ async function reverseAdjustment(
     derived.push(...(await restoreDerivedEntitlements(db, ref, now)))
   }
 
-  return { outcome: 'reversed', paddleRef, derived }
+  return { outcome: 'reversed', billingRef, derived }
 }
 
 /**
@@ -920,16 +925,17 @@ async function reverseAdjustment(
  * Matching: a pass's row is keyed by the transaction id; a subscription's row
  * by the subscription id. Try the transaction first, then the subscription.
  * (Refunding one month of a still-live subscription revokes now, but the next
- * `subscription.*` event will legitimately restore it — Paddle's status stays
+ * `subscription.*` event will legitimately restore it — Stripe's status stays
  * the source of truth for subs.)
  *
  * ── The cascade follows the ACCESS, never the adjustment's label ─────────────
  * Rows that exist BECAUSE of this purchase — referral rewards, keyed by
  * `earned_from_ref` — come down whenever the buyer's own row actually goes.
- * Not when Paddle calls the adjustment `full`: that field is `.nullish()` in
- * the schema and Paddle labels an item-level 100% refund of a single-item
- * transaction `partial`, so keying on the word failed open — the buyer lost
- * every day they had and the referrer kept the reward it paid for. The
+ * Not when the adjustment is labelled `full`: that label only records whether
+ * the whole charge was refunded (`charge.refunded` in stripe-events.ts), so a
+ * partial refund that still ends the buyer's access would, keyed on the word,
+ * leave the referrer's reward standing — the buyer lost every day they had and
+ * the referrer kept the reward it paid for. The
  * property that matters is the one above: this product sells one indivisible
  * thing, so the buyer losing access IS the sale coming undone.
  *
@@ -969,10 +975,10 @@ export async function revokeForAdjustment(
 
   for (const ref of refs) {
     const row = await db.query.entitlements.findFirst({
-      where: eq(tables.entitlements.paddleSubscriptionId, ref),
+      where: eq(tables.entitlements.billingRef, ref),
     })
     if (!row) continue
-    if (isStale(row, adjustment.occurredAt)) return { outcome: 'stale', paddleRef: ref }
+    if (isStale(row, adjustment.occurredAt)) return { outcome: 'stale', billingRef: ref }
 
     // A chargeback can be reversed, and for a `txn_` row this write is the only
     // record of the window it destroys — so keep it, once. Only while the row
@@ -983,7 +989,7 @@ export async function revokeForAdjustment(
     // reason: it is how upsertSubscription tells a renewal (a new period) from
     // a routine update re-sending the refunded one.
     const reinstatable =
-      (adjustment.action === 'chargeback' || isSubscriptionRef(row.paddleSubscriptionId)) &&
+      (adjustment.action === 'chargeback' || isSubscriptionRef(row.billingRef)) &&
       ACTIVE_STATUSES.includes(row.status) &&
       Boolean(row.currentPeriodEnd && row.currentPeriodEnd > now)
 
@@ -1021,22 +1027,23 @@ export async function revokeForAdjustment(
     for (const earningRef of refs) {
       derived.push(...(await revokeDerivedEntitlements(db, earningRef, now)))
     }
-    return { outcome: 'revoked', userId: row.userId, paddleRef: ref, derived }
+    return { outcome: 'revoked', userId: row.userId, billingRef: ref, derived }
   }
   return { outcome: 'no_matching_entitlement' }
 }
 
 // ─── Webhook event → entitlement ────────────────────────────────────────────
-// The shape of the Paddle events we act on, and the dispatcher that turns one
+// The shape of the billing events we act on (built from Stripe's by
+// stripe-events.ts), and the dispatcher that turns one
 // into entitlement writes. Kept out of the route handler so the vitest suite
 // can drive real events against a real D1 without booting Nitro; the route
-// (layers/billing/server/routes/paddle/webhook.post.ts) does signature checking, calls this,
+// (layers/billing/server/routes/stripe/webhook.post.ts) does signature checking, calls this,
 // and reports the result to PostHog.
 
-export const paddleEventSchema = z.object({
+export const billingEventSchema = z.object({
   event_id: z.string(),
   event_type: z.string(),
-  // When the thing happened at Paddle, not when the delivery arrived. This is
+  // When the thing happened at Stripe, not when the delivery arrived. This is
   // the ordering key: deliveries are retried and can overtake each other.
   occurred_at: z.string(),
   data: z.object({
@@ -1045,18 +1052,19 @@ export const paddleEventSchema = z.object({
     customer_id: z.string().nullish(),
     subscription_id: z.string().nullish(),
     billed_at: z.string().nullish(),
-    // Set by the browser at checkout (layers/billing/app/composables/usePaddle.ts), so it is
-    // the buyer's claim, not Paddle's. Only `userId` is read, and only to find
+    // The `metadata.userId` the checkout route stamped on the session, the
+    // subscription and the payment (layers/billing/server/api/billing/checkout.post.ts),
+    // carried here as `custom_data`. Only `userId` is read, and only to find
     // the account; what was bought comes from `items[].price.id` below.
     custom_data: z.object({ userId: z.string().max(128).optional() }).nullish(),
     // subscription.* and transaction.* carry the priced items. The price ids
-    // are matched against the configured `NUXT_PUBLIC_PADDLE_PRICE_*` values
-    // (layers/billing/server/utils/paddle-prices.ts) before any row is created.
+    // are matched against the configured `NUXT_PUBLIC_STRIPE_PRICE_*` values
+    // (layers/billing/server/utils/stripe-prices.ts) before any row is created.
     items: z
       .array(
         z.object({
           // `product_id` lets the webhook tell another product's sale on a shared
-          // Paddle account from a misconfigured price of our own (isForeignProduct).
+          // Stripe account from a misconfigured price of our own (isForeignProduct).
           price: z.object({ id: z.string(), product_id: z.string().nullish() }).nullish(),
         }),
       )
@@ -1079,9 +1087,9 @@ export const paddleEventSchema = z.object({
   }),
 })
 
-export type PaddleEvent = z.infer<typeof paddleEventSchema>
+export type BillingEvent = z.infer<typeof billingEventSchema>
 
-export type PaddleEventOutcome =
+export type BillingEventOutcome =
   | {
       kind: 'subscription'
       userId: string
@@ -1095,7 +1103,7 @@ export type PaddleEventOutcome =
   | { kind: 'ignored'; reason: 'no_user' | 'subscription_transaction' | 'unhandled_event' }
   /** Same event_id already applied, an older event than the row has seen, or a refunded row a routine update tried to revive. */
   | { kind: 'ignored'; reason: 'duplicate_event' | 'stale_event' | 'terminal_status' }
-  /** custom_data.userId names no account. Acknowledged, not retried: Paddle would redeliver forever. */
+  /** custom_data.userId names no account. Acknowledged, not retried: Stripe would redeliver for days. */
   | { kind: 'ignored'; reason: 'unknown_user' }
   | {
       kind: 'ignored'
@@ -1105,7 +1113,7 @@ export type PaddleEventOutcome =
     }
 
 /**
- * Apply one verified Paddle event to the entitlements table.
+ * Apply one verified billing event to the entitlements table.
  *
  * `catalogue` is what decides whether a purchase grants anything: a new row
  * is only ever created for a price in it, of the kind the event type implies
@@ -1114,34 +1122,34 @@ export type PaddleEventOutcome =
  * the price was verified when the row was created, and a price later rotated
  * out of config must not leave a cancellation unapplied.
  */
-export async function applyPaddleEvent(
+export async function applyBillingEvent(
   db: EntitlementDb,
-  event: PaddleEvent,
-  catalogue: PaddlePriceCatalogue,
-): Promise<PaddleEventOutcome> {
+  event: BillingEvent,
+  catalogue: PriceCatalogue,
+): Promise<BillingEventOutcome> {
   // Redelivery of an event that already wrote is a no-op before any write.
   // Only outcomes that reached a write path are recorded (below), so a replay
   // of an event that was ignored — say for a price added to config since —
   // still applies.
-  const seen = await db.query.paddleEvents.findFirst({
-    where: eq(tables.paddleEvents.eventId, event.event_id),
+  const seen = await db.query.billingEvents.findFirst({
+    where: eq(tables.billingEvents.eventId, event.event_id),
     columns: { eventId: true },
   })
   if (seen) return { kind: 'ignored', reason: 'duplicate_event' }
 
-  let outcome: PaddleEventOutcome
+  let outcome: BillingEventOutcome
   try {
-    outcome = await dispatchPaddleEvent(db, event, catalogue)
+    outcome = await dispatchBillingEvent(db, event, catalogue)
   } catch (error) {
     // `entitlements.user_id` is a real foreign key, so a signed event whose
     // custom_data names a user that does not exist fails here — and a 500
-    // would have Paddle retry it forever.
+    // would have Stripe retry it for days.
     if (isForeignKeyFailure(error)) return { kind: 'ignored', reason: 'unknown_user' }
     throw error
   }
   if (outcome.kind !== 'ignored') {
     await db
-      .insert(tables.paddleEvents)
+      .insert(tables.billingEvents)
       .values({
         eventId: event.event_id,
         eventType: event.event_type,
@@ -1178,11 +1186,11 @@ function isForeignKeyFailure(error: unknown): boolean {
   return false
 }
 
-async function dispatchPaddleEvent(
+async function dispatchBillingEvent(
   db: EntitlementDb,
-  event: PaddleEvent,
-  catalogue: PaddlePriceCatalogue,
-): Promise<PaddleEventOutcome> {
+  event: BillingEvent,
+  catalogue: PriceCatalogue,
+): Promise<BillingEventOutcome> {
   const { event_type: eventType, data } = event
   const userId = data.custom_data?.userId
   const occurredAt = new Date(event.occurred_at)
@@ -1192,14 +1200,32 @@ async function dispatchPaddleEvent(
     // has no userId to map back to.
     if (!userId) return { kind: 'ignored', reason: 'no_user' }
     const prior = await db.query.entitlements.findFirst({
-      where: eq(tables.entitlements.paddleSubscriptionId, data.id),
-      columns: { productKey: true },
+      where: eq(tables.entitlements.billingRef, data.id),
+      columns: { productKey: true, lastEventAt: true, firstTransactionId: true },
     })
+    // `created` can never be newer than another event for the same subscription,
+    // but Stripe stamps events in whole seconds and delivers out of order: the
+    // `updated` that activates a subscription often shares its second with the
+    // `created` that preceded it. Arriving late, `created` must not put the
+    // earlier status back. It still carries the one thing only it knows.
+    if (
+      prior?.lastEventAt &&
+      eventType === 'subscription.created' &&
+      occurredAt <= prior.lastEventAt
+    ) {
+      if (!prior.firstTransactionId && data.transaction_id) {
+        await db
+          .update(tables.entitlements)
+          .set({ firstTransactionId: data.transaction_id })
+          .where(eq(tables.entitlements.billingRef, data.id))
+      }
+      return { kind: 'ignored', reason: 'stale_event' }
+    }
     let productKey: string
     if (prior) {
       productKey = prior.productKey
     } else {
-      const price = resolvePaddlePrice(data.items, 'subscription', catalogue)
+      const price = resolvePrice(data.items, 'subscription', catalogue)
       if (!price.ok) {
         return {
           kind: 'ignored',
@@ -1219,8 +1245,8 @@ async function dispatchPaddleEvent(
       productKey,
       status,
       occurredAt,
-      // Paddle sends it once, on subscription.created; later events omit it
-      // and the stored value stands.
+      // Sent once, on subscription.created (the first invoice); later events
+      // omit it and the stored value stands.
       firstTransactionId: data.transaction_id ?? null,
       currentPeriodEnd: data.current_billing_period
         ? new Date(data.current_billing_period.ends_at)
@@ -1245,7 +1271,7 @@ async function dispatchPaddleEvent(
     // A completed transaction WITH a subscription attached is a renewal — the
     // subscription.* events above own that entitlement.
     if (data.subscription_id) return { kind: 'ignored', reason: 'subscription_transaction' }
-    const price = resolvePaddlePrice(data.items, 'pass', catalogue)
+    const price = resolvePrice(data.items, 'pass', catalogue)
     if (!price.ok) {
       return {
         kind: 'ignored',
@@ -1311,15 +1337,15 @@ export interface BillingOverview {
    * subscription can still bill would be answering the wrong question.
    */
   accessSubscriptionIds: string[]
-  /** Most recent Paddle customer id seen for this user, for portal links. */
-  paddleCustomerId: string | null
+  /** Most recent Stripe customer id seen for this user, for portal links. */
+  providerCustomerId: string | null
   /** Every entitlement row, newest first — the "billing history" list. */
   history: Entitlement[]
 }
 
 /**
  * Everything the account/billing page needs in one query: what's granting
- * access now, what can be cancelled, and the Paddle customer to open a portal
+ * access now, what can be cancelled, and the Stripe customer to open a portal
  * session for. Includes ended rows on purpose — a lapsed customer still needs
  * their receipts and their "your access ended on …" line.
  */
@@ -1342,18 +1368,18 @@ export async function getBillingOverview(
     // than a fourth hand-rolled `startsWith('sub_')`. Two fields rather than
     // one because callers genuinely need different answers — see the interface.
     cancellableSubscriptionIds: history
-      .filter((e) => isSubscriptionRef(e.paddleSubscriptionId) && isBillingLive(e))
-      .map((e) => e.paddleSubscriptionId),
+      .filter((e) => isSubscriptionRef(e.billingRef) && isBillingLive(e))
+      .map((e) => e.billingRef),
     accessSubscriptionIds: history
       .filter(
-        (e) => isSubscriptionRef(e.paddleSubscriptionId) && ACTIVE_STATUSES.includes(e.status),
+        (e) => isSubscriptionRef(e.billingRef) && ACTIVE_STATUSES.includes(e.status),
       )
-      .map((e) => e.paddleSubscriptionId),
+      .map((e) => e.billingRef),
     // Prefer the customer behind the LIVE entitlement — that's whose portal a
     // cancel link has to open. Fall back to any customer id we've ever seen so
     // a lapsed user can still reach their invoices.
-    paddleCustomerId:
-      active?.paddleCustomerId ?? history.find((e) => e.paddleCustomerId)?.paddleCustomerId ?? null,
+    providerCustomerId:
+      active?.providerCustomerId ?? history.find((e) => e.providerCustomerId)?.providerCustomerId ?? null,
     history,
   }
 }

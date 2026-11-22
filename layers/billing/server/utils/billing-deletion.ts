@@ -1,7 +1,7 @@
-// Account deletion that cancels the person's live Paddle subscription first
+// Account deletion that cancels the person's live Stripe subscription first
 // (`runtimeConfig.billing.cancelOnDeletion`, off by default).
 //
-// Deleting the account does not touch Paddle, which owns the subscription's
+// Deleting the account does not touch Stripe, which owns the subscription's
 // billing lifecycle: left alone, it keeps charging a card nobody can look up.
 // The default answer is the deletion guard (billing-extensions.ts): refuse, and
 // point at the billing portal. With the option on, billing registers this
@@ -9,18 +9,18 @@
 // registered through core's DeletionResolver seam; core never imports it.
 //
 // ── Fails closed ─────────────────────────────────────────────────────────────
-// Every subscription Paddle could still bill (isBillingLive: not terminal, not
+// Every subscription Stripe could still bill (isBillingLive: not terminal, not
 // already scheduled to cancel) is cancelled immediately BEFORE anything is
 // deleted. If any cancel fails, for any reason (no key, network, a missing
 // `subscription.write` permission, a 5xx), the resolver returns a refusal with
 // the same code and data shape as the guard, so the UI offers the portal as it
-// always did. Paddle's "already cancelled" answers count as success: that state
+// always did. Stripe's "already cancelled" answers count as success: that state
 // is final.
 //
 // ── What is recorded, and what is not ────────────────────────────────────────
 // The audit row is written first (audit before act) and carries the `sub_` id
 // only. A failure records the `deletion_cancel_failed` ops event with the id and
-// Paddle's status and error code, never the response body (it can echo customer
+// Stripe's status and error code, never the response body (it can echo customer
 // data), the address or the key.
 
 import { eq } from 'drizzle-orm'
@@ -29,22 +29,22 @@ import { withAudit } from '#server/utils/audit'
 import type { DeletionBlock, DeletionResolver, ExtensionDb } from '#server/utils/extensions'
 import { recordOpsEvent } from '#server/utils/ops'
 import { isBillingLive } from './entitlements'
-import { PaddleApiError, cancelSubscription } from './paddle-api'
-import { isSubscriptionRef } from './paddle-refs'
-import type { PaddleEvent } from './entitlements'
+import { StripeApiError, cancelSubscription } from './stripe-api'
+import { isSubscriptionRef } from './billing-refs'
+import type { BillingEvent } from './entitlements'
 import { logEvent } from '#server/utils/log'
 
 /** The 409 `data.code` the account page reads. `billing.deletionRefusalCode` overrides it. */
 export const DEFAULT_DELETION_REFUSAL_CODE = 'live_subscription'
 
-/** Cancels one subscription immediately; throws if Paddle will not confirm it. */
+/** Cancels one subscription immediately; throws if Stripe will not confirm it. */
 export type CancelSubscription = (subscriptionId: string) => Promise<unknown>
 
-/** Every `sub_` subscription Paddle might still bill, across all product keys. */
+/** Every `sub_` subscription Stripe might still bill, across all product keys. */
 export async function findLiveSubscriptionRefs(db: ExtensionDb, userId: string): Promise<string[]> {
   const rows = await db
     .select({
-      paddleSubscriptionId: tables.entitlements.paddleSubscriptionId,
+      billingRef: tables.entitlements.billingRef,
       status: tables.entitlements.status,
       // Both columns isBillingLive reads. Without the scheduled change, an
       // already-cancelled subscription reads as live for its whole notice
@@ -55,30 +55,25 @@ export async function findLiveSubscriptionRefs(db: ExtensionDb, userId: string):
     .where(eq(tables.entitlements.userId, userId))
 
   return rows
-    .filter((row) => isSubscriptionRef(row.paddleSubscriptionId) && isBillingLive(row))
-    .map((row) => row.paddleSubscriptionId)
+    .filter((row) => isSubscriptionRef(row.billingRef) && isBillingLive(row))
+    .map((row) => row.billingRef)
 }
 
-/** The Paddle client wired to the deployment's key, from runtime config at call time. */
-export function paddleCancelFromConfig(): CancelSubscription {
+/** The Stripe client wired to the deployment's key, from runtime config at call time. */
+export function stripeCancelFromConfig(): CancelSubscription {
   return async (subscriptionId) => {
     const config = useRuntimeConfig()
-    const apiKey = config.paddle.apiKey
+    const secretKey = config.stripe.secretKey
     // An unset key refuses like any other failed cancel; it never skips one.
-    if (!apiKey) throw new PaddleApiError(0, 'unconfigured')
-    return cancelSubscription({
-      apiKey,
-      environment: config.public.paddleEnv,
-      apiBase: config.paddle.apiBase,
-      subscriptionId,
-    })
+    if (!secretKey) throw new StripeApiError(0, 'unconfigured')
+    return cancelSubscription({ secretKey, apiBase: config.stripe.apiBase, subscriptionId })
   }
 }
 
 function failureReason(error: unknown): string {
-  return error instanceof PaddleApiError
-    ? `Paddle status ${error.status}, code ${error.code ?? 'none'}`
-    : 'error before or outside the Paddle response'
+  return error instanceof StripeApiError
+    ? `Stripe status ${error.status}, code ${error.code ?? 'none'}`
+    : 'error before or outside the Stripe response'
 }
 
 export function createCancelOnDeletionResolver(opts: {
@@ -132,6 +127,6 @@ export function createCancelOnDeletionResolver(opts: {
  * created, activated or renewed subscription (or a transaction) for a missing
  * account is money arriving for nobody and must keep alerting.
  */
-export function isCancelEchoAfterDeletion(event: PaddleEvent): boolean {
+export function isCancelEchoAfterDeletion(event: BillingEvent): boolean {
   return event.event_type.startsWith('subscription.') && event.data.status === 'canceled'
 }

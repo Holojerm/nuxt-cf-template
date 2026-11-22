@@ -1,8 +1,8 @@
 // Shared fixtures for the E2E suite: a real session, a unique user per scenario,
 // and the console watcher. Nothing here knows about billing (or any other
 // optional layer): a layer's own specs live in layers/<name>/test/e2e/ and extend
-// `test` from here with what they need (billing adds `sendPaddleEvent`, signed
-// Paddle webhooks, in layers/billing/test/e2e/fixtures.ts). playwright.config.ts
+// `test` from here with what they need (billing adds `sendStripeEvent`, signed
+// Stripe webhooks, in layers/billing/test/e2e/fixtures.ts). playwright.config.ts
 // finds them; see test/e2e/layers.ts.
 //
 // State is driven THROUGH the server instead of around it, because

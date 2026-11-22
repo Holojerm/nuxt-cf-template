@@ -21,12 +21,12 @@
 // Imported explicitly rather than through the Nitro auto-import: this file is
 // pulled in by entitlement-view.ts, which the workerd vitest suite loads
 // directly, and nothing is injected there.
-import { isPass } from './paddle-refs'
+import { isPass } from './billing-refs'
 
 /** The fields of an entitlement row this derivation reads. */
 export interface BillingStateRow {
-  /** The Paddle ref held in `paddle_subscription_id`: `sub_…`, `txn_…`, `comp_…`. */
-  paddleSubscriptionId: string
+  /** The ref held in `billing_ref`: `sub_…`, `pi_…`, `comp_…`. */
+  billingRef: string
   status: string
   /** Needed to tell live dunning from a `past_due` row nothing will ever clear. */
   currentPeriodEnd: Date | null
@@ -36,17 +36,17 @@ export interface BillingStateRow {
  * How long after its period ended a `past_due` row still counts as dunning.
  *
  * ── Why a bound is necessary at all ──────────────────────────────────────────
- * A `sub_` row leaves `past_due` exactly one way: a delivered Paddle webhook.
+ * A `sub_` row leaves `past_due` exactly one way: a delivered Stripe webhook.
  * There is no replay job and no reconciliation sweep in this template, so a
  * single dropped `subscription.updated` or `subscription.canceled` freezes the
  * row forever. Unbounded, `history.some(past_due)` then pins the account to a
  * state whose entire UI is "update your card to restore access" — for a
- * subscription Paddle cancelled months ago, that nothing the customer does can
+ * subscription Stripe cancelled months ago, that nothing the customer does can
  * clear, and which suppresses the re-subscribe path they actually need.
  *
  * ── Why 30 days ──────────────────────────────────────────────────────────────
- * Paddle's dunning schedule is configured in Paddle, not here, but the standard
- * retry sequence runs a few weeks before it gives up and cancels. 30 days is
+ * Stripe's retry schedule is configured in the Stripe Dashboard, not here, and
+ * can be set to run for weeks before the subscription is cancelled. 30 days is
  * comfortably past the far end of that, so a genuinely dunning subscription is
  * never cut short by this — the window only catches rows that stopped being
  * true and were never told. It is deliberately generous: showing "payment
@@ -59,7 +59,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
 /**
  * - `active`   — a subscription or an unexpired pass is granting access.
  * - `trialing` — same, during a trial.
- * - `past_due` — a subscription's payment failed. No access; Paddle is retrying.
+ * - `past_due` — a subscription's payment failed. No access; Stripe is retrying.
  * - `inactive` — nothing to fix: never bought, cancelled, refunded, or expired.
  */
 export type BillingState = 'active' | 'trialing' | 'past_due' | 'inactive'
@@ -80,7 +80,7 @@ export function deriveBillingState(
   if (granting) return granting.status === 'trialing' ? 'trialing' : 'active'
 
   // Only a subscription can be past_due. Everything else in this table expires
-  // by date and has no lifecycle to fail: Paddle fires no events for a `txn_`
+  // by date and has no lifecycle to fail: Stripe fires no lifecycle events for a `pi_`
   // pass, and a `comp_` grant has no card behind it at all — telling someone to
   // update a payment method for access an admin handed them free would be an
   // invented problem.
@@ -91,7 +91,7 @@ export function deriveBillingState(
   //
   // Bounded by PAST_DUE_STALE_AFTER_DAYS — see the constant for why an
   // unbounded scan is a trap. A row whose period ended long enough ago that
-  // Paddle's dunning must have finished is reporting a retry that is not
+  // Stripe's retries must have finished is reporting a retry that is not
   // happening, so it reads as `inactive` and the customer gets the
   // re-subscribe path instead of a card-update prompt for a dead subscription.
   //
@@ -101,7 +101,7 @@ export function deriveBillingState(
   const staleBefore = new Date(now.getTime() - PAST_DUE_STALE_AFTER_DAYS * DAY_MS)
   const dunning = history.some(
     (row) =>
-      !isPass(row.paddleSubscriptionId) &&
+      !isPass(row.billingRef) &&
       row.status === 'past_due' &&
       (row.currentPeriodEnd === null || row.currentPeriodEnd > staleBefore),
   )

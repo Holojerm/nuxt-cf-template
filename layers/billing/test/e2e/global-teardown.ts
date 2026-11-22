@@ -1,4 +1,4 @@
-// Deletes the entitlements the billing E2E specs wrote for their e2e-* users,
+// Stops the Stripe stub, then deletes the entitlements the billing E2E specs wrote for their e2e-* users,
 // from the LOCAL dev DB, before test/e2e/global-teardown.ts deletes the users
 // (entitlements.user_id is a real foreign key, so children go first). See that
 // file for why this is node:sqlite and why it only ever touches `e2e-%` rows.
@@ -8,10 +8,13 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { stopStripeStub } from './stripe-stub'
+
 // layers/billing/test/e2e/ -> repo root is four levels up.
 const DB_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../.data/db/sqlite.db')
 
-export default function globalTeardown(): void {
+export default async function globalTeardown(): Promise<void> {
+  await stopStripeStub()
   if (!existsSync(DB_PATH)) return
 
   const db = new DatabaseSync(DB_PATH)

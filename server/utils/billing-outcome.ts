@@ -14,7 +14,7 @@
 //
 // ── The types are the contract, not billing's internals ─────────────────────
 // `BillingOutcomeEvent` and `BillingOutcome` describe only what a handler may
-// rely on. The layer's own richer types (PaddleEvent, PaddleEventOutcome) are
+// rely on. The layer's own richer types (BillingEvent, BillingEventOutcome) are
 // assignable to them, so the webhook passes what it has and a handler written
 // against this file compiles without the layer.
 //
@@ -50,7 +50,7 @@ export interface BillingDerivedChange {
 export interface BillingAdjustmentResult {
   outcome: string
   userId?: string
-  paddleRef?: string
+  billingRef?: string
   derived?: BillingDerivedChange[]
 }
 

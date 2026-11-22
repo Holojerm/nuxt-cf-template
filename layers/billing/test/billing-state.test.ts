@@ -24,16 +24,16 @@ const derive = (
 ) => deriveBillingState(granting, history, now)
 
 const sub = (status: string, id = 'sub_1', currentPeriodEnd = endingIn(20)): BillingStateRow => ({
-  paddleSubscriptionId: id,
+  billingRef: id,
   status,
   currentPeriodEnd,
 })
 const pass = (
   status = 'active',
-  id = 'txn_1',
+  id = 'pi_1',
   currentPeriodEnd = endingIn(20),
 ): BillingStateRow => ({
-  paddleSubscriptionId: id,
+  billingRef: id,
   status,
   currentPeriodEnd,
 })
@@ -60,7 +60,7 @@ describe('deriveBillingState — dunning', () => {
   })
 
   it('finds the past_due row behind older ended ones', () => {
-    const history = [sub('past_due', 'sub_2'), sub('canceled', 'sub_1'), pass('active', 'txn_old')]
+    const history = [sub('past_due', 'sub_2'), sub('canceled', 'sub_1'), pass('active', 'pi_old')]
     expect(derive(null, history)).toBe('past_due')
   })
 
@@ -72,7 +72,7 @@ describe('deriveBillingState — dunning', () => {
   })
 
   it('never reads past_due off a pass row', () => {
-    // Paddle emits no subscription lifecycle for a `txn_`, so this shouldn't
+    // Stripe emits no subscription lifecycle for a `pi_`, so this shouldn't
     // exist — but a state machine that trusts its inputs is one bad webhook
     // away from telling someone to update a card they never saved.
     expect(derive(null, [pass('past_due')])).toBe('inactive')
@@ -84,7 +84,7 @@ describe('deriveBillingState — dunning', () => {
     // for access support handed them for free — an invented problem, and a
     // support conversation about a charge that never happened.
     const comp: BillingStateRow = {
-      paddleSubscriptionId: 'comp_x',
+      billingRef: 'comp_x',
       status: 'past_due',
       currentPeriodEnd: endingIn(5),
     }
@@ -93,9 +93,9 @@ describe('deriveBillingState — dunning', () => {
 })
 
 describe('deriveBillingState — dunning has a shelf life', () => {
-  // A `sub_` row leaves past_due exactly one way: a delivered Paddle webhook.
+  // A `sub_` row leaves past_due exactly one way: a delivered Stripe webhook.
   // Nothing replays them, so one dropped event used to pin an account to
-  // "update your card" forever — for a subscription Paddle had already
+  // "update your card" forever — for a subscription Stripe had already
   // cancelled, with the re-subscribe path suppressed the whole time.
 
   it('still reads past_due while the period end is recent', () => {

@@ -1,8 +1,8 @@
-// Turning a Paddle webhook outcome into at most one email.
+// Turning a Stripe webhook outcome into at most one email.
 //
 // Split out of the webhook handler because the interesting logic isn't "send an
-// email", it's "should this event produce one at all". Paddle emits a
-// `subscription.updated` for a card change, a metadata tweak, a scheduled
+// email", it's "should this event produce one at all". Stripe emits a
+// `customer.subscription.updated` for a card change, a metadata tweak, a scheduled
 // change being applied — most of which the customer neither caused nor cares
 // about. Emailing per event teaches people to filter you into a folder, which
 // is exactly where the payment-failed email must never land.
@@ -17,10 +17,10 @@
 //
 // Every other combination sends nothing. All of it is best-effort: sendEmail
 // never throws, and a failure here must never make the webhook return non-200,
-// because Paddle would replay the event forever.
+// because Stripe would replay the event for days.
 
 import type { EntitlementDb as Db } from './entitlements'
-import type { PaddleEventOutcome } from './entitlements'
+import type { BillingEventOutcome } from './entitlements'
 import type { EmailContent } from '#server/utils/email-templates'
 import { isUndeliverableAddress } from '#server/utils/users'
 import { logEvent } from '#server/utils/log'
@@ -38,7 +38,7 @@ export function setBillingNotify(enabled: boolean): void {
 }
 
 // Off by default. `billing.cancelOnDeletion` turns it on: the cancel it makes
-// at Paddle is echoed by a `subscription.canceled` for an account that is now a
+// at Stripe is echoed by a `subscription.canceled` for an account that is now a
 // tombstone (`deleted-<id>@deleted.invalid`), and "your access has ended" to an
 // address that can never receive it is noise, so those recipients are skipped.
 let skipUndeliverable = false
@@ -62,7 +62,7 @@ type Decision =
  * can enumerate the transition table without mocking anything.
  */
 export function decideNotification(
-  outcome: PaddleEventOutcome,
+  outcome: BillingEventOutcome,
   currentPeriodEnd: Date | null = null,
 ): Decision {
   if (outcome.kind === 'pass') {
@@ -96,7 +96,7 @@ export function decideNotification(
 }
 
 // ─── Comp grants and revokes ────────────────────────────────────────────────
-// The admin console writes entitlements without a Paddle event, so it cannot go
+// The admin console writes entitlements without a Stripe event, so it cannot go
 // through decideNotification() above — there is no transition table entry for
 // "a human decided". It still has to send, and for the same reason everything
 // else here does: an entitlement changed under the customer.
@@ -157,7 +157,7 @@ export async function notifyCompRevoked(db: Db, opts: { userId: string }): Promi
 /** Resolve the decision against a real user and actually send. Never throws. */
 export async function notifyBillingOutcome(
   db: Db,
-  outcome: PaddleEventOutcome,
+  outcome: BillingEventOutcome,
   opts: { userId?: string; currentPeriodEnd?: Date | null } = {},
 ): Promise<void> {
   if (!notifyEnabled) return
@@ -189,7 +189,7 @@ export async function notifyBillingOutcome(
 
     await sendEmail({ to: user.email, ...content })
   } catch (error) {
-    // A broken email path must not turn into a 500 that makes Paddle replay a
+    // A broken email path must not turn into a 500 that makes Stripe replay a
     // money event. Log loudly, return quietly.
     logEvent('error', 'billing_email_failed', { userId, error: String(error) })
   }

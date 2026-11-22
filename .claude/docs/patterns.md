@@ -160,7 +160,7 @@ registry names to that folder, never import it from the optional feature's own f
 
 Entitlement-shaped data reaches the rest of core through the same contributors:
 `AdminUserContributor` (key `billing`), `OnboardingSignalContributor` (`entitlementActive`),
-`FleetCounterContributor` (`entitlements`) and `PurgeContributor` (`paddleEvents`).
+`FleetCounterContributor` (`entitlements`) and `PurgeContributor` (`billingEvents`).
 
 ### Fork-specific fleet counters
 

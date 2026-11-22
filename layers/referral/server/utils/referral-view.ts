@@ -44,13 +44,13 @@ declare module '#server/utils/entitlement-view-fields' {
 
 export function referralHistoryFields(entitlement: EntitlementViewRow) {
   return {
-    referral: isReferralRef(entitlement.paddleSubscriptionId),
-    referralKind: referralRefKind(entitlement.paddleSubscriptionId),
+    referral: isReferralRef(entitlement.billingRef),
+    referralKind: referralRefKind(entitlement.billingRef),
   }
 }
 
 export function referralViewFields({ describing }: EntitlementViewFieldsContext) {
   return {
-    referralKind: describing ? referralRefKind(describing.paddleSubscriptionId) : null,
+    referralKind: describing ? referralRefKind(describing.billingRef) : null,
   }
 }

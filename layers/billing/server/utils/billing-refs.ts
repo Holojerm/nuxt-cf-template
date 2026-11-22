@@ -1,11 +1,11 @@
-// What the ref in `entitlements.paddle_subscription_id` means.
+// What the ref in `entitlements.billing_ref` means.
 //
 // One column holds three shapes, and the prefix decides how the row behaves:
 //
-//   `sub_…`   an auto-renewing Paddle subscription. Paddle owns its lifecycle
+//   `sub_…`   an auto-renewing Stripe subscription. Stripe owns its lifecycle
 //             and flips the status when it ends, so it grants access on STATUS
 //             ALONE — findActiveEntitlement does not check its date.
-//   `txn_…`   a purchased one-time pass. No lifecycle event ever fires for it,
+//   `pi_…`    a purchased one-time pass (the PaymentIntent that paid for it). No lifecycle event ever fires for it,
 //             so it grants access only while current_period_end is in future.
 //   `comp_…`  the same, granted by an admin instead of sold.
 //   `referral_…`, `welcome_…`  earned access, derived from an account rather than
@@ -17,7 +17,7 @@
 // This rule is read by the access query (entitlements.ts), the state derivation
 // (billing-state.ts), the customer's view (entitlement-view.ts), and the comp
 // lifecycle (admin-grants.ts). It has already drifted once: `isPass` was keyed
-// on the presence of `txn_` while the access query keyed on the absence of
+// on the presence of the pass prefix while the access query keyed on the absence of
 // `sub_`, which made a comped month read as a subscription on /account.
 //
 // A leaf with no imports of its own is what keeps the fix from un-drifting. It
@@ -34,14 +34,14 @@
 export const SUBSCRIPTION_REF_PREFIX = 'sub_'
 
 /** Purchased one-time pass. */
-export const TRANSACTION_REF_PREFIX = 'txn_'
+export const TRANSACTION_REF_PREFIX = 'pi_'
 
 /**
  * Comped access, granted by an admin.
  *
- * Deliberately not `txn_`: both expire by date, but `txn_` claims a Paddle
- * transaction exists behind it, and reconciling revenue against a transaction
- * id Paddle has never heard of is a bad afternoon.
+ * Deliberately not `pi_`: both expire by date, but `pi_` claims a Stripe
+ * payment exists behind it, and reconciling revenue against a payment
+ * id Stripe has never heard of is a bad afternoon.
  */
 export const COMP_REF_PREFIX = 'comp_'
 
@@ -50,25 +50,25 @@ export function compRef(): string {
   return `${COMP_REF_PREFIX}${crypto.randomUUID()}`
 }
 
-/** Is this row an auto-renewing subscription Paddle manages? */
-export function isSubscriptionRef(paddleRef: string): boolean {
-  return paddleRef.startsWith(SUBSCRIPTION_REF_PREFIX)
+/** Is this row an auto-renewing subscription Stripe manages? */
+export function isSubscriptionRef(billingRef: string): boolean {
+  return billingRef.startsWith(SUBSCRIPTION_REF_PREFIX)
 }
 
 /**
  * Is this ref time-limited access rather than an auto-renewing subscription?
  *
- * Keyed on the ABSENCE of `sub_` rather than the presence of `txn_`, so it
+ * Keyed on the ABSENCE of `sub_` rather than the presence of the pass prefix, so it
  * agrees with findActiveEntitlement — the query that decides whether a ref
  * grants access at all, and which treats `sub_` as the special case and every
  * other prefix as date-expiring. Any future ref shape inherits the right
  * behaviour instead of silently reading as a subscription.
  */
-export function isPass(paddleRef: string): boolean {
-  return !isSubscriptionRef(paddleRef)
+export function isPass(billingRef: string): boolean {
+  return !isSubscriptionRef(billingRef)
 }
 
 /** Is this entitlement comped rather than paid? Used to label billing history. */
-export function isCompRef(paddleRef: string): boolean {
-  return paddleRef.startsWith(COMP_REF_PREFIX)
+export function isCompRef(billingRef: string): boolean {
+  return billingRef.startsWith(COMP_REF_PREFIX)
 }
