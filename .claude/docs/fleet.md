@@ -33,7 +33,20 @@ itself a fork). Three pieces, all shipped here so a fork gets them by syncing:
   (feedback's, and billing's `entitlements: { byStatus }`). The funnel's `paid` stage is the one
   number core cannot count itself: billing registers it with `registerFunnelStageContributor({ key: 'paid', count })`,
   and with no contributor `funnel.paid` reads 0, so the funnel keeps its shape. With nothing
-  registered the response carries only `users`, `ops`, `funnel` and `extra` (`{}`).
+  registered the response carries only `users`, `ops`, `funnel`, `email` and `extra` (`{}`).
+- **The scoreboard fields** on `GET /api/fleet` are what growth routines judge a bet on, so they
+  read fleet instead of querying D1. All are counts over users who signed up in the window.
+  `funnel.landings` is signups by first-touch landing path (top 10; `unknown` when none was
+  recorded), `funnel.campaigns` by `utm_campaign` (top 10; signups with no campaign are left
+  out), and `funnel.weeks` is eight entries, oldest first, of
+  `{ weekStart, signups, activated, paid }` per signup week. Weeks start Monday 00:00 UTC and the
+  last one is the week in progress (`server/utils/fleet-cohorts.ts`).
+  `email: { windowDays, sent, steps }` counts `lifecycle_sends` rows per step id over 28 days
+  (`server/utils/fleet-email.ts`); sign-in links and receipts are not in that table. The landing
+  path is `users.signup_landing`, written once at signup from the attribution cookie as a route
+  shape: no query string, and any segment that reads as an id or token becomes `:id`
+  (`shared/utils/landing-path.ts`). Adding a field to this payload does not bump `schema`;
+  changing or removing one does.
 - **`app-owned.json`** (template root) lists the template paths every app owns by
   design: brand, home page and layout, generated email and colour output, the
   schema composition root, the seed and the fork's own event and lifecycle

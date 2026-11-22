@@ -115,7 +115,9 @@ describe('collectFleetCounters', () => {
 
       const counters = await collectFleetCounters(db, NOW)
       expect(counters.extra).toEqual({ athletes: 3, plans: 5, sessionsLogged: 7 })
-      expect(Object.keys(counters).sort()).toEqual(['extra', 'funnel', 'ops', 'users'].sort())
+      expect(Object.keys(counters).sort()).toEqual(
+        ['email', 'extra', 'funnel', 'ops', 'users'].sort(),
+      )
     })
 
     it('replaces rather than duplicates a contributor registered twice', async () => {
@@ -129,7 +131,27 @@ describe('collectFleetCounters', () => {
     expect(await collectFleetCounters(db, NOW)).toEqual({
       users: { total: 0, last7d: 0 },
       ops: { kinds: [] },
-      funnel: { cohortDays: 28, signups: 0, activated: 0, paid: 0, sources: {} },
+      funnel: {
+        cohortDays: 28,
+        signups: 0,
+        activated: 0,
+        paid: 0,
+        sources: {},
+        landings: {},
+        campaigns: {},
+        // NOW is a Saturday; its week began Monday 2026-08-17.
+        weeks: [
+          '2026-06-29',
+          '2026-07-06',
+          '2026-07-13',
+          '2026-07-20',
+          '2026-07-27',
+          '2026-08-03',
+          '2026-08-10',
+          '2026-08-17',
+        ].map((weekStart) => ({ weekStart, signups: 0, activated: 0, paid: 0 })),
+      },
+      email: { windowDays: 28, sent: 0, steps: {} },
       extra: {},
     })
   })
@@ -145,9 +167,11 @@ describe('collectFleetCounters', () => {
     expect(counters.users).toEqual({ total: 2, last7d: 1 })
 
     // The payload is stored for months in someone else's database: it must be
-    // numbers all the way down (ops summaries are covered below).
+    // numbers all the way down (ops summaries are covered below). The one
+    // string is the date each weekly cohort starts on.
     const leaves = JSON.stringify(counters).match(/"[^"]*":\s*"[^"]*"/g) ?? []
-    expect(leaves).toEqual([])
+    expect(leaves.filter((leaf) => !/^"weekStart":"\d{4}-\d{2}-\d{2}"$/.test(leaf))).toEqual([])
+    expect(JSON.stringify(counters)).not.toMatch(/example\.com|u-new|u-old/)
   })
 })
 

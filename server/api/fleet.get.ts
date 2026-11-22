@@ -2,8 +2,10 @@
 // bearer token.
 //
 // Counters and per-kind aggregates: users, entitlements by status, the feedback
-// queue, and `ops.kinds` — the last 24 h of the ops spool grouped by kind, each
-// with its severity, count and newest one-line summary. The dashboard is the
+// queue, the signup funnel (28-day and weekly cohorts, by source, landing page
+// and campaign), lifecycle email sends per step, and `ops.kinds` — the last
+// 24 h of the ops spool grouped by kind, each with its severity, count and
+// newest one-line summary. The dashboard is the
 // only thing that mails the owner; apps just spool. Never stack traces, never
 // user data: `lastDetail` is the 500-character summary written at spool time.
 // See collectFleetCounters() for what each one means and where a fork adds its

@@ -282,6 +282,7 @@ const attribution = computed(() => {
     { label: 'Medium', value: user.signupMedium },
     { label: 'Campaign', value: user.signupCampaign },
     { label: 'Referrer', value: user.signupReferrer },
+    { label: 'Landing page', value: user.signupLanding },
     { label: 'Referred by', value: user.referredBy },
   ].filter((row) => Boolean(row.value))
 })

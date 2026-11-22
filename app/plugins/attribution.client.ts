@@ -10,12 +10,13 @@
 // time someone reaches /login the referrer is our own pricing page.
 //
 // ── Privacy posture ──────────────────────────────────────────────────────────
-// One first-party cookie holding a channel name and the referring URL. No
-// third party can read it, it is never used to build a profile, and it is not
-// an advertising identifier. That said: several jurisdictions require consent
-// for analytics cookies regardless of who sets them. If you operate somewhere
-// that does, gate this plugin behind your consent banner — the app degrades to
-// unattributed signups, which is exactly what you have today.
+// One first-party cookie holding a channel name, the referring URL and the
+// path of the landing page. No third party can read it, it is never used to
+// build a profile, and it is not an advertising identifier. That said: several
+// jurisdictions require consent for analytics cookies regardless of who sets
+// them. If you operate somewhere that does, gate this plugin behind your
+// consent banner — the app degrades to unattributed signups, which is exactly
+// what you have today.
 
 import {
   ATTRIBUTION_COOKIE,

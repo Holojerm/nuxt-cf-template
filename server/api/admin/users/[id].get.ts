@@ -67,6 +67,7 @@ export default defineEventHandler(async (event) => {
           signupMedium: user.signupMedium,
           signupCampaign: user.signupCampaign,
           signupReferrer: user.signupReferrer,
+          signupLanding: user.signupLanding,
           referralCode: user.referralCode,
           referredBy: user.referredBy,
         },

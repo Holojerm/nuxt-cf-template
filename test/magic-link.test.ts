@@ -295,6 +295,7 @@ describe('cross-device carry', () => {
       medium: 'email',
       campaign: 'launch',
       referrer: undefined,
+      landing: undefined,
       referralCode: undefined,
     })
   })
