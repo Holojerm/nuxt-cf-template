@@ -11,10 +11,12 @@ tier: 2
 ## Purpose
 
 The decide step of the growth loop. Once a week, after `analytics-review` has written its
-report: judge last week's bets, then pick at most three new ones and ship them behind flags or as
-content. It is the one routine that turns numbers into changes; everything else observes or drafts.
+report: judge last week's bets, then turn the open growth ideas (`_shared.md` › Growth ideas)
+and its own picks into bets and ship them behind flags or as content. It is the one routine that
+turns numbers into changes; everything else observes, drafts, or files ideas for it.
 On an operator repo it also starts and ends the rollout of its own flags, so a bet runs from
-issue to verdict with no owner step.
+issue to verdict with no owner step, and an idea is done unless a rule says otherwise: there
+is no weekly quota of bets.
 
 Every bet has a type (**Bet types**, below). A product with few signups cannot test a
 conversion rate, so its bets are channel bets: which source sends people at all.
@@ -32,6 +34,7 @@ conversion rate, so its bets are channel bets: which source sends people at all.
      `_shared.md` › Reading production D1. Its `signups` count decides which bet types are
      open in step 3.
    - Open and recently closed issues labelled `growth-bet`.
+   - Open issues labelled `growth-idea`, the owner's first, then oldest first.
    - Fleet's scoreboard for this product, the same call `_shared.md` › Operator grant makes for
      the month's tokens. From it, read `playbook`: `principles` (markdown) and `lessons` (an
      array of `{ product, type, verdict, lesson, closedAt }`, one per judged bet across every
@@ -59,13 +62,14 @@ conversion rate, so its bets are channel bets: which source sends people at all.
    - **Channel.** Count the visits and signups that carry the bet's tag and hold them against
      the two lines the issue declared (**Judging a channel bet**, below). There is no flag to
      remove and no arm to compare.
-3. **Pick at most three new bets.** Pick from, in order: the analytics report's recommended
-   actions, churn-reason feedback, the funnel step with the worst conversion. Then let the
-   28-day `signups` count decide the type:
+3. **Pick new bets.** Start with every open `growth-idea`, in the order step 1 read them, then
+   add your own from the analytics report's recommended actions, churn-reason feedback, and
+   the funnel step with the worst conversion. Then let the 28-day `signups` count decide the
+   type:
    - **Under 200 signups** (two arms of 100 inside a 28-day run), a conversion test cannot
-     reach a verdict, so pick channel bets first. Take another type only when no channel bet
-     is left worth running, and only if it can reach 100 users per arm within twice its
-     minimum run at the current signup rate. Otherwise leave the slot empty.
+     reach a verdict, so pick channel bets first. Take another type only when it can reach
+     100 users per arm within twice its minimum run at the current signup rate. Otherwise it
+     is not a bet yet.
    - **At 200 or more**, pick by the funnel step with the worst conversion; a channel bet
      still competes when acquisition is that step.
 
@@ -75,6 +79,31 @@ conversion rate, so its bets are channel bets: which source sends people at all.
    elsewhere is a reason to change what you publish there, not a ban, and a source kept
    elsewhere is worth a bet here only when its audience fits this product. Name in the issue
    any lesson that shaped the pick.
+
+   **How many.** Channel bets have no weekly limit: each carries its own tag, so they do not
+   confound each other. Flagged bets keep the limit in **Never** (three live on one funnel
+   step). What bounds a run is its budget (`_shared.md` hard rule 7) and the month's token
+   cap. Ideas the run had no budget left for stay open, the journal names them, and the next
+   run starts with them.
+
+   **Every open idea gets an outcome**, as a comment on it, every run:
+   - **Bet**: link the `growth-bet` issue and close the idea.
+   - **Groundwork**: it needs work in this repo first (a placeholder file to fill, a page to
+     write, a script to finish). That work is the bet's first PR, shipped this run under the
+     same rules as the bet; link it and leave the idea open until the bet is filed. Missing
+     groundwork is never a reason to decline.
+   - **Waiting on a live bet**: it would share a tag, or a funnel step at its limit, with a
+     live bet. Name the bet; the idea is picked when that bet is judged.
+   - **Waiting on the owner**: it needs an act the owner keeps (spend, a new account, a post
+     under their name, a row in the config's Escalation list). File the decision issue step 4
+     describes, link it, and close the idea once the decision is answered or defaulted.
+   - **Declined**, naming the rule: a source killed here in the last eight weeks with nothing
+     changed, a metric outside `product`, no verdict reachable at the current signup rate, or
+     anything this file's **Never** or `_shared.md` forbids. Close it.
+
+   "Not this week" is not an outcome unless the run's budget or the month's cap is spent. An
+   idea of your own that you do not ship this run is filed as a `growth-idea` before the run
+   ends, with what it still needs, so the next run starts there.
 
    Each bet is an issue labelled `growth-bet` containing:
    - its type, as one line exactly `Type: <channel|activation|monetisation|retention>` (for
@@ -140,7 +169,7 @@ conversion rate, so its bets are channel bets: which source sends people at all.
    - With a tier-2 grant in `routines.config.md`, or on an operator repo, merge your own PR once
      CI is green. Otherwise leave it open for the owner.
 5. **Journal** per `_shared.md`. List each bet as a line with its type, issue, PR, and decision
-   metric, and each judged bet with its verdict.
+   metric, each judged bet with its verdict, and each open idea with its outcome.
 
 ## Bet types
 
@@ -186,7 +215,9 @@ size. That is why it can be judged at a few visits a week.
 - Give a decision issue a default this file or your grant does not already allow.
 - Judge a channel bet on a conversion rate, or a flagged bet on fewer than ~100 users per arm.
 - Give two live bets the same tag, or change a bet's tag after its first publication.
-- Stack more than three live bets on the same funnel step. They confound each other.
+- Stack more than three live flagged bets on the same funnel step. They confound each other.
+- Leave an open `growth-idea` without an outcome comment, or decline one without naming the
+  rule.
 - Touch the rollout or targeting of a flag this routine did not create, or one not named
   `growth-…`. On a repo without the operator grant, touch no flag's rollout at all.
 - Change a flag any way but `scripts/flags.ts`: no PostHog dashboard, no direct API call, no

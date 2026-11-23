@@ -66,8 +66,8 @@ back.
    - A PR that would touch anything but collection definitions and rows, page files under
      `app/pages/`, `server/utils/page-collections-app.ts`, the a11y route list or
      `content/blog/` is not content: open it as a draft, whatever the grant.
-6. **A bet, at most one, only for a new collection.** When fewer than three `growth-bet`
-   issues are open, open one for the new collection in `growth-review`'s format (that file ›
+6. **A bet, only for a new collection.** Open one for the new collection in
+   `growth-review`'s format (that file ›
    Instructions, step 3): the line `Type: channel`, its `<slug>`, and as its tag the
    collection's landing paths, since a page meant to be found by search is judged on its
    landing path rather than a UTM tag. Its minimum run is 28 days. `growth-review` judges it.

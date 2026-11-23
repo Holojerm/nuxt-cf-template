@@ -51,9 +51,14 @@ a report the owner can read in two minutes and issues the backlog can act on.
    - **Recommended actions** — each one concrete enough to become an issue.
 4. File a GitHub issue for each recommended action worth doing (label `enhancement` or `bug`,
    plus `from-analytics`), linking the report. Skip actions already tracked by an open issue.
+   An action meant to grow the product (a source to try, a page to write, a funnel step to
+   fix) is a growth idea instead, labelled `growth-idea` and `from-analytics`
+   (`_shared.md` › Growth ideas). Too few signups for an experiment is not a reason to
+   recommend nothing: look for channel ideas (a source never tried, a page that is found but
+   linked from nowhere, a directory the product is missing from).
 5. **Experiments: propose, never run.** Where a recommendation is a genuine coin-flip —
    pricing layout, onboarding order, copy on the paid CTA — write it up as an experiment
-   proposal in the report and file it as an issue labelled `experiment`: the hypothesis, the
+   proposal in the report and file it as a growth idea: the hypothesis, the
    flag name it would use (`useFlag()` / `useFlagVariant()`, app/composables/useFlag.ts), the
    single metric that decides it, and the minimum run length. Do **not** create the PostHog
    flag, change its rollout, or alter targeting. A routine that can start experiments can
