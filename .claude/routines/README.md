@@ -28,6 +28,7 @@ so the repo ships the *definitions* and a sync command:
 | --- | --- | --- | --- |
 | `issue-triage.md` | GitHub issue opened or reopened; weekly sweep Mon 11:00, gated | Labels, deduplicates, and assesses new GitHub issues; checks the issues other routines escalate against the code and data, and closes the ones the evidence disproves | GitHub connector (+ Cloudflare connector); Claude GitHub App |
 | `bug-fix.md` | Daily 12:00, gated on an open fixable bug | Picks the top triaged bug, opens a fix PR with a regression test; with a tier-2 grant it merges through the queue, otherwise it is a draft | GitHub connector; tier 2 |
+| `roadmap-build.md` | Daily 16:00, gated on fleet's `roadmapWork.pick` | Builds the one roadmap item fleet picks for the app (one in flight at a time), opens a draft PR and claims the item on fleet's board; with a tier-2 grant it then readies the PR. An item too big for one PR becomes a `needs-owner` issue proposing a split. About 8–15M tokens an item | GitHub connector + FLEET_SCOREBOARD_URL / FLEET_SCOREBOARD_TOKEN / FLEET_ROADMAP_AGENT_TOKEN env vars; tier 2 |
 | `feedback-triage.md` | API, fired by fleet when the open feedback count rises; weekly backstop Mon 11:30 | Turns the in-app feedback queue (D1 `feedback` table) into GitHub issues | GitHub connector (+ Cloudflare API token); API trigger token in fleet |
 | `support-inbox.md` | Daily 13:00, gated on a support thread | Triages support email, **drafts** replies, files bugs as issues; on an operator repo it sends how-to answers and acknowledgements, signed as the product's assistant | Gmail + GitHub connectors |
 | `analytics-review.md` | Weekly Mon 12:30 | Reviews product/traffic metrics, writes a report, files opportunities; counts visits and signups per open channel bet | GitHub connector (+ analytics access) |
@@ -69,7 +70,8 @@ the run with no journal entry when there is nothing to do (`_shared.md` › How 
 
 `bug-fix` is a queue worker that opens one PR a run, so it stays scheduled: an issue `labeled`
 event would fire on every label any routine adds, and two runs started together would pick the
-same bug.
+same bug. `roadmap-build` is one for the same reason, and its gate costs nothing on the days
+fleet offers no item.
 
 ### Who fires the API triggers
 
