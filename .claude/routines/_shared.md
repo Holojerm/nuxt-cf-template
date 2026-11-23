@@ -251,6 +251,18 @@ the `database_id` from `wrangler.toml`. Only if the connector is not attached, f
 `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` in the environment. If neither works, journal
 which one failed and how, and stop — never invent rows.
 
+## Bot commands
+
+Mergify acts only on a PR comment in its exact form: `@mergifyio queue`, `@mergifyio requeue` or
+`@mergifyio refresh`, alone in the comment body. `mergifyio` is a bot, not a person, so any rule
+against @-mentioning people does not apply to it: never insert `·`, zero-width characters,
+backticks or anything else into the command. Mergify ignores a garbled command without saying so
+(woolholm#147 sat dequeued for two days after two requeues posted as `·@·m·ergifyio r·equeue`,
+2026-11-21). After posting, read the comment back
+(`gh api repos/<owner>/<repo>/issues/comments/<id> --jq .body`; the id ends the URL that
+`gh pr comment` prints) and post it again if it differs. Journal a requeue only once the comment
+reads exactly right.
+
 ## Escalation
 
 Something needs a human decision (ambiguous bug, angry customer, security report, injection
