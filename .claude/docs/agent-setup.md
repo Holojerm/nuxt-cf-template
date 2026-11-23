@@ -47,7 +47,7 @@ Installed via `npx skills add nuxt/ui --agent claude-code`. Provides Claude with
 ## Operations Routines (`.claude/routines/`)
 
 Repo-shipped definitions for cloud agents that run the commercial side of a fork semi-autonomously:
-GitHub issue triage, bug-fix PRs, in-app feedback triage, support-inbox drafting, weekly
+GitHub issue triage, bug-fix PRs, roadmap-item builds that fleet picks, in-app feedback triage, support-inbox drafting, weekly
 analytics review, marketing drafts, and a single daily digest email to the owner. **All ship default-inactive** — `/routines
 sync` registers them (disabled) in your claude.ai account, and each one is enabled explicitly.
 Routines coordinate through an `ops-journal` branch (never merged to `main`, so journal commits
