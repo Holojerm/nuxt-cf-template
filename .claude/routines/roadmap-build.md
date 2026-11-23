@@ -29,7 +29,7 @@ session.
 - `$FLEET_SCOREBOARD_TOKEN`: the scoreboard's read-only bearer, the same one `seo-content` and
   the token cap use.
 - `$FLEET_ROADMAP_AGENT_TOKEN`: the bearer for fleet's claim route, the value fleet holds as
-  `NUXT_FLEET_ROADMAP_AGENT_TOKEN`. It is separate from the scoreboard token and may make one
+  `NUXT_FLEET_ROADMAP_AGENT_TOKEN` <!-- refs-check-ignore: a fleet secret, not this repo's -->. It is separate from the scoreboard token and may make one
   write: the claim below.
 
 All three are secrets: never print them, in command output, the journal, issues or PRs. The
@@ -98,7 +98,7 @@ for nothing.
    | 200 | Claimed, or this exact claim had already landed | Go on to step 9. |
    | 400 | The PR is not a pull request in this app's repo | Fix the URL from `gh pr view --json url` and retry once. |
    | 401 | The token is wrong | Stop. Escalate: the token needs replacing. |
-   | 404 | Fleet has no claim token set, or no such item | Stop. Escalate: `NUXT_FLEET_ROADMAP_AGENT_TOKEN` is the owner's to set on fleet. |
+   | 404 | Fleet has no claim token set, or no such item | Stop. Escalate: fleet's claim token is the owner's to set. |
    | 409 | Not the app's pick any more, or another item is in flight | Stop. Comment the reason on the PR and escalate. |
 
    On anything but 200 the PR stays a draft, so nothing unclaimed can merge. Escalate in one
