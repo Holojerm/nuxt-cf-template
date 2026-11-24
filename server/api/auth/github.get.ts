@@ -24,30 +24,36 @@ interface GitHubUser {
   email_verified?: boolean
 }
 
-export default defineOAuthGitHubEventHandler({
-  config: { emailRequired: true, scope: ['user:email'] },
+import { failOAuth, finishOAuth, withLinkAwareStart } from '../../utils/oauth-callback'
 
-  async onSuccess(event, { user }) {
-    const profile = user as GitHubUser
+export default withLinkAwareStart(
+  defineOAuthGitHubEventHandler({
+    config: { emailRequired: true, scope: ['user:email'] },
 
-    return completeOAuthSignIn(h3Event(event), {
-      profile: {
-        provider: 'github',
-        email: profile.email ?? '',
-        name: profile.name ?? profile.login,
-        avatarUrl: profile.avatar_url,
-      },
-      // GitHub only ever hands back a *primary* address here, and primary
-      // addresses must be verified to be set — but when the account exposes a
-      // public profile email nuxt-auth-utils takes that path and never sets the
-      // flag. Treat a missing flag as verified only for the profile-email case,
-      // which GitHub also requires to be verified.
-      emailVerified: profile.email_verified !== false,
-    })
-  },
+    async onSuccess(event, { user }) {
+      const profile = user as GitHubUser
 
-  onError(event, error) {
-    logEvent('error', 'oauth_failed', { provider: 'github', message: error.message })
-    return redirectToLoginError(h3Event(event), 'provider_error')
-  },
-})
+      return finishOAuth(h3Event(event), {
+        profile: {
+          provider: 'github',
+          // The numeric id, not `login`: a login can be renamed and then
+          // claimed by somebody else.
+          subject: String(profile.id),
+          email: profile.email ?? '',
+          name: profile.name ?? profile.login,
+          avatarUrl: profile.avatar_url,
+        },
+        // GitHub only ever hands back a *primary* address here, and primary
+        // addresses must be verified to be set — but when the account exposes a
+        // public profile email nuxt-auth-utils takes that path and never sets the
+        // flag. Treat a missing flag as verified only for the profile-email case,
+        // which GitHub also requires to be verified.
+        emailVerified: profile.email_verified !== false,
+      })
+    },
+
+    onError(event, error) {
+      return failOAuth(h3Event(event), 'github', error)
+    },
+  }),
+)

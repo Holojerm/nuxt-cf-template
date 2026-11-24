@@ -10,6 +10,7 @@ import type { Attribution } from '#shared/utils/attribution'
 import { ATTRIBUTION_COOKIE, readAttributionCookie } from '#shared/utils/attribution'
 import { safeRedirectPath } from '#shared/utils/redirect'
 import { getSignupContributors } from './signup-contributors'
+import { signInOAuthUser } from './oauth-sign-in'
 import type { OAuthProfile } from './users'
 import { logEvent } from './log'
 
@@ -108,20 +109,6 @@ export async function establishSession(
   event: H3Event,
   { profile, emailVerified, attribution: providedAttribution }: EstablishSessionOptions,
 ) {
-  if (!profile.email) {
-    logEvent('warn', 'auth_no_email', { provider: profile.provider })
-    throw createError({ statusCode: 401, message: 'No email address', data: { code: 'no_email' } })
-  }
-
-  if (!emailVerified) {
-    logEvent('warn', 'auth_unverified_email', { provider: profile.provider })
-    throw createError({
-      statusCode: 401,
-      message: 'Email not verified',
-      data: { code: 'unverified_email' },
-    })
-  }
-
   // The `attr` cookie is untrusted but parsed through a strict, length-capped
   // schema (null otherwise), so a forged one dirties one row's marketing
   // columns. Read ONLY when the caller did not decide: no merging, because
@@ -133,7 +120,18 @@ export async function establishSession(
       ? providedAttribution
       : readAttributionCookie(getCookie(event, ATTRIBUTION_COOKIE))
 
-  const { user, created } = await upsertOAuthUser(db, profile, attribution)
+  // Identity first, then verified email (server/utils/oauth-sign-in.ts). With no
+  // `subject` (magic link, credentials) this is the verified-email path alone.
+  const outcome = await signInOAuthUser(db, { profile, emailVerified, attribution })
+  if ('refused' in outcome) {
+    logEvent('warn', `auth_${outcome.refused}`, { provider: profile.provider })
+    throw createError({
+      statusCode: 401,
+      message: outcome.refused === 'no_email' ? 'No email address' : 'Email not verified',
+      data: { code: outcome.refused },
+    })
+  }
+  const { user, created } = outcome
 
   // Consumed: clear it so a stale channel does not reach the next account from this browser.
   if (created && attribution) deleteCookie(event, ATTRIBUTION_COOKIE, { path: '/' })

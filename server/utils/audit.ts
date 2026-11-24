@@ -73,6 +73,11 @@ export const AUDIT_ACTIONS = [
    */
   'account.sessions_revoked',
   /**
+   * A person linked a sign-in method to their account from /account. Metadata:
+   * the provider name only, never the provider's id for them.
+   */
+  'account.identity_linked',
+  /**
    * The first-run checklist was observed complete, once. Not evidence like the
    * rest: it is the idempotency guard for the one-time `user_activated` PostHog
    * event (server/utils/onboarding.ts › hasActivated, recordActivationOnce).

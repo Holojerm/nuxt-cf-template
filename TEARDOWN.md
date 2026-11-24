@@ -273,6 +273,8 @@ builds exactly this fork and runs the gates on it.
    | `server/api/auth/apple.ts`, `google.get.ts`, `github.get.ts` | `/api/auth/apple`, `/api/auth/google`, `/api/auth/github` |
    | `server/api/auth/providers.get.ts` | `GET /api/auth/providers`, read only by the deleted `/login` |
    | `server/utils/auth-providers.ts`, `test/auth-providers.test.ts` | the button list behind it |
+   | `server/utils/oauth-callback.ts`, `test/oauth-callback.test.ts` | the providers' shared callback (sign in or link) |
+   | `server/api/account/identities/`, `app/components/Account/SignInMethods.vue`, and its `<AccountSignInMethods />` line in `app/pages/account.vue` | "Sign-in methods" on /account (linking a provider) |
 
    Unset every `NUXT_OAUTH_*` secret on the Worker and drop them from `.env.example`. The
    empty `oauth` block in `nuxt.config.ts` can stay or go: nothing reads it now.
@@ -283,6 +285,10 @@ builds exactly this fork and runs the gates on it.
      With no route minting tokens the table stays empty. No table is dropped by this recipe.
    - `emails/templates/magic-link.*`: `email:build` and `test/emails.test.ts` cover the whole
      directory.
+   - The **`user_identities` table**, `server/utils/user-identities.ts`,
+     `server/utils/oauth-sign-in.ts` and `server/utils/identity-link.ts`: account deletion
+     and export read the table, `establishSession()` runs every sign-in through
+     `signInOAuthUser()`, and sign-out clears the link cookie. With no provider they stay idle.
    - `server/api/auth/logout.post.ts`, and `server/api/auth/dev.post.ts` (404 in
      production; the browser suites sign in through it).
    - `server/utils/auth.ts`: `establishSession()` is what every credentials sign-in ends in.
