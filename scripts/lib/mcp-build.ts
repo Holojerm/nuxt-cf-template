@@ -124,10 +124,14 @@ export function isCurrent(existing: BuildConfig | null, want: DesiredBuild): boo
   )
 }
 
-// ── The check on other branches ─────────────────────────────────────────────
-// With previews off Cloudflare builds nothing for a pull request, so the
-// worker gets a second trigger, the same way the app has one: it runs the
-// build command on every other branch and uploads nothing.
+// ── Triggers ────────────────────────────────────────────────────────────────
+// A Worker's build configuration exists once it has a trigger: the API has no
+// call that creates one (`POST /builds/workers` is refused with 12002), and
+// `GET /builds/workers/<tag>` reads its production settings from the trigger
+// on the production branch. So the worker gets two triggers, the way the app
+// has them: one that deploys the production branch, and one that runs the
+// build command on every other branch and uploads nothing (with previews off,
+// nothing else builds a pull request).
 
 /** A build trigger, as Cloudflare returns it. */
 export interface Trigger {
@@ -155,11 +159,50 @@ export interface DesiredTrigger {
   branch_excludes: string[]
   path_includes: string[]
   path_excludes: string[]
+  build_caching_enabled?: true
 }
 
 export const MCP_BRANCH_TRIGGER = 'Check non-production branches (no upload)'
 
 const watchesEveryBranch = (trigger: Trigger) => (trigger.branch_includes ?? []).includes('*')
+
+const productionBranch = (build: DesiredBuild) => String(build.git_repository.branch ?? 'main')
+
+/** The app's repository connection, which both of the worker's triggers reuse. */
+function appConnection(appTriggers: Trigger[]): string {
+  const connection = appTriggers.find((trigger) => trigger.repo_connection?.repo_connection_uuid)
+    ?.repo_connection?.repo_connection_uuid
+  if (!connection) throw new Error('the app Worker has no build trigger to copy a repository from')
+  return connection
+}
+
+/**
+ * The worker's trigger for the production branch. Named the way Cloudflare
+ * names the app's (`<worker>-main`).
+ */
+export function desiredProductionTrigger(input: {
+  mcpName: string
+  mcpTag: string
+  build: DesiredBuild
+  appTriggers: Trigger[]
+}): DesiredTrigger {
+  const production = productionBranch(input.build)
+  const settings = input.build.production_settings
+  return {
+    external_script_id: input.mcpTag,
+    repo_connection_uuid: appConnection(input.appTriggers),
+    build_token_uuid: settings.build_token_uuid,
+    trigger_name: `${input.mcpName}-${production}`,
+    build_command: settings.build_command,
+    deploy_command: settings.deploy_command,
+    root_directory: settings.root_directory,
+    branch_includes: [production],
+    branch_excludes: [],
+    path_includes: settings.path_includes,
+    path_excludes: settings.path_excludes,
+    build_caching_enabled: true,
+  }
+}
 
 /**
  * The worker's trigger for every branch but production, from the app's.
@@ -172,11 +215,8 @@ export function desiredBranchTrigger(input: {
   build: DesiredBuild
   appTriggers: Trigger[]
 }): DesiredTrigger {
-  const connection = input.appTriggers.find(
-    (trigger) => trigger.repo_connection?.repo_connection_uuid,
-  )?.repo_connection?.repo_connection_uuid
-  if (!connection) throw new Error('the app Worker has no build trigger to copy a repository from')
-  const production = String(input.build.git_repository.branch ?? 'main')
+  const connection = appConnection(input.appTriggers)
+  const production = productionBranch(input.build)
   const skipped = input.appTriggers.find(watchesEveryBranch)?.branch_excludes ?? []
   const branch = input.build.previews_base_config
   return {
@@ -197,12 +237,18 @@ export function desiredBranchTrigger(input: {
 const sameList = (have: string[] | undefined, want: string[]) =>
   [...(have ?? [])].sort().join('\n') === [...want].sort().join('\n')
 
-/** The worker's existing branch trigger, and whether it already is the desired one. */
-export function branchTriggerState(
+/**
+ * The worker's existing trigger for what `want` builds, and whether it already
+ * is the desired one. Found by name, else by the same branches: a production
+ * trigger made by hand or in the dashboard is updated, not doubled.
+ */
+export function triggerState(
   existing: Trigger[],
   want: DesiredTrigger,
 ): { current: boolean; uuid?: string } {
-  const have = existing.find((trigger) => trigger.trigger_name === want.trigger_name)
+  const have =
+    existing.find((trigger) => trigger.trigger_name === want.trigger_name) ??
+    existing.find((trigger) => sameList(trigger.branch_includes, want.branch_includes))
   if (!have) return { current: false }
   const current =
     have.build_command === want.build_command &&
