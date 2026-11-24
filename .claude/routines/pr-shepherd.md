@@ -4,7 +4,7 @@ model: claude-sonnet-5
 connectors: [github]
 tier: 2
 scope: fleet
-enabled: false
+enabled: true
 ---
 
 # PR Shepherd

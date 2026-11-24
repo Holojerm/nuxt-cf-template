@@ -29,6 +29,7 @@ declared tier.
 | Routine | Tier | Granted on |
 | --- | --- | --- |
 | dependency-merge | 2 | 2026-11-07 |
+| pr-shepherd | 2 | 2026-11-23 |
 
 ## Operator
 

@@ -57,7 +57,6 @@ carry on, and the journal entry says how it failed.
    report or the journal: each routine reads its own queue, not another routine's prose.
 7. **Budget your run.** If a task balloons (e.g. a "bug fix" turning into a refactor), stop, open
    an issue describing what you found, and journal it as escalated.
-
 ## Autonomy tiers
 
 Each routine's frontmatter declares the highest tier it may act at (`tier:`; absent means 1). A tier above 1 is
