@@ -22,7 +22,7 @@
 // counts, scrubs and exports its own rows, so deletion and export stay complete
 // when the feature is there and correct when it is not.
 
-import { and, count, desc, eq } from 'drizzle-orm'
+import { and, asc, count, desc, eq } from 'drizzle-orm'
 import type { drizzle } from 'drizzle-orm/d1'
 import * as tables from '../db/schema'
 import type { AuditMetadata } from '../db/schema'
@@ -117,29 +117,39 @@ export async function deleteAccount(
   }
 
   const contributors = getAccountContributors()
-  const [[connectCodeTotal], [magicLinkTotal], [notificationTotal], contributorCounts] =
-    await Promise.all([
-      db
-        .select({ total: count() })
-        .from(tables.mcpConnectCodes)
-        .where(eq(tables.mcpConnectCodes.userId, userId)),
-      // Keyed by address, not user id — a magic link is minted for an address
-      // before we know whether it has an account (server/db/schema.ts).
-      db
-        .select({ total: count() })
-        .from(tables.magicLinkTokens)
-        .where(eq(tables.magicLinkTokens.email, user.email)),
-      db
-        .select({ total: count() })
-        .from(tables.notificationPreferences)
-        .where(eq(tables.notificationPreferences.userId, userId)),
-      Promise.all(contributors.map((c) => c.countForDeletion?.(db, userId))),
-    ])
+  const [
+    [connectCodeTotal],
+    [magicLinkTotal],
+    [notificationTotal],
+    [identityTotal],
+    contributorCounts,
+  ] = await Promise.all([
+    db
+      .select({ total: count() })
+      .from(tables.mcpConnectCodes)
+      .where(eq(tables.mcpConnectCodes.userId, userId)),
+    // Keyed by address, not user id — a magic link is minted for an address
+    // before we know whether it has an account (server/db/schema.ts).
+    db
+      .select({ total: count() })
+      .from(tables.magicLinkTokens)
+      .where(eq(tables.magicLinkTokens.email, user.email)),
+    db
+      .select({ total: count() })
+      .from(tables.notificationPreferences)
+      .where(eq(tables.notificationPreferences.userId, userId)),
+    db
+      .select({ total: count() })
+      .from(tables.userIdentities)
+      .where(eq(tables.userIdentities.userId, userId)),
+    Promise.all(contributors.map((c) => c.countForDeletion?.(db, userId))),
+  ])
 
   const metadata: AuditMetadata = {
     connectCodesCount: connectCodeTotal?.total ?? 0,
     magicLinkTokensCount: magicLinkTotal?.total ?? 0,
     notificationPreferencesCount: notificationTotal?.total ?? 0,
+    identitiesCount: identityTotal?.total ?? 0,
   }
   contributors.forEach((c, i) => {
     if (c.countForDeletion) metadata[c.countKey ?? `${c.key}Count`] = contributorCounts[i] ?? 0
@@ -182,6 +192,12 @@ export async function deleteAccount(
         // email signed me into a new one" is not a sentence a deletion flow
         // should make possible.
         db.delete(tables.magicLinkTokens).where(eq(tables.magicLinkTokens.email, user.email)),
+
+        // Linked provider accounts are credentials too, and the stronger kind:
+        // sign-in matches them before any address, so a row left behind would
+        // sign its provider account straight back into the tombstone. The FK
+        // cascade never fires, because the users row is kept.
+        db.delete(tables.userIdentities).where(eq(tables.userIdentities.userId, userId)),
 
         db
           .delete(tables.notificationPreferences)
@@ -306,9 +322,19 @@ export interface AccountExportLifecycleEmail {
   sentAt: string
 }
 
+/** A provider account that signs in to this one (server/utils/user-identities.ts). */
+export interface AccountExportSignInMethod {
+  provider: string
+  /** The provider's id for this person: data about them, so it is in the copy. */
+  subject: string
+  email: string | null
+  linkedAt: string
+}
+
 export interface AccountExportCore {
   exportedAt: string
   user: AccountExportUser
+  signInMethods: AccountExportSignInMethod[]
   notificationPreferences: AccountExportNotificationPreference[]
   lifecycleEmails: AccountExportLifecycleEmail[]
   auditEntries: AccountExportAuditEntry[]
@@ -331,7 +357,12 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
   const user = await db.query.users.findFirst({ where: eq(tables.users.id, userId) })
   if (!user) return null
 
-  const [preferenceRows, lifecycleRows, auditRows, sections] = await Promise.all([
+  const [identityRows, preferenceRows, lifecycleRows, auditRows, sections] = await Promise.all([
+    db.query.userIdentities.findMany({
+      where: eq(tables.userIdentities.userId, userId),
+      orderBy: asc(tables.userIdentities.createdAt),
+      columns: { provider: true, subject: true, email: true, createdAt: true },
+    }),
     // One read for every optional type, not one read each. isNotificationEnabled
     // is a point lookup per event type, so calling it in a loop meant three
     // round trips to answer a question about three rows in one table. The
@@ -381,6 +412,12 @@ export async function exportAccount(db: AccountDb, userId: string): Promise<Acco
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
     },
+    signInMethods: identityRows.map((row) => ({
+      provider: row.provider,
+      subject: row.subject,
+      email: row.email,
+      linkedAt: row.createdAt.toISOString(),
+    })),
     notificationPreferences,
     lifecycleEmails: lifecycleRows.map((row) => ({
       step: row.stepId,

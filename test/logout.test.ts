@@ -10,10 +10,13 @@ const clearUserSession = vi.fn(async (_event: unknown) => {})
 const captureServerEvent = vi.fn(async (_opts: unknown) => {})
 let session: { user?: { id: string } } = {}
 let runtimeConfig: Record<string, unknown> = {}
+let cookies: Record<string, string> = {}
 let handler: Handler
 
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', (fn: Handler) => fn)
+  vi.stubGlobal('getCookie', (_event: unknown, name: string) => cookies[name])
+  vi.stubGlobal('deleteCookie', (_event: unknown, name: string) => delete cookies[name])
   vi.stubGlobal('getUserSession', async () => session)
   vi.stubGlobal('clearUserSession', clearUserSession)
   vi.stubGlobal('captureServerEvent', captureServerEvent)
@@ -26,6 +29,13 @@ beforeEach(() => {
   captureServerEvent.mockClear()
   session = { user: { id: 'u1' } }
   runtimeConfig = { captureSignOut: true }
+  cookies = {}
+})
+
+it('drops a half-finished "link a sign-in method" with the session', async () => {
+  cookies = { 'identity-link': 'pending' }
+  await handler({})
+  expect(cookies).toEqual({})
 })
 
 describe('POST /api/auth/logout', () => {

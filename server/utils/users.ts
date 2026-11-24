@@ -1,12 +1,13 @@
-// User provisioning — the bridge between an OAuth callback and a `users` row.
+// User provisioning — the bridge between a sign-in and a `users` row.
 // Every function takes the Drizzle client explicitly (not the auto-imported
 // `db`) so test/users.test.ts can drive it against real D1 in workerd.
 //
-// A verified email IS the account key: GitHub today and Google tomorrow on the
-// same address land on one row. That is only safe because the caller guarantees
-// verification (server/utils/auth.ts › completeOAuthSignIn); an unverified
-// address is an account-takeover primitive (register the victim's address at a
-// sloppy provider, inherit their subscription). Never relax that check.
+// A verified email is the account key here: GitHub today and Google tomorrow on
+// the same address land on one row. OAuth reaches this only after a
+// (provider, subject) lookup found nothing (server/utils/oauth-sign-in.ts). It is
+// only safe because the caller guarantees verification; an unverified address
+// is an account-takeover primitive (register the victim's address at a sloppy
+// provider, inherit their subscription). Never relax that check.
 
 import { eq } from 'drizzle-orm'
 import type { Attribution } from '#shared/utils/attribution'
@@ -20,6 +21,11 @@ import type { SignupContributor } from './signup-contributors'
 export interface OAuthProfile {
   /** Which button the user pressed. Stored for support ("how do I get back in?"). */
   provider: string
+  /**
+   * The provider's stable id for the person (server/utils/user-identities.ts).
+   * Set by OAuth callbacks, absent for magic link, whose identity is the email.
+   */
+  subject?: string
   /** Verified email — the account key. Callers MUST have checked verification. */
   email: string
   name?: string | null

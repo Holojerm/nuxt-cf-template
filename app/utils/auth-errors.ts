@@ -20,6 +20,9 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
   unverified_email:
     'That email address is unverified. Verify it with your provider, then try again.',
   provider_error: "The sign-in provider returned an error. That's usually temporary — try again.",
+  // Linking a sign-in method from /account outlived the session that started it.
+  link_session_expired:
+    'Your session ended before that sign-in method was linked. Sign in, then link it again from your account page.',
 
   // ── Magic links ────────────────────────────────────────────────────────────
   // Three separate sentences rather than one shrug, because the right next move
