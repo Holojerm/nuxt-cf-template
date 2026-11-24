@@ -6,217 +6,91 @@ Bring the forks of **nuxt-cf-template** up to date with the template and open a 
 
 $ARGUMENTS
 
-## Before anything else: establish the real bases
+A sync is a **layer bump**: re-pull the fork's vendored layers at one template commit. Template
+features live in `layers/<name>/` (billing, credentials, feedback, files, pwa, referral, social);
+the fork's `layers.lock.json` records which it vendors, at what commit and content hash, and
+`layers:check` (in `bun run ci`) enforces it. Only if non-layer template files also changed since
+the fork's `template.syncedSha` do you need "Core files". See `.claude/docs/patterns.md` › Vendored layers.
 
-This is the step that has bitten every previous run. Do it first, and do it with commands rather
-than memory — directory names, repo names, branch names, and default branches have all drifted
-before.
+## Establish the real bases
+
+Names and default branches have drifted before: derive them with commands, not memory.
+
+1. Map checkouts to repos with `git remote get-url origin`, not directory names. Skip any app
+   whose `fleet.json` › `template.repo` is not this template.
+2. `git fetch origin` right before reading any ref. Read the default branch from
+   `gh api repos/<owner>/<repo> -q .default_branch`.
+3. Work in a worktree off the fetched ref, never in the owner's checkout (dirty, unpushed commits):
+   `git -C <repo> worktree add <path> -b chore/template-sync origin/<default>`.
+4. If the remote already has `chore/template-sync`, never overwrite it: push to
+   `chore/template-sync-<short template sha>` and note in the PR that the old branch can go.
+5. Before pushing, `git rev-list --count chore/template-sync..origin/<default>` must be 0; if not, rebase.
+
+In a cloud session there is no `~/code`: find forks by `fleet.json` files naming this template,
+clone each fresh, and branch in place.
+
+## The layer bump
+
+Take the template's fetched default-branch head as the commit to record, then in the fork:
 
 ```bash
-cd ~/code
-for d in */; do
-  [ -d "$d/.git" ] || continue
-  r=$(git -C "$d" remote get-url origin 2>/dev/null | sed 's#.*github.com[:/]##;s#\.git$##')
-  [ -n "$r" ] || continue
-  printf '%-24s %-36s default=%s\n' "${d%/}" "$r" "$(gh api "repos/$r" -q .default_branch 2>/dev/null)"
-done
+bun run layers:pull --all --sha <template sha>
 ```
 
-Then, for each fork **and for the template itself**:
+- `--all` re-pulls every layer in the lock. Use `--sha`, never `--ref <sha>`: `--ref` changes what
+  the layer follows, so later pulls stay pinned to that commit.
+- Each layer directory is replaced whole and the lock gets the new `sha` and `hash`. The diff is
+  what the template changed; read it, don't edit it (hand edits fail `layers:check`). To change a
+  layer's behaviour, shadow it, use an extension point, or fix it in the template and re-pull.
+- Never add a layer the fork doesn't vendor (`layers:pull <name>` is a product decision), and a
+  fork's own `layers/<domain>/` is not in the lock and is never touched.
+- **Migrations.** Each fork numbers its own, so never copy a template migration. Update the fork's
+  `server/db/schema.ts` (it re-exports each layer's tables), run `bun run db:generate`, and check
+  the whole sequence applies in order (`cd .output && bunx wrangler d1 migrations apply <db> --local
+  --persist-to .wrangler/state`). If the base gained a migration meanwhile, regenerate; never
+  renumber by hand. The fork may already have ported the change: check its history first.
+- Set `fleet.json` › `template.syncedSha` to the commit you pulled at, not your checkout's `HEAD`.
+  Fleet's drift and `template_layer_behind` rules read it and the lock.
+- Run `bun run ci` once, last, before pushing (`layers:check`, `fleet:check`, `crons:check` are in it).
 
-1. `git fetch origin` — always, immediately before reading any ref.
-2. Read the default branch from the GitHub API, not from what you expect. One repo uses
-   `master`, the rest use `main`.
-3. Create the worktree from the **just-fetched remote ref**, and print the resulting SHA:
-   `git -C <repo> worktree add <path> -b chore/template-sync origin/<default>`
-4. Re-verify before you push: `git rev-list --count chore/template-sync..origin/<default>`.
-   If that is not 0, the base moved while you worked — **stop and rebase**, do not push.
+## Core files
 
-Facts that will be stale by the time you read this, and must be re-derived:
-
-- Local directory names do not always match repo names, and repos get renamed. Derive the
-  mapping from each checkout's `git remote -v`, never from the directory name.
-- Not every Nuxt app in `~/code` is a fork. Check for a template lineage before including one.
-- The owner has unpushed local commits and dirty working trees. Never build on local `HEAD`.
-
-**In a cloud session there is no `~/code`.** Find the forks by their manifest instead: search
-for `fleet.json` files whose `template.repo` names this template, attach each repository, and
-clone it fresh. A fresh clone has no owner working tree to protect, so branch in place rather
-than in a worktree. Everything else on this page still holds.
-
-**Check the remote for a leftover `chore/template-sync` before you push.** Two forks carried
-one from a sync weeks earlier, with commits no open PR owned. Never overwrite it: push to
-`chore/template-sync-<short template sha>` and say in the PR that the old branch can go.
-
-## Start from a three-way merge, not a file-by-file copy
-
-Forks are plain copies, so git sees no shared history, but the fork's `template.syncedSha` is
-exactly the merge base. Fetch that commit and template `main` into the fork's clone, then let
-git do the mechanical half without touching the working tree:
+Only if `git diff --stat <syncedSha>..<template sha> -- . ':!layers'` is non-empty. Forks are plain
+copies, but `syncedSha` is the merge base, so let git do the mechanical half:
 
 ```bash
-git merge-tree --write-tree --name-only --merge-base=<syncedSha> HEAD <template main>
+git merge-tree --write-tree --name-only --merge-base=<syncedSha> HEAD <template sha>
 git read-tree -m -u HEAD <the tree it printed>
 ```
 
-What is left is a list of real conflicts, usually ten to twenty files, instead of a hundred
-files to compare by eye. Then apply the policy below to the result before resolving anything:
-put the fork's own copy back for `README.md`, `bun.lock`, `fleet.json`, every migration, every
-`layers/` path and every `app-owned.json` path, and delete the empty directories the merge
-leaves behind (an empty `layers/<name>/` is registered as a Nuxt layer).
+Resolve the remaining conflicts after restoring the fork's own `README.md`, `bun.lock`,
+`fleet.json`, migrations, `layers/` paths and `app-owned.json` paths. Delete empty directories the
+merge leaves: an empty `layers/<name>/` registers as a Nuxt layer.
 
-**Read the fork's own history first.** In the last run five of seven forks had already
-hand-ported the rate-limit change and its migration in their own PRs. The sync then needed no
-migration at all, and "this fork is six commits behind" overstated the work several times over.
+- `app-owned.json` paths are the fork's by design: never overwrite them.
+- A path in `fleet.json` › `template.customized` is a declared divergence: port the change by
+  hand or say why not. Every other template-owned file should end byte-identical to the template;
+  fleet reports the rest as drift.
+- Leave out features the fork lacks. Pricing, gating and legal copy are the owner's calls (a
+  `/privacy` naming a processor the app doesn't use is wrong in a legal sense). Docs follow
+  layers: `.claude/docs/{billing,referral,credentials,mcp}.md` fail `mirror:check` without their
+  subsystem, so bring one only with the code it describes.
+- `requireAdmin()` assumes `role = 'admin'`; a fork with another role model needs a gate that fits.
+  Rewrite `robots.txt` and `sitemap.xml` for the fork's real public surface.
+- Run `bun run design:check`: NuxtUI v4 doesn't define shadcn names like `border-border`, so they
+  compile to nothing. Fix `AGENTS.md` too if it recommends them, or they grow back.
 
-## The rule that matters most
+## Verify and ship
 
-**Never modify the owner's working trees.** Do everything in `git worktree`s off the fetched
-remote branch. Their checkouts stay on whatever branch and dirty state they were already in.
+`bun run ci` is the floor. For runtime changes, boot the app (or `wrangler dev` on `.output`, with
+the same `--cwd` for migrations and server) and check the behaviour, e.g. status codes at the
+public, admin and gated boundaries. If something can't be verified, say so in the PR.
 
-## Scope: tailor per fork, don't bulk-copy
+The PR body leads with what was broken and what it cost, then what came over, what was left out
+and why, and how it was verified. Open it as a **draft**; run `gh pr ready` after the last push (a
+push to a queued PR dequeues it). A ready PR merges itself through the merge queue: never
+`gh pr merge` or `gh pr update-branch`, and don't poll checks. Keep it a draft, with the reason at
+the top, when it adds a migration, changes a setting production reads, or leaves an owner decision.
+`NUXT_FLEET_TOKEN` is set by the owner per fork: say so, never generate one.
 
-The template carries a full commercial SaaS stack. Most of it does not belong in most forks.
-Decide per fork from what the app actually is — read its README and AGENTS.md first — and say
-in the PR what you left out and why.
-
-A feature that would require you to invent product decisions is **out of scope**. Pricing tiers,
-what's gated behind a subscription, and legal copy describing a payment relationship that
-doesn't exist are the owner's calls. Shipping the template's `/terms` and `/privacy` into an app
-with no billing is worse than shipping nothing: a privacy policy naming a payment processor you
-don't use is inaccurate in a legally meaningful way.
-
-Docs follow the layers. `.claude/docs/billing.md`, `referral.md`, `credentials.md` and `mcp.md`
-each describe one optional subsystem and name symbols that only exist with it, so in a fork
-without that subsystem they fail `mirror:check`. Do not bring one over unless the fork has
-what it describes.
-
-Never overwrite a path in the template's `app-owned.json`: the fork owns it by design. A path in
-the fork's `fleet.json` › `template.customized` is a declared divergence: port the template's
-change into it by hand, or say why not. Every other template-owned file should end the sync
-byte-identical to the template; fleet's drift view counts the ones that are not.
-
-## Migrations: assume a collision
-
-Every fork has its own migration sequence. **Never copy a migration file from the template.**
-
-1. Edit `server/db/schema.ts` using that fork's own conventions (its `id()` / `timestamps`
-   helpers, its role vocabulary, its import style).
-2. Run `bun run db:generate` so drizzle-kit numbers it at the fork's next free index and writes
-   a matching snapshot.
-3. Verify the whole sequence applies in order, not just that the file exists:
-   `cd .output && bunx wrangler d1 migrations apply <db-name> --local --persist-to .wrangler/state`
-
-If the base branch gained a migration while you worked, yours must be **regenerated**, not
-renumbered by hand — the snapshot and `_journal.json` have to agree with the SQL.
-
-## Layers are pulled, never merged
-
-A vendored layer is replaced whole: `bun run layers:pull <name> --sha <template sha>`, with the
-same commit the sync is recording in `template.syncedSha`. Use `--sha`, not `--ref`: `--ref
-<sha>` rewrites what the layer follows, and the next `layers:pull --all` then stays pinned to
-that commit instead of going back to `main`.
-
-## Adapt, don't paste
-
-Copied files routinely need editing to fit the fork. Things that have needed it before:
-
-- **Auth/role vocabulary.** `requireAdmin()` assumes `role = 'admin'`. One fork uses
-  `owner | user`; another uses `role` for the practitioner's *professional* role, where setting
-  someone to 'admin' would lock them out of their own data. Read the fork's model and pick a
-  gate that fits — configured allowlist, different role value, whatever is coherent there.
-- **DB access.** The template uses the auto-imported `db`. Some forks use a `useDb()` accessor <!-- refs-check-ignore: names a dead API found in forks -->
-  and their own `Db` type. Match the fork.
-- **Bindings.** The template's example test asserts D1 + KV + R2. A fork that doesn't bind KV
-  needs that case replaced, not left red.
-- **Route lists.** `robots.txt` and `sitemap.xml` ship with the template's own page list. Rewrite
-  them for the fork's real public surface — and if the whole app is behind a login, say so and
-  list only what a signed-out crawler can actually see.
-
-## Run the design gate — it finds real bugs
-
-Copy `scripts/check-design-tokens.ts` early and run it. In previous runs it found the same class
-of defect in three separate forks: **shadcn class names that NuxtUI v4 does not define**, so they
-compile to nothing.
-
-- `text-foreground` inherits and looks fine — harmless, but dead.
-- `border-border` falls back to Tailwind v4's `currentColor`, rendering hairlines at full text
-  darkness.
-- `hover:text-foreground` is a hover state that does nothing.
-
-Before changing them, **measure**. Add a probe element in the running page and read
-`getComputedStyle` for both the dead class and its replacement, so the PR can state exactly which
-replacements are pixel-identical and which are visible fixes.
-
-Also check `AGENTS.md`. In at least one fork the file *recommended* those dead names as "NuxtUI's
-semantic color tokens" — the guidance was the cause, and fixing the classes without fixing the
-guidance would let them grow straight back.
-
-For genuine exceptions use `design-check-ignore`, and note the checker only looks at the same
-line or the one **directly** above. Canvas paint (Konva, Excalidraw) is a real exception —
-a `<canvas>` cannot read a CSS variable. Prefer hoisting scattered literals into one named
-palette module over sprinkling ignores.
-
-## The fleet contract
-
-The template ships three things the portfolio dashboard (`fleet`) depends on, and every sync
-PR must leave the fork with all of them working — see AGENTS.md › Fleet contract:
-
-1. **`fleet.json`** at the repo root, matching `wrangler.toml`. Write it from the fork's real
-   values (Worker names including `mcp/` if present, D1 `database_name` + `database_id`, KV
-   ids, R2 buckets, `[triggers] crons`), and set `stage` honestly — `live` only if the app has
-   users it would be bad to lose. Set `features` to what the fork actually kept: a fork with no
-   `users` table is `auth: false` and gets `/api/status` but not `/api/fleet` (both need
-   `NUXT_FLEET_TOKEN` since the template put `/api/status` behind it).
-2. **`template.syncedSha`** — the template `main` SHA this PR syncs to. This is how "how far
-   behind the template is this fork" is computed, so it must be the SHA you actually based the
-   sync on, not `HEAD` of whatever you had checked out.
-   **`template.customized`** lists the template files this fork changed on purpose. For every
-   file that differs from the template after the sync, either take the template's copy or add
-   the path here — the dashboard reports any differing file not on this list as seam drift.
-3. **The two gates in CI**: `scripts/check-fleet.ts` and `scripts/check-crons.ts`, with
-   `fleet:check` and `crons:check` in the fork's `ci` script (or its GitHub Actions workflow, if
-   that is what deploys it). Run both before opening the PR; `crons:check` in particular has
-   found a fork whose nightly backup had never once run.
-
-`/api/status`, `/api/fleet`, the ops spool (`ops_events`) and the
-`[observability]` block come across with the rest of the sync. `NUXT_FLEET_TOKEN` is a secret
-the owner sets per fork — say in the PR that it is needed, never generate one.
-
-## Verify, don't assume
-
-Every PR must be able to state a real result. `bun run ci` green is the floor, not the ceiling.
-
-- Boot the app and check the behavior you changed. Auth boundaries are cheap and high-value:
-  curl the public endpoint, the admin endpoint, and an ordinary gated one, and show the three
-  status codes.
-- Exercise limits for real (submit until you get the 429).
-- If a dev server won't start from a worktree, say so and find another route — building and
-  running `wrangler dev` against `.output` has worked. Note that `--persist-to` resolves relative
-  to `--cwd`, so migrations and the server must use the *same* invocation shape or the worker
-  reads an empty database.
-- If something genuinely cannot be verified, **write that in the PR** along with what covers it
-  instead. Do not imply more verification than you did.
-
-## Commits and PRs
-
-Split by intent so review is possible: dependency bumps, formatter churn from an oxfmt bump, and
-each feature as its own commit. Formatter churn especially — it touches dozens of untouched files
-and must not be mixed into a change anyone needs to read.
-
-Write commit messages and PR bodies that lead with **what was broken and what it cost**, not a
-list of files. Quantify (`75 dead classes`, `104/104 tests`). Keep an explicit section for what
-you deliberately left out and why.
-
-**Ready or draft.** Most forks queue a ready PR themselves and merge it when green, so a ready
-PR is a merge. Open it as a draft when the sync adds a migration, changes a variable or
-setting production reads, or leaves a decision for the owner, and say which at the top of the
-PR. A fork whose Mergify config has no auto-queue rule posts a "Queue this pull request"
-checkbox instead; say so, because a ready PR there merges only when someone ticks it.
-
-## Finally
-
-- Restore anything you touched outside the worktrees (e.g. a temporary `.claude/launch.json`
-  entry) and confirm it matches the original.
-- Report the merge state of every PR you opened, and flag any collision you can see coming
-  between a PR and the owner's uncommitted local work.
+Report each PR's state and any collision with the owner's uncommitted local work.
