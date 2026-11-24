@@ -15,6 +15,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 name = "my-app"
+# Uncomment and fill in when your login can see more than one Cloudflare account:
+# non-interactive wrangler cannot choose between them.
+# account_id = "YOUR_ACCOUNT_ID"
 compatibility_date = "2025-09-01"
 # `queue_consumer_wait_for_wait_until` is not decoration — it PINS today's
 # default, and the email consumer's correctness rests on it.
