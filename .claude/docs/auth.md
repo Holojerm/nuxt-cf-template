@@ -97,22 +97,67 @@ The watermark is the per-user lever; `runtimeConfig.session.maxAge` in
 `nuxt.config.ts` (30 days) is the ceiling on every session regardless, so a
 leaked cookie cannot outlive it.
 
-**Identity is the verified email address.** Signing in with a magic link today
-and Google tomorrow on the same address lands on the same account by design.
-That's only safe because every caller of `establishSession()` passes an explicit
-`emailVerified` — an unverified address would be an account-takeover primitive.
-Never default that flag to `true` when adding a provider. The magic-link path is
-the one place where that flag is our own evidence rather than a third party's: the
-token was mailed to that address and came back.
+**Identity is a provider account first, then the verified email address.**
+`establishSession()` runs every sign-in through `signInOAuthUser()`
+(`server/utils/oauth-sign-in.ts`), in this order:
+
+1. `(provider, subject)` in `user_identities` → that account, whatever address
+   the provider reports this time.
+2. A verified email matching an account → that account, and the identity is
+   recorded on it.
+3. A verified email matching nothing → a new account, identity recorded.
+
+An unverified or missing address never reaches 2 or 3, so it can neither match
+nor create an account. Every caller passes an explicit `emailVerified`; never
+default it to `true` when adding a provider. Magic link (and the credentials
+layer) carry no `subject`, so they are step 2 and 3 only: their identity is the
+email, and the magic-link token coming back is our own evidence the address is
+theirs. Account deletion deletes the `user_identities` rows in its batch (the
+`users` row is kept as a tombstone, so the FK cascade never fires), and the
+export lists them as `signInMethods`.
 
 <!-- forkless:oauth:start -->
+Which claim counts as verified, per provider:
+
+| Provider | `subject` | Verified when |
+| --- | --- | --- |
+| Google | `sub` | userinfo `email_verified === true` |
+| Apple | id_token `sub` | id_token `email_verified` is `true` or `"true"`. A Hide My Email relay address is verified too, so it can create an account, but it only matches an account that already holds that relay address. |
+| GitHub | numeric `id` (never `login`, which can be renamed and re-claimed) | the primary address from `/user/emails` with `verified`, or the public profile address (which GitHub requires to be verified) |
+
+**Linking another sign-in method.** A signed-in person adds a provider from
+/account (`app/components/Account/SignInMethods.vue`). `POST
+/api/account/identities/link` (session required) sets the `identity-link`
+cookie: the session's user id, the provider and the session's `issuedAt`,
+HMAC-signed with `sessionPassword`, ten minutes, HttpOnly, `SameSite=None`,
+`Path=/api/auth/`. It has to be `None`: Apple's callback is a cross-site form
+POST, which carries neither the Lax session cookie nor a Lax intent. The
+callback (`finishOAuth()` in `server/utils/oauth-callback.ts`) reads and
+deletes it and attaches the provider account to the user it names, never to an
+account found by email. What makes a cross-site callback useless is
+nuxt-auth-utils' OAuth `state` check, not the cookie: a forged callback has no
+code with a `state` matching this browser's HttpOnly `nuxt-auth-state`.
+
+- Refused, with a plain message on /account, if the provider account already
+  signs in to another account (`?link_error=taken`). Nothing is merged or moved.
+- Refused (`/login?error=link_session_expired`) if the starting session was
+  revoked or the account deleted since (`checkSession()`), or if the callback
+  arrives with a different session user.
+- Voided by sign-out, and by any plain sign-in starting in the same browser
+  (`withLinkAwareStart()`), so an abandoned link cannot catch the next person.
+- No unlink. A provider whose address matches the account would be re-linked by
+  its next sign-in anyway, and the case where unlinking means something (a
+  hidden Apple address) is the one where it can lock the person out.
+
 Adding a provider is three steps: add the `oauth.<name>` keys to
 `nuxt.config.ts`, write `server/api/auth/<name>.get.ts` mapping the provider's
-user shape onto `OAuthProfile`, and add a row to `server/api/auth/providers.get.ts`
-so `/login` renders the button. (Apple is the exception to step two twice over:
-its callback is a cross-site form POST, so that route is `apple.ts` with no
-method suffix, and it needs `NUXT_OAUTH_APPLE_REDIRECT_URL` because its handler
-does not fall back to the request origin the way the others do.)
+user shape onto `OAuthProfile` (with its stable `subject`) and ending in
+`finishOAuth()` / `failOAuth()`, wrapped in `withLinkAwareStart()`, and add a row to
+`server/utils/auth-providers.ts` so `/login` and /account render the button.
+(Apple is the exception to step two twice over: its callback is a cross-site
+form POST, so that route is `apple.ts` with no method suffix, and it needs
+`NUXT_OAUTH_APPLE_REDIRECT_URL` because its handler does not fall back to the
+request origin the way the others do.)
 <!-- forkless:oauth:end -->
 
 **Never put a secret in a URL a browser will keep.** Two flows here have to hand

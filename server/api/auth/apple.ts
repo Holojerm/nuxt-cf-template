@@ -36,14 +36,17 @@
 // diagnose. server/utils/auth-providers.ts therefore treats a missing redirect
 // URL as "not configured" so the button never renders at all.
 //
-// ── Hide My Email is a real address, and a separate account ──────────────────
+// ── Hide My Email: matched by Apple's `sub`, linked from /account ────────────
 // Apple lets people sign in with a relay address (`…@privaterelay.appleid.com`)
-// that forwards to their real inbox. Identity here is the verified email, so
-// that relay address becomes the account key — and the same person signing in
-// with Google tomorrow, on the address they actually read, lands on a *different*
-// account. That is inherent to Sign in with Apple rather than something this
-// file can fix; the fix, if a fork needs one, is an explicit "link another
-// sign-in method" flow on the account page, not loosening the identity rule.
+// that forwards to their real inbox. Apple's `sub` is the identity
+// (user_identities, server/utils/oauth-sign-in.ts): a returning Apple sign-in
+// finds its account by `sub` whatever address it reports. A FIRST Apple sign-in
+// with a hidden address matches no account by email, so it creates a new one,
+// which is right: nothing proves it is the person behind some other account.
+// Someone who already has an account (from Google, say) and wants Apple to reach
+// it links Apple from /account while signed in (server/utils/identity-link.ts);
+// after that Apple's `sub` finds that account. A relay address is never matched
+// to a real one by guessing, and the identity rule is not loosened for it.
 // Transactional mail still reaches them: Apple forwards it, provided the sending
 // domain is registered in Apple's private email relay service.
 //
@@ -54,11 +57,12 @@
 // /dashboard or / rather than back on that page. Documented rather than fixed:
 // the alternative is relaxing that cookie to SameSite=None for every provider,
 // which trades a real CSRF property for a redirect convenience on one of them.
+// The link flow has the same problem with the session cookie and does not relax
+// it either: it carries its own short-lived signed cookie (identity-link.ts).
 
 import { z } from 'zod'
 
-import { completeOAuthSignIn, redirectToLoginError } from '../../utils/auth'
-import { logEvent } from '../../utils/log'
+import { failOAuth, finishOAuth, withLinkAwareStart } from '../../utils/oauth-callback'
 import { h3Event } from '../../utils/request-event'
 
 /**
@@ -104,8 +108,8 @@ function safeJsonParse(raw: string): unknown {
  * Apple's `email_verified` claim, read rather than assumed.
  *
  * It has shipped as both a boolean and the string `"true"` over the life of the
- * API, and the difference is not cosmetic here: identity is the verified email
- * address (server/utils/users.ts), so `Boolean("false")` — which is `true` —
+ * API, and the difference is not cosmetic here: a verified email matches an
+ * existing account (server/utils/oauth-sign-in.ts), so `Boolean("false")` — which is `true` —
  * would turn a stringly-typed claim into an account-takeover primitive. Only the
  * two spellings of an affirmative pass; everything else, including `undefined`,
  * is a no.
@@ -114,30 +118,35 @@ function isVerified(claim: unknown): boolean {
   return claim === true || claim === 'true'
 }
 
-export default defineOAuthAppleEventHandler({
-  // Requesting `email` is what makes Apple use form_post at all, and the address
-  // is the account key, so it is not optional. `name` is requested because the
-  // first authorization is the only chance to get one.
-  config: { scope: 'name email' },
+export default withLinkAwareStart(
+  defineOAuthAppleEventHandler({
+    // Requesting `email` is what makes Apple use form_post at all, and a new
+    // account needs an address, so it is not optional. `name` is requested
+    // because the first authorization is the only chance to get one.
+    config: { scope: 'name email' },
 
-  async onSuccess(event, { user, payload }) {
-    return completeOAuthSignIn(h3Event(event), {
-      profile: {
-        provider: 'apple',
-        // The address comes from the verified id_token, not from the form body.
-        // The `user` field is unsigned data the browser POSTed and could have
-        // edited; the payload was signed by Apple and checked against their JWKS.
-        email: payload.email ?? '',
-        name: readAppleName(user),
-        // Apple exposes no avatar. Nothing to map, and nothing to invent.
-        avatarUrl: null,
-      },
-      emailVerified: isVerified(payload.email_verified),
-    })
-  },
+    async onSuccess(event, { user, payload }) {
+      return finishOAuth(h3Event(event), {
+        profile: {
+          provider: 'apple',
+          // Both from the verified id_token, never from the form body. The
+          // `user` field is unsigned data the browser POSTed and could have
+          // edited; the payload was signed by Apple and checked against their JWKS.
+          subject: typeof payload.sub === 'string' ? payload.sub : undefined,
+          email: payload.email ?? '',
+          name: readAppleName(user),
+          // Apple exposes no avatar. Nothing to map, and nothing to invent.
+          avatarUrl: null,
+        },
+        // A relay address carries `email_verified` like any other: Apple
+        // verified the forwarding target, so it can create an account, but it
+        // matches only an account that already holds that same relay address.
+        emailVerified: isVerified(payload.email_verified),
+      })
+    },
 
-  onError(event, error) {
-    logEvent('error', 'oauth_failed', { provider: 'apple', message: error.message })
-    return redirectToLoginError(h3Event(event), 'provider_error')
-  },
-})
+    onError(event, error) {
+      return failOAuth(h3Event(event), 'apple', error)
+    },
+  }),
+)

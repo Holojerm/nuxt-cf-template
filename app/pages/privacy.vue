@@ -85,9 +85,10 @@ useSeo({
       <section class="flex flex-col gap-3">
         <h2 class="text-2xl text-highlighted">What we collect</h2>
         <p>
-          <strong class="text-highlighted">Account data.</strong> When you sign in with GitHub or
-          Google, we receive and store your verified email address, display name, and avatar URL. We
-          never receive your password for that provider.
+          <strong class="text-highlighted">Account data.</strong> When you sign in with Apple,
+          Google or GitHub, we receive and store your verified email address, display name, avatar
+          URL, and that provider's ID for your account, so it keeps signing you in to the same
+          account. We never receive your password for that provider.
         </p>
         <p>
           <strong class="text-highlighted">Billing data.</strong> Stripe, which sells to you through

@@ -8,9 +8,13 @@
 // out. nuxt-auth-utils' session cookie is SameSite=lax, so a cross-site POST
 // won't carry it either.
 
+import { clearLinkIntentCookie, hasLinkIntentCookie } from '../../utils/identity-link'
+
 export default defineEventHandler(async (event) => {
   const session = await getUserSession(event)
   await clearUserSession(event)
+  // A half-finished "link a sign-in method" must not outlive the person who started it.
+  if (hasLinkIntentCookie(event)) clearLinkIntentCookie(event)
 
   // `runtimeConfig.captureSignOut` (default true) lets an app that collects as
   // little analytics as it can leave this one event out.

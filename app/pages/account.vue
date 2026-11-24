@@ -285,6 +285,8 @@ useSeo({
       </template>
     </UCard>
 
+    <AccountSignInMethods />
+
     <!-- Plan -->
     <UCard>
       <template #header>

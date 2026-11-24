@@ -18,8 +18,9 @@ const timestamps = {
 
 // Users — baseline table, extend with your own columns.
 //
-// `email` is the account key: sign-in links providers by verified email rather
-// than minting a row per provider (see server/utils/users.ts). `provider` is
+// `email` is the account key for magic link, and the fallback match for OAuth:
+// a provider account is matched by `user_identities` first, then by verified
+// email (see server/utils/users.ts). `provider` is the first sign-in method,
 // support context only, never an authorization input.
 export const users = sqliteTable(
   'users',
@@ -68,6 +69,39 @@ export const users = sqliteTable(
     // "How many people used my code", read on every /account referral-card view;
     // unindexed that is a full users scan. Not unique: many accounts share a code.
     index('users_referred_by_idx').on(table.referredBy),
+  ],
+)
+
+// User identities — one row per OAuth account that signs in to a user
+// (server/utils/user-identities.ts). Sign-in matches (provider, subject) before
+// it falls back to the verified email, so an Apple account behind a hidden
+// relay address still reaches the account it was linked to. Magic link has no
+// row: its identity is the account email itself.
+//
+// `subject` is the provider's stable id for the person (Google and Apple `sub`,
+// GitHub's numeric id), never an address: addresses change and Apple hides them.
+// `email` is what the provider reported when the row was written, kept so the
+// account page can say which Apple or Google account is linked. Cascade only
+// matters to tests: deletion tombstones the users row, so account.ts deletes
+// these rows itself.
+export const userIdentities = sqliteTable(
+  'user_identities',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    subject: text('subject').notNull(),
+    email: text('email'),
+    ...timestamps,
+  },
+  (table) => [
+    // One owner per provider account: the index is what refuses a second link.
+    uniqueIndex('user_identities_provider_subject_idx').on(table.provider, table.subject),
+    index('user_identities_user_id_idx').on(table.userId),
   ],
 )
 
@@ -387,6 +421,7 @@ export const rateLimits = sqliteTable(
 // Type exports
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
+export type UserIdentity = typeof userIdentities.$inferSelect
 export type LifecycleSend = typeof lifecycleSends.$inferSelect
 export type EmailSubscriber = typeof emailSubscribers.$inferSelect
 export type AnnouncementRun = typeof announcementRuns.$inferSelect

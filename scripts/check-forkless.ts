@@ -189,12 +189,22 @@ const MAGIC_LINK_AND_OAUTH = [
   'server/api/auth/github.get.ts',
   'server/api/auth/providers.get.ts',
   'server/utils/auth-providers.ts',
+  'server/utils/oauth-callback.ts',
+  'server/api/account/identities',
+  'app/components/Account/SignInMethods.vue',
   'test/auth-providers.test.ts',
+  'test/oauth-callback.test.ts',
   'app/pages/login.vue',
   'app/pages/auth/verify.vue',
 ]
 const credentialsOnly = (dir: string) => {
   remove(dir, ...MAGIC_LINK_AND_OAUTH)
+  edit(
+    dir,
+    'app/pages/account.vue',
+    (source) => source.replace('    <AccountSignInMethods />\n\n', ''),
+    'the `<AccountSignInMethods />` line',
+  )
   edit(
     dir,
     'nuxt.config.ts',
