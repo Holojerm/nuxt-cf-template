@@ -10,10 +10,11 @@ import {
   MCP_BUILD_COMMAND,
   MCP_DEPLOY_COMMAND,
   MCP_ROOT,
-  branchTriggerState,
   desiredBranchTrigger,
   desiredBuild,
+  desiredProductionTrigger,
   isCurrent,
+  triggerState,
   type BuildConfig,
   type Trigger,
 } from '../scripts/lib/mcp-build'
@@ -162,15 +163,59 @@ describe('the MCP worker’s own Workers Build', () => {
 
     it('knows a missing trigger from a drifted one', () => {
       const stored: Trigger = { ...want, trigger_uuid: 't-1', root_directory: '/mcp' }
-      expect(branchTriggerState([], want)).toEqual({ current: false })
-      expect(branchTriggerState([stored], want)).toEqual({ current: true, uuid: 't-1' })
-      expect(branchTriggerState([{ ...stored, deploy_command: 'bun run deploy' }], want)).toEqual({
+      expect(triggerState([], want)).toEqual({ current: false })
+      expect(triggerState([stored], want)).toEqual({ current: true, uuid: 't-1' })
+      expect(triggerState([{ ...stored, deploy_command: 'bun run deploy' }], want)).toEqual({
         current: false,
         uuid: 't-1',
       })
-      expect(branchTriggerState([{ ...stored, branch_excludes: [] }], want)).toEqual({
+      expect(triggerState([{ ...stored, branch_excludes: [] }], want)).toEqual({
         current: false,
         uuid: 't-1',
+      })
+    })
+
+    // The API has no call that creates a build configuration (POST /builds/workers
+    // is refused with 12002): a trigger on the production branch is what makes one.
+    describe('the production trigger', () => {
+      const production = desiredProductionTrigger({
+        mcpName: 'my-app-mcp',
+        mcpTag: 'tag-mcp',
+        build,
+        appTriggers: APP_TRIGGERS,
+      })
+
+      it('deploys the production branch from mcp/, with the app’s repository and token', () => {
+        expect(production).toEqual({
+          external_script_id: 'tag-mcp',
+          repo_connection_uuid: 'conn-1',
+          build_token_uuid: 'token-1',
+          trigger_name: 'my-app-mcp-main',
+          build_command: MCP_BUILD_COMMAND,
+          deploy_command: MCP_DEPLOY_COMMAND,
+          root_directory: MCP_ROOT,
+          branch_includes: ['main'],
+          branch_excludes: [],
+          path_includes: ['*'],
+          path_excludes: [],
+          build_caching_enabled: true,
+        })
+      })
+
+      it('finds one made by hand under another name, and leaves the branch trigger alone', () => {
+        const byHand: Trigger = {
+          ...production,
+          trigger_uuid: 't-prod',
+          trigger_name: 'tag-mcp',
+          root_directory: '/mcp',
+        }
+        const branch: Trigger = { ...want, trigger_uuid: 't-1' }
+        expect(triggerState([branch, byHand], production)).toEqual({
+          current: true,
+          uuid: 't-prod',
+        })
+        expect(triggerState([branch], production)).toEqual({ current: false })
+        expect(triggerState([branch, byHand], want)).toEqual({ current: true, uuid: 't-1' })
       })
     })
   })

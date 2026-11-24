@@ -162,9 +162,11 @@ app's own branch trigger skips. Its deploy command is an `echo`: a preview versi
 would run with the production database and the production OAuth store. Previews stay off, and
 with them off Cloudflare builds no other branch unless such a trigger exists.
 
-Two things the Builds API does that its reference does not say, both handled by the script:
-creating a build stores the production settings and drops the branch settings sent with them, and
-the first write of the branch settings must be complete. Build variables are merged, not replaced,
+The Builds API has no call that creates a Worker's build configuration (`POST /builds/workers` is
+refused with `12002 Invalid request body`). The configuration appears once the Worker has a trigger
+on the production branch, so the script creates that trigger (`<worker>-main`, as Cloudflare names
+the app's) with `POST /builds/triggers`, then writes the branch settings with
+`PATCH /builds/workers/<tag>`. The trigger leaves those unset, and their first write must be complete. Build variables are merged, not replaced,
 so the script never removes one a fork set by hand.
 
 The build has no watch paths on purpose: a worker left behind an app deploy reads a schema that
