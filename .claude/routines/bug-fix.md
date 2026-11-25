@@ -2,7 +2,7 @@
 schedule: "0 12 * * *"
 gate: |
   Run `gh issue list --state open --label bug --limit 20 --search "-label:needs-owner -label:needs-more-info -linked:pr" --json number --jq '.[].number'`. Empty output means nothing to do.
-model: claude-opus-5-5
+model: opus
 connectors: [github]
 tier: 2
 enabled: false

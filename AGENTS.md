@@ -244,6 +244,8 @@ bun run brand:check   # Fail when those generated files no longer match the mark
 bun run seo:check     # Fail on pages that bypass useSeo() or aren't declared public/noindex
 bun run fleet:check   # Fail when fleet.json stops matching wrangler.toml (names, binding ids, crons)
 bun run crons:check   # Fail when [triggers] crons and nitro.scheduledTasks disagree, or a task has no file
+bun run routines:check # Fail when a routine pins a model ID instead of a tier, or .claude/routines/models.json is malformed
+bun run routines:models # Compare models.json with the newest model per tier (frontier-terminal's catalog); --write moves them
 bun run methods:check # Fail when a get/head/delete server route reads a request body (hangs on Workers)
 bun run mcp:check     # Fail when an MCP tool lacks a title or annotation hint, or mcp/listing.json contradicts the repo
 bun run forkless:check # Build forks without billing / referral / lifecycle email in a temp copy; the layer,
@@ -261,7 +263,7 @@ bun seed              # Seed dev DB via bun:sqlite (writes to .data/db/sqlite.db
 bun run rename <name> # Rewrite the `my-app` placeholder across wrangler.toml, package.json,
                       # .mcp.json.example, fleet.json and mcp/ (its listing included) — every occurrence, in one go
 bun run ci            # Every gate, concurrently (scripts/ci.ts): format (writes; checks in CI), email:build, lint,
-                      # design/brand/seo/fleet/crons/methods/mcp, migrations:check (schema.ts vs migrations, expand-only),
+                      # design/brand/seo/fleet/crons/routines/methods/mcp, migrations:check (schema.ts vs migrations, expand-only),
                       # typecheck, test, build. Workers Builds runs this on non-production branches (the PR
                       # gate; production builds run typecheck + build only). NO browser suites: that image cannot
                       # launch Chromium (see Gotchas). CI_SERIAL=1 runs the gates one at a time.

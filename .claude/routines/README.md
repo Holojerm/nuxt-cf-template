@@ -135,7 +135,7 @@ events: [issues.opened]        # optional: GitHub events that also start a run
 fire: fleet                    # optional: who calls this routine's API trigger
 gate: |                        # optional: one check run first; nothing to do ends the run
   Run `…`. Empty output means nothing to do.
-model: claude-sonnet-5-5
+model: sonnet                  # a tier: opus, sonnet or haiku (see Models, below)
 connectors: [github]           # claude.ai connectors this routine needs
 enabled: false                 # keep false; enable explicitly after sync
 scope: fleet                   # optional: one all-repos routine runs this for every fork
@@ -153,6 +153,26 @@ skips the definition so forks don't grow a duplicate per repo.
 
 …followed by a `## Purpose` and `## Instructions` section. Then `/routines sync`. Every routine
 must follow the operating rules in `_shared.md` (the pointer prompt enforces reading it first).
+
+## Models
+
+A definition names a tier (`model: opus`, `sonnet` or `haiku`), never a model ID.
+[`models.json`](models.json) maps each tier to the exact ID, and `/routines sync` writes that
+ID into the live routine: the routines API refuses `opus` and `sonnet` as model names, so the
+table is the one place a version lives. `bun run routines:check` (part of `bun run ci`) fails
+on a definition that pins an ID.
+
+Opus goes to the routines that write or ship code with nobody watching (`bug-fix`,
+`ops-triage`, `roadmap-build`, `template-sync`) and to `growth-review`, which decides what
+ships. Everything else, triage, drafting and reporting, runs on Sonnet.
+
+**Keeping it current.** `bun run routines:models` compares the table with the newest model
+per tier on frontier-terminal's public price catalog (`models.json` › `source`), which never
+offers a model Anthropic has removed. The `routine-models` workflow runs it every Monday in
+the template and opens a `needs-owner` issue when a tier is behind. The fix is
+`bun run routines:models --write` and a PR. Forks take the table on their next template-sync,
+and `/routines sync` in each repo moves the live routines onto it: nothing else changes a live
+routine's model.
 
 ## Safety model
 

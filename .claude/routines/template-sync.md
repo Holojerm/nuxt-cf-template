@@ -1,6 +1,6 @@
 ---
 schedule: "0 14 * * 3"
-model: claude-opus-5-5
+model: opus
 connectors: [github]
 tier: 2
 enabled: false
@@ -33,6 +33,8 @@ is a draft the owner readies.
    - never copy a migration file;
    - never overwrite an `app-owned.json` path;
    - port into `template.customized` paths by hand, or say why not;
+   - a fork's own routine definitions name a model tier (`model: opus`, `sonnet` or `haiku`),
+     not an ID, like the template's: convert any that pin one, or `bun run routines:check` fails;
    - set `template.syncedSha` to the template commit you actually synced to.
 5. `bun install --frozen-lockfile && bun run ci` must pass. Open the PR with the sections
    `sync-forks.md` asks for: what was broken and what it cost, what came over, what was

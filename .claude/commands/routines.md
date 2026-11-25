@@ -71,7 +71,7 @@ For each other definition file, create or update the routine in the user's accou
   Leave out step 0 when the definition has no `gate`.
 
 - **job_config**: `environment_id` from the schedule skill's environment list (ask the user if
-  more than one), `session_context.model` from frontmatter, `sources` = the repo URL,
+  more than one), `session_context.model` = `.claude/routines/models.json` › `tiers` › the frontmatter `model` tier (an exact ID; the API refuses a bare `opus` or `sonnet`), `sources` = the repo URL,
   `allowed_tools`: `["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch"]`.
 - **Connectors**: map frontmatter `connectors` to the user's connected claude.ai connectors and
   attach via `mcp_connections`. If a required connector isn't connected, still create the
@@ -91,7 +91,7 @@ and each routine's link `https://claude.ai/code/routines/<id>`.
 
 List account routines matching the `<repo>-` prefix alongside the definition files: enabled
 state, schedule, last/next run, and any drift (definition file changed since last sync, missing
-routine, orphaned routine). Suggest `sync` if drifted. Show `scope: fleet` definitions as
+routine, orphaned routine, or a live model that is not the ID `models.json` now gives its tier). Suggest `sync` if drifted. Show `scope: fleet` definitions as
 fleet-wide, with the `all-repos-<file-stem>` routine's state when it is listed.
 
 ## enable <name> / disable <name>

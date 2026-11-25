@@ -1,6 +1,6 @@
 ---
 schedule: "0 15 * * 2,4"
-model: claude-sonnet-5-5
+model: sonnet
 connectors: [github]
 enabled: false
 tier: 3
