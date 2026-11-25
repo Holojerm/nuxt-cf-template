@@ -1,0 +1,90 @@
+# Routine models — is `.claude/routines/models.json` behind the newest model in a tier?
+#
+# Every Monday, in the template only, run `bun run routines:models --check`
+# against frontier-terminal's public price catalog. When a tier is behind, open
+# (or update) one issue labelled `needs-owner`, which is the form every routine
+# escalation takes and what the fleet dashboard turns into a finding.
+#
+# It opens an issue, not a PR, on purpose: a PR pushed with this workflow's
+# GITHUB_TOKEN starts no workflow runs, so its required checks would never
+# report and the merge queue would never take it. The fix is one command
+# (`bun run routines:models --write`) in any session, and a PR from there gets
+# checked and queued like any other.
+#
+# Forks inherit this file through template-sync and skip it: they take the
+# table from the template, so one alert for the whole fleet is enough.
+
+name: Routine models
+
+on:
+  schedule:
+    - cron: '41 9 * * 1' # Mondays 09:41 UTC
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Only in the template
+        id: scope
+        run: |
+          repo=$(jq -r '.template.repo // ""' fleet.json)
+          if [ "${repo,,}" = "${GITHUB_REPOSITORY,,}" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "A fork (template is ${repo:-unset}): the template raises this alert."
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.scope.outputs.run == 'true'
+        with:
+          bun-version-file: package.json
+
+      # The script needs no dependencies, so no install. Exit 1 means a tier is
+      # behind; exit 2 means the source could not be read, which fails the run.
+      - name: Compare
+        id: compare
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          set +e
+          bun run scripts/routine-models.ts --check > report.txt 2>&1
+          code=$?
+          cat report.txt
+          [ "$code" -eq 2 ] && exit 1
+          echo "behind=$([ "$code" -eq 1 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the issue
+        if: steps.compare.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create needs-owner --color B60205 2>/dev/null || true
+          gh label create routine-models --color 5319E7 \
+            --description "models.json is behind the newest model" 2>/dev/null || true
+          {
+            echo "A newer model is out for at least one tier the routines use."
+            echo
+            echo '```'
+            cat report.txt
+            echo '```'
+            echo
+            echo "**To fix:** in any session, run \`bun run routines:models --write\` and open a PR."
+            echo "Forks take the table on their next template-sync; then run \`/routines sync\`"
+            echo "in each repo to move the live routines (nothing else updates a live routine)."
+            echo
+            echo "_Opened by the \`routine-models\` workflow; it updates this issue while the tier stays behind._"
+          } > body.md
+          existing=$(gh issue list --label routine-models --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file body.md
+          else
+            gh issue create --title "routine-models: a newer model is out" \
+              --label needs-owner --label routine-models --body-file body.md
+          fi
