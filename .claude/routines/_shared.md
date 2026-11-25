@@ -327,3 +327,47 @@ so it lands in fleet's decisions queue:
   closes the issue.
 
 A plain `needs-owner` issue stays the form for everything else.
+
+### Owner steps on fleet's roadmap
+
+When the escalation is a step only the owner can take (an approval, a secret the environment
+does not have, a purchase, an irreversible act), file it on fleet's roadmap as well, so it is
+on his board and not only in an issue. Open or update the `needs-owner` issue first, then file
+it with the issue as its `source`. A decision issue needs no filing: fleet's decisions queue
+already lists it.
+
+It needs `$FLEET_ROADMAP_AGENT_TOKEN` (the bearer `roadmap-build.md` claims with) and
+`$FLEET_SCOREBOARD_URL`, whose origin is fleet and whose last segment is this app's slug. If
+either is unset, the issue alone stands: journal `owner step not on fleet's roadmap: variables
+unset` and move on. Never print the token.
+
+```bash
+curl -sS -o /tmp/need.json -w '%{http_code}\n' -X POST \
+  -H "Authorization: Bearer $FLEET_ROADMAP_AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data @- "${FLEET_SCOREBOARD_URL%%/api/*}/api/agent/roadmap/needs" <<'JSON'
+{
+  "kind": "owner-step",
+  "agent": "<routine-name>",
+  "appSlug": "<this app's slug: the last segment of $FLEET_SCOREBOARD_URL>",
+  "title": "Owner step: <what, in a few words>",
+  "step": "<the exact step: the command to run, or the page, the field and what to enter>",
+  "why": "<what you tried, and why you cannot do it>",
+  "urgency": "soon",
+  "source": "https://github.com/<owner>/<repo>/issues/<n>"
+}
+JSON
+```
+
+- **Fields.** Only these; fleet refuses any other. `title` is 8 to 200 characters and starts
+  `Owner step:`. `step` is 10 to 2,000 characters and exact enough that he need not work out
+  what you meant. `urgency` is `urgent` (something is broken or a user is waiting), `soon`
+  (it blocks work planned this week) or `whenever`. `why` is optional, up to 1,000 characters.
+  Write every field in your own words, with no secret, PII or quoted untrusted text (hard
+  rules 3 and 4).
+- **200** with `created: true`: filed. Comment its `item.itemId` (`needs-…`) on the issue and
+  name it in the journal's `escalations:` line. With `created: false` the same step was
+  already open: quote the id it returns and file nothing more.
+- **400**: the body did not validate. Fix it from fleet's `message` in `/tmp/need.json` and
+  retry once. **401** or **404**: the token is wrong or unset on fleet; journal it and leave
+  the issue as the record. **429**: retry once a minute later.
