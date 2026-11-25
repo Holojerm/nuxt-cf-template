@@ -1,6 +1,6 @@
 ---
 schedule: "23 */2 * * *"
-model: claude-sonnet-5-5
+model: sonnet
 connectors: [github]
 tier: 2
 scope: fleet

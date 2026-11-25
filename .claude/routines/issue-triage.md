@@ -3,7 +3,7 @@ events: [issues.opened, issues.reopened] # GitHub events that start a run
 schedule: "0 11 * * 1" # weekly sweep for comments and missed events
 gate: |
   Run `gh issue list --state open --limit 20 --search "updated:>=$(date -u -d '8 days ago' +%F) -label:growth-bet -label:growth-idea -label:decision" --json number --jq '.[].number'`. Empty output means nothing to do.
-model: claude-sonnet-5-5
+model: sonnet
 connectors: [github]
 enabled: false
 ---

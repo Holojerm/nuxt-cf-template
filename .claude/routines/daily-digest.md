@@ -1,6 +1,6 @@
 ---
 schedule: "0 22 * * *"
-model: claude-sonnet-5-5
+model: sonnet
 connectors: [gmail, github]
 enabled: false
 operator: skip # fleet's weekly portfolio digest replaces it on an operator repo

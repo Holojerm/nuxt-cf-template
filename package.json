@@ -36,6 +36,8 @@
     "seo:check": "bun run scripts/check-seo.ts",
     "fleet:check": "bun run scripts/check-fleet.ts",
     "crons:check": "bun run scripts/check-crons.ts",
+    "routines:check": "bun run scripts/check-routine-models.ts",
+    "routines:models": "bun run scripts/routine-models.ts",
     "methods:check": "bun run scripts/check-method-bodies.ts",
     "layers:pull": "bun run scripts/layers-pull.ts",
     "layers:check": "bun run scripts/check-layers.ts",

@@ -40,6 +40,7 @@ const cheap = [
   'seo:check',
   'fleet:check',
   'crons:check',
+  'routines:check',
   'methods:check',
   'mcp:check',
   'layers:check',
