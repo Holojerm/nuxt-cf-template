@@ -19,6 +19,7 @@ name: Routine models
 on:
   schedule:
     - cron: '41 9 * * 1' # Mondays 09:41 UTC
+  # Run by hand after a model launch, rather than waiting for Monday.
   workflow_dispatch:
 
 jobs:
