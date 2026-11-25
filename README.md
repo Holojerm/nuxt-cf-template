@@ -1397,7 +1397,7 @@ This template ships with Claude Code configuration out of the box:
 
 - **MCP servers** (`.mcp.json.example`, copied to a local gitignored config by `bun dev`): Cloudflare docs, NuxtUI docs, Drizzle schema introspection, Nuxt live introspection, GitHub
 - **Slash commands** (`.claude/commands/`): `/new-feature`, `/scaffold-component`, `/scaffold-api`, `/db-migrate`, `/mcp-publish` (lists the app's own MCP server in the MCP Registry, Claude's directory and ChatGPT's)
-- **Skills** (`.claude/skills/`): NuxtUI, frontend design, theming, and more
+- **Skills** (`.claude/skills/`): NuxtUI, frontend design, UI states and copy, a pre-done UI review, A/B test design, SEO, Workers practices and debugging, each tied to the moment it is loaded in `AGENTS.md`
 - **AI guide** (`AGENTS.md`): stack conventions, styling rules, commands, and an index into `.claude/docs/` — kept small on purpose, since it loads into every agent session
 - **Subsystem docs** (`.claude/docs/`): auth, billing, email, SEO, patterns, brand, agent tooling, and the gotchas list — read on demand, not all at once
 - **Teardown guide** (`TEARDOWN.md`): ordered removal steps for billing, referrals, and the MCP worker

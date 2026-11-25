@@ -105,6 +105,9 @@ conversion rate, so its bets are channel bets: which source sends people at all.
    idea of your own that you do not ship this run is filed as a `growth-idea` before the run
    ends, with what it still needs, so the next run starts there.
 
+   Load the `a-b-test-design` skill before writing a bet or a verdict; where its sample sizes
+   or run lengths differ from this file's, this file wins.
+
    Each bet is an issue labelled `growth-bet` containing:
    - its type, as one line exactly `Type: <channel|activation|monetisation|retention>` (for
      example `Type: channel`), which fleet parses
