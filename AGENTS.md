@@ -320,7 +320,11 @@ brief and wins over every design skill, and this file wins over all of them.
 | Building or changing a page or component | `nuxt-ui`; plus `frontend-design` for a new page or a redesign |
 | A form, wizard or other multi-step flow | `state-machine` |
 | A view that fetches, submits or saves | `loading-states`, `error-handling-ux`, `feedback-patterns` |
-| Interface or landing copy | `ux-writing` |
+| Interface copy (labels, errors, empty states) | `ux-writing` |
+| Landing, pricing or marketing copy | `copywriting` |
+| A new public content page, or an SEO fix | `seo-audit` |
+| Writing or reviewing `server/` code or `wrangler.toml` | `workers-best-practices` |
+| A bug or failing test, before proposing a fix | `systematic-debugging` |
 | Before calling UI work done | `design-qa-checklist`, then `web-design-guidelines` on the changed files |
 | Proposing or judging a growth bet | `a-b-test-design` (the `growth-review` routine's thresholds win) |
 | Writing or fixing a browser test | no skill yet: follow `test/a11y/accessibility.spec.ts` and run `bun run test:a11y` |

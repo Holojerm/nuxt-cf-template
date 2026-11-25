@@ -45,6 +45,12 @@ Each is a plain copy pinned in `skills-lock.json` (source, commit, hash) and rea
 | `feedback-patterns` | Owl-Listener/designer-skills | Confirmations and toasts: where, how long, undo over "are you sure" |
 | `ux-writing` | Owl-Listener/designer-skills | Labels, errors, empty states, CTAs (voice comes from `DESIGN.md`) |
 | `a-b-test-design` | Owl-Listener/designer-skills | Hypothesis, one primary metric plus guardrails, sample size, when not to test |
+| `copywriting` | coreyhaines31/marketingskills | Landing and marketing copy whose every claim can be backed |
+| `seo-audit` | coreyhaines31/marketingskills | Technical and on-page SEO audit beyond `bun run seo:check` |
+| `workers-best-practices` | cloudflare/skills | Workers code and config rules, for sessions without the Cloudflare plugin |
+| `systematic-debugging` | obra/superpowers | Root cause before any fix |
+
+Licences and copyright lines for every source are in `.claude/skills/THIRD_PARTY_NOTICES.md`; add a row there with any new skill.
 
 ## Slash Commands (`.claude/commands/`)
 

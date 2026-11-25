@@ -8,6 +8,13 @@
       "skillPath": "prototyping-testing/skills/a-b-test-design/SKILL.md",
       "computedHash": "a371feedf4cd43d1295334a652094c454e1bd73440718f6f22625e9f91efd11f"
     },
+    "copywriting": {
+      "source": "coreyhaines31/marketingskills",
+      "commit": "8fd2fcade2fd6629026e9dfe6d133b55b36968b9",
+      "sourceType": "github",
+      "skillPath": "skills/copywriting/SKILL.md",
+      "computedHash": "6b86be15d7e8397c27d339fbcbf72718854f96f096ca617889e45b5b8174c393"
+    },
     "design-qa-checklist": {
       "source": "Owl-Listener/designer-skills",
       "commit": "9a6930cf84a822eb458624bd11c61aac5bbdf224",
@@ -50,12 +57,26 @@
       "skillPath": "skills/nuxt-ui/SKILL.md",
       "computedHash": "89a36be1af44314309cc668fab6294b566393e282e2526fa03c6dbc9ca9f2779"
     },
+    "seo-audit": {
+      "source": "coreyhaines31/marketingskills",
+      "commit": "8fd2fcade2fd6629026e9dfe6d133b55b36968b9",
+      "sourceType": "github",
+      "skillPath": "skills/seo-audit/SKILL.md",
+      "computedHash": "537ccf84d4a257cb1b6a9a3643fe56738632989768e1823ffe206ad1c64cd68a"
+    },
     "state-machine": {
       "source": "Owl-Listener/designer-skills",
       "commit": "9a6930cf84a822eb458624bd11c61aac5bbdf224",
       "sourceType": "github",
       "skillPath": "interaction-design/skills/state-machine/SKILL.md",
       "computedHash": "e6f7c4cdc7a36599522f8edcde757d07ca1da658181de2b9f32a4223ccad5b62"
+    },
+    "systematic-debugging": {
+      "source": "obra/superpowers",
+      "commit": "22f0b463e7a5e579904dd6211a520321035526f7",
+      "sourceType": "github",
+      "skillPath": "skills/systematic-debugging/SKILL.md",
+      "computedHash": "79ff0583175346e39431b0dc713b223edd1bd7a7ea2b6c8b78b2fb9a3fed6782"
     },
     "ux-writing": {
       "source": "Owl-Listener/designer-skills",
@@ -70,6 +91,13 @@
       "sourceType": "github",
       "skillPath": "skills/web-design-guidelines/SKILL.md",
       "computedHash": "5994e4cfd86144903d2ba750f862b9e36af15e3297aac983679e347b99f6cb71"
+    },
+    "workers-best-practices": {
+      "source": "cloudflare/skills",
+      "commit": "ff191de7d903788eceaf516a514ae7d3b56b924a",
+      "sourceType": "github",
+      "skillPath": "skills/workers-best-practices/SKILL.md",
+      "computedHash": "7f941bbc549454872a4c7c261bf75a1ef7aaa69666bc85cec91e97cf40c11cc6"
     }
   }
 }

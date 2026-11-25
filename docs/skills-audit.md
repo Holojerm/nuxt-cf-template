@@ -1,6 +1,6 @@
 # Skills pack audit
 
-The template carried 84 skills (83 under `.agents/skills/`, plus `.claude/skills/nuxt-ui`). It now carries 10, each a plain copy in `.claude/skills/` pinned in `skills-lock.json` and tied in `AGENTS.md` › Agent tooling to the moment an agent loads it. Audited 2026-11-24.
+The template carried 84 skills (83 under `.agents/skills/`, plus `.claude/skills/nuxt-ui`). It now carries 14 (10 from the old pack, 4 added), each a plain copy in `.claude/skills/` pinned in `skills-lock.json` and tied in `AGENTS.md` › Agent tooling to the moment an agent loads it. Audited 2026-11-24.
 
 ## Why the pack went unused
 
@@ -15,11 +15,12 @@ Context cost was never the problem: the 17 listed entries were about 640 tokens 
 - Kept 10 skills (below), all refreshed to upstream through `bunx skills add` so the lock records source, commit and hash, and `bunx skills update -p -y` works.
 - `web-design-guidelines` 1.1.0 now reads a pinned copy of the guidelines (`references/command.md`, upstream commit `434b7f9`) instead of fetching `main` at run time.
 - `nuxt-ui` moved to upstream's current layout (guidelines, recipes and layouts references, 2026-10-28).
-- `.agents/skills/` and the symlinks are gone: one directory, real files. The pack went from 479 files and about 10.2 MB to 26 files and 188 KB.
+- `.agents/skills/` and the symlinks are gone: one directory, real files. The pack went from 479 files and about 10.2 MB to 52 files and 456 KB, with all four additions included.
 - Each kept skill has a row in `AGENTS.md` › Agent tooling, and the `growth-review`, `marketing-content`, `seo-content` and `bug-fix` routines name the skill they load.
+- Licences and copyright lines for every source are in `.claude/skills/THIRD_PARTY_NOTICES.md`. The old pack shipped none of its MIT notices.
 - `DESIGN.md` wins over every design skill. `frontend-design` already defers to "the brief", and `AGENTS.md` says the brief is `DESIGN.md`.
 
-## Kept
+## Kept from the old pack
 
 | Skill | Source | Moment | Why |
 | --- | --- | --- | --- |
@@ -84,11 +85,11 @@ Signals were read 2026-11-24 from the GitHub API (`gh api repos/<owner>/<repo>`:
 | Pack | Stars | Last push | Licence | Fit |
 | --- | ---: | --- | --- | --- |
 | anthropics/skills | 200K | 2026-11-16 | Apache-2.0 per skill (Office skills since 2026-11-06) | `frontend-design` kept; the rest are built-in or off-stack |
-| obra/superpowers | 326K | 2026-11-24 | MIT | Process skills; `systematic-debugging` proposed |
-| coreyhaines31/marketingskills | 62K | 2026-11-24 | MIT | Most-installed SEO and copy skills; `seo-audit` and `copywriting` proposed |
+| obra/superpowers | 326K | 2026-11-24 | MIT | Process skills; `systematic-debugging` added |
+| coreyhaines31/marketingskills | 62K | 2026-11-24 | MIT | Most-installed SEO and copy skills; `seo-audit` and `copywriting` added |
 | pbakaus/impeccable | 116K | 2026-11-24 | Apache-2.0 | Design-command vocabulary; overlaps `frontend-design` and brings its own taste |
 | vercel-labs/agent-skills | 35K | 2026-11-20 | MIT (README) | `web-design-guidelines` kept; the rest are React- or Vercel-specific |
-| cloudflare/skills | 3.4K | 2026-11-24 | Apache-2.0 | `workers-best-practices` proposed; the rest are in the Cloudflare plugin |
+| cloudflare/skills | 3.4K | 2026-11-24 | Apache-2.0 | `workers-best-practices` added; the rest are in the Cloudflare plugin |
 | stripe/ai | 2.1K | 2026-11-24 | MIT | `stripe-best-practices` (104K installs), in the Stripe plugin |
 | microsoft/playwright-cli | 15K | 2026-11-24 | Apache-2.0 | `playwright-cli` (227K installs) drives a CLI browser; it doesn't write TypeScript specs |
 | PostHog/skills | 80 | 2026-11-24 | MIT | `creating-experiments`, `instrument-feature-flags` (521 KB); the repo says it is under construction |
@@ -97,14 +98,14 @@ Signals were read 2026-11-24 from the GitHub API (`gh api repos/<owner>/<repo>`:
 | trailofbits/skills | 8.4K | 2026-10-23 | CC-BY-SA-4.0 | Security review; share-alike, so not for an MIT template |
 | Owl-Listener/designer-skills | 3.5K | 2026-11-19 | MIT | The source of seven kept skills |
 
-**Proposed additions** (vendored like a dependency, so they wait for a yes):
+**Added** (approved 2026-11-24, each with an `AGENTS.md` row and a routine pointer):
 
 | Skill | Source, licence | Size | Signal | Moment | What it changes here |
 | --- | --- | --- | --- | --- | --- |
-| `systematic-debugging` | obra/superpowers, MIT | 6 files, 29 KB | 347K installs | A bug or failing test, before proposing a fix; the `bug-fix` routine | Root cause before any fix, with a trace-back method and a test-polluter finder. Nothing built-in does this |
-| `workers-best-practices` | cloudflare/skills, Apache-2.0 | 5 files, 34 KB | 155K installs | Writing or reviewing `server/` code or `wrangler.toml` | Interactive sessions have it through the Cloudflare plugin. Cloud routines and fresh fork sessions don't. Its LICENSE must come with it |
-| `seo-audit` | coreyhaines31/marketingskills, MIT | 66 KB without evals | 266K installs | The `seo-content` routine; any new public content page | A technical and on-page audit beyond `seo:check`: indexing, canonicals, titles, Core Web Vitals |
-| `copywriting` | coreyhaines31/marketingskills, MIT | 56 KB without evals | 267K installs | Landing and marketing copy; the `marketing-content` routine | Conversion copy where `ux-writing` covers interface copy. Its rule that every claim must be supportable matches the routines' honest-output rule |
+| `systematic-debugging` | obra/superpowers, MIT | 6 files, 40 KB | 347K installs | A bug or failing test, before proposing a fix; the `bug-fix` routine | Root cause before any fix, with a trace-back method and a test-polluter finder. Nothing built-in does this |
+| `workers-best-practices` | cloudflare/skills, Apache-2.0 | 5 files, 40 KB | 155K installs | Writing or reviewing `server/` code or `wrangler.toml` | Interactive sessions have it through the Cloudflare plugin. Cloud routines and fresh fork sessions don't. Its Apache text is in the notices file |
+| `seo-audit` | coreyhaines31/marketingskills, MIT | 92 KB (evals kept, so the copy matches the lock) | 266K installs | The `seo-content` routine; any new public content page | A technical and on-page audit beyond `seo:check`: indexing, canonicals, titles, Core Web Vitals |
+| `copywriting` | coreyhaines31/marketingskills, MIT | 80 KB (evals kept) | 267K installs | Landing and marketing copy; the `marketing-content` routine | Conversion copy where `ux-writing` covers interface copy. Its rule that every claim must be supportable matches the routines' honest-output rule |
 
 **Referenced, not vendored**
 

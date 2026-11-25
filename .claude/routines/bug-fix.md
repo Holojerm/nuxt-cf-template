@@ -22,7 +22,8 @@ is a draft the owner readies.
    confirming reproduction), is not labeled `needs-more-info` or `needs-owner`, and has no open
    PR already linked. Severity order: `sev:critical`, `sev:high`, `sev:normal`, `sev:low`.
    If the queue is empty, journal a no-op and stop.
-2. Read `AGENTS.md` for the project's stack and coding standards, then fix the bug:
+2. Read `AGENTS.md` for the project's stack and coding standards, load the
+   `systematic-debugging` skill and find the root cause, then fix the bug:
    - Branch: `fix/<issue-number>-<slug>` off `main`.
    - Write or update a test that fails before the fix and passes after — a fix without a
      regression test isn't done unless the bug is genuinely untestable (say why in the PR).
