@@ -3,7 +3,7 @@ schedule: "0 13 * * 2"
 gate: |
   Run `git fetch -q origin main ops-journal 2>/dev/null; last=$(git log -1 --format=%cI --grep='^journal: seo-content' origin/ops-journal); [ -n "$last" ] && [ -z "$(git log --since="$last" --format=%h origin/main)" ] && ! git log -1 --grep='^journal: seo-content' -p origin/ops-journal | grep -q '^+- next:' && ! curl -sS -f -H "Authorization: Bearer $FLEET_SCOREBOARD_TOKEN" "$FLEET_SCOREBOARD_URL" 2>/dev/null | grep -q '"search"' && echo idle`. Output `idle` means nothing to do: nothing merged since the last run, it left no `- next:` work, and there are no search numbers to read.
 model: claude-sonnet-5
-connectors: [github, cloudflare]
+connectors: [github]
 enabled: false
 tier: 2
 ---

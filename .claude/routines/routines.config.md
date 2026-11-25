@@ -13,7 +13,7 @@ treat placeholder values as "not configured" and skip the dependent work (journa
 | Support inbox search query | `<Gmail query for support mail, e.g. to:support@product.example is:unread>` |
 | Support reply signature | `<PRODUCT_NAME> support` |
 | Analytics sources | Cloudflare Workers analytics for the production Worker; `<add PostHog/Stripe/etc. when wired up>` |
-| Feedback queue | D1 `feedback` table (in-app widget → `POST /api/feedback`); read via the Cloudflare connector (`_shared.md` › Reading production D1) |
+| Feedback queue | D1 `feedback` table (in-app widget → `POST /api/feedback`); read with the D1 read token (`_shared.md` › Reading production D1) |
 | Target audience (for marketing tone) | `<who the product is for>` |
 | Issue triage scope | `all` (or `routine-filed`: only issues a routine opened, `issue-triage.md` step 3) |
 | X account | `<@handle>`; the automated-account label must be on before `x-replies` gets a grant |

@@ -73,8 +73,8 @@ analytics review, marketing drafts, and a single daily digest email to the owner
 sync` registers them (disabled) in your claude.ai account, and each one is enabled explicitly.
 Routines coordinate through an `ops-journal` branch (never merged to `main`, so journal commits
 don't trigger deploys). When forking: fill in `.claude/routines/routines.config.md`, connect
-GitHub, Gmail and `cloudflare` at claude.ai/customize/connectors, then `/routines sync`. Full docs in
-[.claude/routines/README.md](../routines/README.md).
+GitHub + Gmail at claude.ai/customize/connectors, add the D1 read token to the cloud
+environment, then `/routines sync`. Full docs in [.claude/routines/README.md](../routines/README.md).
 
 ---
 
