@@ -4,9 +4,9 @@
       "type": "http",
       "url": "https://docs.mcp.cloudflare.com/mcp"
     },
-    "cloudflare-bindings": {
+    "cloudflare": {
       "type": "http",
-      "url": "https://bindings.mcp.cloudflare.com/mcp"
+      "url": "https://mcp.cloudflare.com/mcp"
     },
     "github": {
       "type": "http",
