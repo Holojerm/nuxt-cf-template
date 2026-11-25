@@ -27,9 +27,15 @@ This project ships with Claude Code configuration in `.mcp.json.example` and `.c
 - **In a linked worktree the dev host is different**, so that committed URL is wrong there by design — see the worktree section below. `bun dev` prints the host it's using, and `nuxt-mcp` repoints the local MCP config at it on boot so introspection keeps working. The file is gitignored, so there is nothing to commit.
 - Drizzle MCP works automatically via `bunx`.
 
-## NuxtUI Skill (`.claude/skills/nuxt-ui/`)
+## Skills (`.claude/skills/`)
 
-Installed via `npx skills add nuxt/ui --agent claude-code`. Provides Claude with deep knowledge of NuxtUI's component patterns, theming system, and composables. Complements the `nuxt-ui` MCP server (which provides live API lookups).
+Every skill here is listed in every session, so the set stays small; `docs/skills-audit.md` has the usage measurement behind it. Add one only when a session would have used it.
+
+| Skill | Source | Purpose |
+| --- | --- | --- |
+| `nuxt-ui` | `npx skills add nuxt/ui --agent claude-code` | NuxtUI component patterns, theming system and composables. Complements the `nuxt-ui` MCP server (live API lookups) |
+| `frontend-design` | anthropics/skills, symlinked from `.agents/skills/` | Building pages and components with a deliberate visual direction |
+| `web-design-guidelines` | vercel-labs/agent-skills, symlinked from `.agents/skills/` | Reviews UI files against the current Web Interface Guidelines |
 
 ## Slash Commands (`.claude/commands/`)
 
