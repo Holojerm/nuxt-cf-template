@@ -1,6 +1,6 @@
 ---
 schedule: "0 14 * * 3"
-model: claude-sonnet-5
+model: claude-opus-5-5
 connectors: [github]
 tier: 2
 enabled: false
@@ -37,9 +37,21 @@ is a draft the owner readies.
 5. `bun install --frozen-lockfile && bun run ci` must pass. Open the PR with the sections
    `sync-forks.md` asks for: what was broken and what it cost, what came over, what was
    deliberately left out and why, and how it was verified. Label it `template-sync`.
-6. If the sync needs a product decision (pricing, gating, legal copy, an auth model that does
-   not fit), skip that piece, keep the rest of the sync, and say so in the PR under
-   `needs-owner`.
+6. Sort every piece you leave out into one of two kinds, and list each under "what was
+   deliberately left out" with its kind.
+   - **Not carried.** Leaving it out keeps the fork as it is, and nobody has to decide
+     anything: a layer or subsystem the fork does not vendor (billing where `fleet.json` ›
+     `features` says `false`, a new opt-in layer), a new feature the fork has not taken up,
+     a change with nothing to apply to (a bump for a dependency the fork does not have), or
+     anything the fork's own records already say it does not carry. Adopting one later is a
+     separate request from the owner.
+   - **`needs-owner`.** Leaving it out means someone has to make a decision, or the fork goes
+     on with a problem the template fixed: a bug fix or hardening for code the fork does carry
+     that you could not port cleanly; a change to something the fork has that needs a product
+     decision (pricing, gating, legal copy, an auth model that does not fit); or a piece you
+     meant to port and could not (a refused command, a missing tool). Keep the rest of the
+     sync, and give each such piece its own entry under `needs-owner`, saying what the
+     decision is.
 7. **Ready or draft.** Open the PR ready for review, so the merge queue lands it when green,
    only when all of these hold. Otherwise open it as a draft, label it `needs-owner`, and say
    which one failed.
@@ -47,7 +59,8 @@ is a draft the owner readies.
    - `bun run ci` passed here.
    - The sync touches nothing the tier-2 "never" column names (pricing, billing, auth, data
      deletion) and adds no migration.
-   - Step 6 skipped nothing: a piece left for the owner means the owner reads the PR.
+   - Step 6 left nothing under `needs-owner`: a piece left for the owner means the owner
+     reads the PR. Pieces that are only "not carried" do not hold it.
 8. Journal the PR link, the template range synced, and anything left out.
 
 ## Hard limits for this routine

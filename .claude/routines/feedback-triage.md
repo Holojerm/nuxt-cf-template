@@ -1,7 +1,7 @@
 ---
 fire: fleet # fires the API trigger when /api/fleet's open feedback count rises
 schedule: "30 11 * * 1" # weekly backstop
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 connectors: [github]
 enabled: false
 ---

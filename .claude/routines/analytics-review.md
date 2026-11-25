@@ -1,6 +1,6 @@
 ---
 schedule: "30 12 * * 1"
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 connectors: [github]
 enabled: false
 ---

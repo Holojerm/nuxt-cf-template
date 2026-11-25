@@ -2,7 +2,7 @@
 schedule: "0 13 * * *"
 gate: |
   Read only the support inbox search query in `routines.config.md`, then run that one search with the Gmail connector. No thread in the result means nothing to do.
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 connectors: [gmail, github]
 enabled: false
 ---
