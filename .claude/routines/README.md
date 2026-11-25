@@ -135,7 +135,7 @@ events: [issues.opened]        # optional: GitHub events that also start a run
 fire: fleet                    # optional: who calls this routine's API trigger
 gate: |                        # optional: one check run first; nothing to do ends the run
   Run `…`. Empty output means nothing to do.
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 connectors: [github]           # claude.ai connectors this routine needs
 enabled: false                 # keep false; enable explicitly after sync
 scope: fleet                   # optional: one all-repos routine runs this for every fork
