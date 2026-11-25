@@ -14,10 +14,10 @@ enabled: false
 
 Build the one roadmap item fleet picks for this app: one PR per run, claimed on fleet's
 roadmap board so the owner sees it in flight. Fleet does all the choosing. It offers an item
-only when it is `next`, of kind `build`, not blocked, and either this app runs an operator
-grant or the owner ticked it fine for an agent; lowest rank first, then oldest; and never
-while another item of this app is in flight. When that PR merges, fleet marks the item
-`shipped` itself.
+only when it is `next`, of kind `build` and not blocked; lowest rank first, then oldest; and
+never while another item of this app is in flight. Ranking an item `next` is the owner's
+approval to build it, on every app, operator grant or not (owner's decision, 2026-11-25).
+When that PR merges, fleet marks the item `shipped` itself.
 
 An item costs about 8–15M tokens to build, so most days the gate ends the run: no pick, no
 session.
@@ -57,7 +57,17 @@ for nothing.
    `gh pr list --state open --search "<itemId> in:body" --json number,url,isDraft`. If there
    is one, an earlier run built it and its claim did not land. Skip to step 8 with that PR, and
    build nothing.
-5. **Too big for one PR?** Read `AGENTS.md` and the code the item touches, then decide before
+5. **Waiting on the owner?** If the item's title or note says it needs his review or a
+   decision before it is built, it still waits: build nothing and do not claim it. File the
+   wait on fleet with `"blocks": ["<itemId>"]`, which sets the item's `blocked_on` so fleet
+   stops offering it and frees it when he marks the request done. Use the claim's origin and
+   token, POST to `/api/agent/roadmap/needs`, and send `kind` `owner-step` (with `step`: what
+   to review, and where) or `decision` (with `options` and `recommendation`), plus `agent`
+   `roadmap-build`, `appSlug` (the last segment of `$FLEET_SCOREBOARD_URL`), a `title` starting `Owner step:` or `Decision:`,
+   `urgency` `soon` and `source` the itemId. Fleet refuses unknown fields. Journal the
+   returned `needs-…` id as an escalation and stop.
+
+   **Too big for one PR?** Read `AGENTS.md` and the code the item touches, then decide before
    writing anything. If it needs more than about 300 changed lines (tests and fixtures
    excluded), a design decision the item does not settle, a migration that drops or rewrites
    data, a new dependency, or anything the tier-2 "never" column names (pricing, billing, auth,
