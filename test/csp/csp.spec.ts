@@ -27,6 +27,7 @@
 
 import { expect, test } from '@playwright/test'
 
+import { noncedPolicy } from '../../shared/script-nonce'
 import { contentSecurityPolicy } from '../../shared/security-headers'
 import { recordConsole } from '../lib/console'
 import { hasLayer, hasPage, SIGN_IN_PATH } from '../lib/layers'
@@ -198,8 +199,43 @@ test.describe('the policy still permits what the vendors need', () => {
 // The policy-text assertions (Turnstile and beacon hosts, no payment host, anti-bypass
 // directives, no 'unsafe-eval', the script-src host list) are in
 // test/security-headers.test.ts. This pins the one thing they cannot see: that
-// the server really sends that policy.
+// the server really sends that policy. A rendered page carries it with a nonce for
+// script-src's 'unsafe-inline' (shared/script-nonce.ts).
 test('the policy on the wire is the one the config defines', async ({ page }) => {
   const response = await page.goto('/')
-  expect(response!.headers()['content-security-policy']).toBe(contentSecurityPolicy(true))
+  const sent = response!.headers()['content-security-policy'] ?? ''
+  const nonce = /'nonce-([\w-]+)'/.exec(sent)?.[1] ?? ''
+  expect(sent).toBe(noncedPolicy(contentSecurityPolicy(true), nonce))
+})
+
+test('a page allows its own inline scripts by nonce, and nothing injected', async ({ page }) => {
+  const response = await page.goto('/')
+  const policy = response!.headers()['content-security-policy'] ?? ''
+  const scriptSrc = /(?:^|; )script-src ([^;]+)/.exec(policy)?.[1] ?? ''
+  expect(scriptSrc).not.toContain("'unsafe-inline'")
+  const nonce = /'nonce-([\w-]+)'/.exec(scriptSrc)?.[1]
+  expect(nonce).toBeTruthy()
+
+  // Every inline script the server rendered carries this page's nonce.
+  const html = await response!.text()
+  const inline = html.match(/<script(?![^>]*\ssrc=)[^>]*>/g) ?? []
+  expect(inline.length).toBeGreaterThan(0)
+  for (const tag of inline) expect(tag).toContain(`nonce="${nonce}"`)
+
+  // The page hydrated, so the colour-mode guard and the runtime config ran.
+  await expect(page.locator('html')).toHaveClass(/light|dark/)
+  expect(await page.evaluate(() => typeof (window as { __NUXT__?: unknown }).__NUXT__)).toBe(
+    'object',
+  )
+
+  const ran = await page.evaluate(async () => {
+    const win = window as unknown as { injected?: boolean }
+    document.body.insertAdjacentHTML(
+      'beforeend',
+      '<img alt="" src="data:," onerror="window.injected = true">',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    return win.injected === true
+  })
+  expect(ran).toBe(false)
 })

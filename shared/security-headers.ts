@@ -9,10 +9,11 @@
 // provenance is recorded next to it. `test/csp/` re-checks the browser half in
 // a real Chromium on every `bun run ci`.
 //
-// Why `routeRules` and not a Nitro middleware: the only thing a middleware buys
-// here is a per-request nonce, and we cannot spend one (see `script-src`). What
-// it costs is a handler invocation on every request, including the static assets
-// Cloudflare would otherwise serve without waking the Worker.
+// Why `routeRules` and not a Nitro middleware: a middleware costs a handler
+// invocation on every request, including the static assets Cloudflare would
+// otherwise serve without waking the Worker. The one thing it would buy, a
+// per-request nonce, only matters for rendered pages, and those already get one
+// from server/plugins/script-nonce.ts (see `script-src`).
 
 // No payment host appears below, with or without layers/billing. Stripe's hosted
 // Checkout and its customer portal are full-page navigations away from this
@@ -65,31 +66,24 @@ const cspSources = (isDev: boolean): Record<string, string[]> => {
   return {
     'default-src': ["'self'"],
 
-    // 'unsafe-inline' is load-bearing, and not something to quietly accept.
+    // 'unsafe-inline' is here for responses that are not rendered pages. Every
+    // rendered page swaps it for a per-page nonce: server/plugins/script-nonce.ts
+    // stamps the scripts Nuxt builds from head tags (@nuxtjs/color-mode's pre-paint
+    // FOUC guard, the runtime config, the entry module) in `render:html` and sends
+    // this policy with `'nonce-…'` in its place, so injected inline script and
+    // `on*=` handlers run nothing. shared/script-nonce.ts says which chunks it
+    // stamps and why the app's own markup is left out.
     //
-    // Nuxt SSR emits two executable inline scripts on every page. The payload is
-    // NOT one of them — it ships as `<script type="application/json">`, which the
-    // browser never executes and CSP therefore never blocks. The two real ones are
-    // @nuxtjs/color-mode's pre-paint FOUC guard (NuxtUI depends on it; removing it
-    // makes every page flash the wrong theme) and Nuxt's runtime-config
-    // serialization.
+    // A hash allowlist is the trap worth naming: the color-mode guard's bytes
+    // change when that dependency updates, and the config script's bytes contain
+    // `appName` and `appUrl`, so it changes on `bun run rename` and on any [vars]
+    // edit. It would ship green through lint, typecheck and this repo's own tests,
+    // then white-screen production after a routine `bun update`.
     //
-    // Neither can be nonced: `routeRules` headers are static strings, and even
-    // behind a middleware Nuxt has no API for stamping a nonce onto framework
-    // injected script tags — the color-mode guard would stay unnonced and dark
-    // mode would break instead.
-    //
-    // Neither can be safely hashed either, and this is the trap worth naming: the
-    // color-mode guard's bytes change when that dependency updates, and the config
-    // script's bytes contain `appName` and `appUrl`, so it changes on `bun run
-    // rename` and on any [vars] edit. A hash allowlist would ship green through
-    // lint, typecheck and this repo's own tests, then white-screen production
-    // after a routine `bun update`.
-    //
-    // What survives: script-src still refuses every *external* origin except
-    // Turnstile's and the Web Analytics beacon, so an injected
-    // `<script src="//evil.tld/x.js">` does not load. Paired with object-src/
-    // base-uri below, the classic bypasses stay shut. test/security-headers.test.ts pins that list.
+    // script-src also refuses every *external* origin except Turnstile's and the
+    // Web Analytics beacon, so an injected `<script src="//evil.tld/x.js">` does not
+    // load. Paired with object-src/base-uri below, the classic bypasses stay shut.
+    // test/security-headers.test.ts pins that list.
     'script-src': ["'self'", "'unsafe-inline'", ...TURNSTILE, ...CF_WEB_ANALYTICS.script],
 
     // Vue SSR emits inline style attributes and Vite dev injects <style> blocks;
