@@ -58,7 +58,8 @@ back.
    credits with a signup gets corrections only.
 5. **Ship.** One PR per kind of change (gate fixes, new rows or a collection, refreshes), on a
    `feat/seo-<slug>` or `fix/seo-<slug>` branch, following the repo's AGENTS.md and
-   `bun run ci`. Run `bun run test:a11y` when the PR adds a page file. Each PR body lists every
+   `bun run ci`. When the PR adds a page file, load `nuxt-ui` before writing it and
+   `design-qa-checklist` before opening the PR, and run `bun run test:a11y`. Each PR body lists every
    page it adds or changes and, for each fact it adds, the file or table it came from.
    - These are content changes (`_shared.md` › Autonomy tiers, tier 2: an SEO page). With a
      tier-2 grant, or on an operator repo, open the PR ready so it merges through the queue

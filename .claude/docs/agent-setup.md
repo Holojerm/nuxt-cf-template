@@ -29,13 +29,22 @@ This project ships with Claude Code configuration in `.mcp.json.example` and `.c
 
 ## Skills (`.claude/skills/`)
 
-Every skill here is listed in every session, so the set stays small; `docs/skills-audit.md` has the usage measurement behind it. Add one only when a session would have used it.
+Every skill here is listed in every session, and `AGENTS.md` › Agent tooling names the moment each one is loaded. A skill nobody is told to load never runs, so a new one comes with its row there. `docs/skills-audit.md` records why each was kept and how to re-measure use.
+
+Each is a plain copy pinned in `skills-lock.json` (source, commit, hash) and reaches forks with the rest of the template. Refresh with `bunx skills update -p -y`; add with `bunx skills add <owner/repo> --skill <name> --agent claude-code -y`, then review the diff like a dependency bump.
 
 | Skill | Source | Purpose |
 | --- | --- | --- |
-| `nuxt-ui` | `npx skills add nuxt/ui --agent claude-code` | NuxtUI component patterns, theming system and composables. Complements the `nuxt-ui` MCP server (live API lookups) |
-| `frontend-design` | anthropics/skills, symlinked from `.agents/skills/` | Building pages and components with a deliberate visual direction |
-| `web-design-guidelines` | vercel-labs/agent-skills, symlinked from `.agents/skills/` | Reviews UI files against the current Web Interface Guidelines |
+| `nuxt-ui` | nuxt/ui | NuxtUI v4 components, theming, forms, layouts. Complements the `nuxt-ui` MCP server (live API lookups) |
+| `frontend-design` | anthropics/skills | Visual direction for a new page or a redesign, inside `DESIGN.md` |
+| `web-design-guidelines` | vercel-labs/agent-skills | Reviews changed UI files against a pinned copy of the Web Interface Guidelines |
+| `design-qa-checklist` | Owl-Listener/designer-skills | Every state, touch target and edge case checked before UI work is called done |
+| `state-machine` | Owl-Listener/designer-skills | Enumerates a flow's states so none is impossible or a dead end |
+| `loading-states` | Owl-Listener/designer-skills | Waiting by duration tier, no layout shift, optimistic updates with rollback |
+| `error-handling-ux` | Owl-Listener/designer-skills | Error placement by context, preserved input, what/why/what-next messages |
+| `feedback-patterns` | Owl-Listener/designer-skills | Confirmations and toasts: where, how long, undo over "are you sure" |
+| `ux-writing` | Owl-Listener/designer-skills | Labels, errors, empty states, CTAs (voice comes from `DESIGN.md`) |
+| `a-b-test-design` | Owl-Listener/designer-skills | Hypothesis, one primary metric plus guardrails, sample size, when not to test |
 
 ## Slash Commands (`.claude/commands/`)
 

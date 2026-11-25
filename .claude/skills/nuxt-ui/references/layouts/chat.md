@@ -2,46 +2,112 @@
 
 Build AI chat interfaces with message streams, reasoning, tool calling, and Vercel AI SDK integration.
 
-## Component tree
+## When to use
 
-```
-UApp
-└── NuxtLayout (dashboard)
-    └── UDashboardGroup
-        ├── UDashboardSidebar (conversations)
-        └── NuxtPage
-            └── UDashboardPanel
-                ├── #header → UDashboardNavbar
-                ├── #body → UContainer → UChatMessages
-                │                         ├── #content → UChatReasoning, UChatTool, MDC
-                │                         └── #indicator (loading)
-                └── #footer → UContainer → UChatPrompt
-                                            └── UChatPromptSubmit
-```
+- AI chatbot interfaces
+- Customer support chat
+- Any conversational UI with streaming responses
 
 ## Setup
 
-### Install AI SDK
+### Install dependencies
+
+**Nuxt:**
 
 ```bash
-pnpm add ai @ai-sdk/gateway @ai-sdk/vue
+pnpm add ai @ai-sdk/vue @comark/nuxt
+```
+
+**Vue (Vite):**
+
+```bash
+pnpm add ai @ai-sdk/vue @comark/vue
+```
+
+### Register Comark module
+
+**Nuxt:**
+
+```ts [nuxt.config.ts]
+export default defineNuxtConfig({
+  modules: [
+    '@nuxt/ui',
+    '@comark/nuxt'
+  ]
+})
+```
+
+**Vue (Vite):** No module registration needed, import directly from `@comark/vue`.
+
+> `@comark/nuxt` (or `@comark/vue` for Vue projects) provides the `Comark` component used to render AI responses as streaming Markdown, it incrementally renders tokens as they arrive and automatically enables Nuxt UI's prose components.
+
+### Dark mode for syntax highlighting
+
+When using the `highlight` plugin, add the following CSS to your stylesheet:
+
+```css [main.css]
+html.dark .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+  text-decoration: var(--shiki-dark-text-decoration) !important;
+}
 ```
 
 ### Server endpoint
 
+These examples target AI SDK v7 (`instructions`, `toUIMessageStream`).
+
+Using [Vercel AI Gateway](https://vercel.com/ai-gateway) (recommended):
+
 ```ts [server/api/chat.post.ts]
-import { streamText, convertToModelMessages } from 'ai'
-import { gateway } from '@ai-sdk/gateway'
+import { streamText, convertToModelMessages, toUIMessageStream, createUIMessageStreamResponse } from 'ai'
 
 export default defineEventHandler(async (event) => {
   const { messages } = await readBody(event)
 
-  return streamText({
-    model: gateway('anthropic/claude-sonnet-4.6'),
-    system: 'You are a helpful assistant.',
+  const result = streamText({
+    model: 'anthropic/claude-sonnet-5.5',
+    instructions: 'You are a helpful assistant.',
     messages: await convertToModelMessages(messages)
-  }).toUIMessageStreamResponse()
+  })
+
+  const stream = toUIMessageStream({ stream: result.stream })
+  return createUIMessageStreamResponse({ stream })
 })
+```
+
+Or with a direct provider (e.g., `pnpm add @ai-sdk/openai`):
+
+```ts [server/api/chat.post.ts]
+import { streamText, convertToModelMessages, toUIMessageStream, createUIMessageStreamResponse } from 'ai'
+import { openai } from '@ai-sdk/openai'
+
+export default defineEventHandler(async (event) => {
+  const { messages } = await readBody(event)
+
+  const result = streamText({
+    model: openai('gpt-5-nano'),
+    instructions: 'You are a helpful assistant.',
+    messages: await convertToModelMessages(messages)
+  })
+
+  const stream = toUIMessageStream({ stream: result.stream })
+  return createUIMessageStreamResponse({ stream })
+})
+```
+
+## Component tree
+
+```
+UDashboardPanel
+├── #header → UDashboardNavbar
+├── #body → UContainer → UChatMessages
+│                         ├── #part → UChatReasoning, UChatTool, Comark
+│                         └── #indicator (loading)
+└── #footer → UContainer → UChatPrompt
+                            └── UChatPromptSubmit
 ```
 
 ## Full page chat
@@ -49,14 +115,15 @@ export default defineEventHandler(async (event) => {
 ```vue [pages/chat/[id].vue]
 <script setup lang="ts">
 import { isReasoningUIPart, isTextUIPart, isToolUIPart, getToolName } from 'ai'
-import { Chat } from '@ai-sdk/vue'
-import { isReasoningStreaming, isToolStreaming } from '@nuxt/ui/utils/ai'
+import { useChat } from '@ai-sdk/vue'
+import { isPartStreaming, isToolStreaming } from '@nuxt/ui/utils/ai'
+import highlight from '@comark/nuxt/plugins/highlight'
 
 definePageMeta({ layout: 'dashboard' })
 
 const input = ref('')
 
-const chat = new Chat({
+const { messages, status, error, sendMessage, stop, regenerate } = useChat({
   onError(error) {
     console.error(error)
   }
@@ -64,9 +131,7 @@ const chat = new Chat({
 
 function onSubmit() {
   if (!input.value.trim()) return
-
-  chat.sendMessage({ text: input.value })
-
+  sendMessage({ text: input.value })
   input.value = ''
 }
 </script>
@@ -79,34 +144,35 @@ function onSubmit() {
 
     <template #body>
       <UContainer>
-        <UChatMessages :messages="chat.messages" :status="chat.status">
-          <template #content="{ message }">
-            <template v-for="(part, index) in message.parts" :key="`${message.id}-${part.type}-${index}`">
-              <UChatReasoning
-                v-if="isReasoningUIPart(part)"
-                :text="part.text"
-                :streaming="isReasoningStreaming(message, index, chat)"
-              >
-                <MDC
-                  :value="part.text"
-                  :cache-key="`reasoning-${message.id}-${index}`"
-                  class="*:first:mt-0 *:last:mb-0"
-                />
-              </UChatReasoning>
-
-              <UChatTool
-                v-else-if="isToolUIPart(part)"
-                :text="getToolName(part)"
-                :streaming="isToolStreaming(part)"
-              />
-
-              <MDC
-                v-else-if="isTextUIPart(part)"
-                :value="part.text"
-                :cache-key="`${message.id}-${index}`"
+        <UChatMessages :messages="messages" :status="status">
+          <template #part="{ part, message, streaming }">
+            <UChatReasoning
+              v-if="isReasoningUIPart(part)"
+              :text="part.text"
+              :streaming="isPartStreaming(part, streaming)"
+            >
+              <Comark
+                :markdown="part.text"
+                :streaming="isPartStreaming(part, streaming)"
+                :plugins="[highlight()]"
                 class="*:first:mt-0 *:last:mb-0"
               />
-            </template>
+            </UChatReasoning>
+
+            <UChatTool
+              v-else-if="isToolUIPart(part)"
+              :text="getToolName(part)"
+              :streaming="isToolStreaming(part, streaming)"
+              :error="part.state === 'output-error'"
+            />
+
+            <Comark
+              v-else-if="isTextUIPart(part) && message.role === 'assistant'"
+              :markdown="part.text"
+              :streaming="isPartStreaming(part, streaming)"
+              :plugins="[highlight()]"
+              class="*:first:mt-0 *:last:mb-0"
+            />
           </template>
         </UChatMessages>
       </UContainer>
@@ -114,8 +180,8 @@ function onSubmit() {
 
     <template #footer>
       <UContainer class="pb-4 sm:pb-6">
-        <UChatPrompt v-model="input" :error="chat.error" @submit="onSubmit">
-          <UChatPromptSubmit :status="chat.status" @stop="chat.stop()" @reload="chat.regenerate()" />
+        <UChatPrompt v-model="input" :error="error" @submit="onSubmit">
+          <UChatPromptSubmit :status="status" @stop="stop()" @reload="regenerate()" />
         </UChatPrompt>
       </UContainer>
     </template>
@@ -125,77 +191,13 @@ function onSubmit() {
 
 ## Key components
 
-### ChatMessages
-
-Scrollable message list with auto-scroll and loading indicator.
-
-| Prop | Description |
-|---|---|
-| `messages` | Array of AI SDK messages |
-| `status` | `'submitted'`, `'streaming'`, `'ready'`, `'error'` |
-
-Slots: `#content` (receives `{ message }`), `#actions` (per-message), `#indicator` (loading)
-
-### ChatMessage
-
-Individual message bubble with avatar, actions, and slots.
-
-| Prop | Description |
-|---|---|
-| `message` | AI SDK UIMessage object |
-| `side` | `'left'` (default), `'right'` |
-
-### ChatReasoning
-
-Collapsible block for AI reasoning / thinking process. Auto-opens during streaming, auto-closes when done.
-
-| Prop | Description |
-|---|---|
-| `text` | Reasoning text (displayed inside collapsible content) |
-| `streaming` | Whether reasoning is actively streaming |
-| `open` | Controlled open state |
-
-Use `isReasoningStreaming(message, index, chat)` from `@nuxt/ui/utils/ai` to determine streaming state.
-
-### ChatTool
-
-Collapsible block for AI tool invocation status.
-
-| Prop | Description |
-|---|---|
-| `text` | Tool status text (displayed in trigger) |
-| `icon` | Icon name |
-| `loading` | Show loading spinner on icon |
-| `streaming` | Whether tool is actively running |
-| `suffix` | Secondary text after label |
-| `variant` | `'inline'` (default), `'card'` |
-| `chevron` | `'trailing'` (default), `'leading'` |
-
-Use `isToolStreaming(part)` from `@nuxt/ui/utils/ai` to determine if a tool is still running.
-
-### ChatShimmer
-
-Text shimmer animation for streaming states. Automatically used by ChatReasoning and ChatTool when streaming.
-
-### ChatPrompt
-
-Enhanced textarea form for prompts. Accepts all Textarea props.
-
-| Prop | Description |
-|---|---|
-| `v-model` | Input text binding |
-| `error` | Error from chat instance |
-| `variant` | `'outline'` (default), `'subtle'`, `'soft'`, `'ghost'`, `'none'` |
-
-Slots: `#default` (submit button), `#footer` (below input, e.g. model selector)
-
-### ChatPromptSubmit
-
-Submit button with automatic status handling (send/stop/reload).
-
-### ChatPalette
-
-Layout wrapper for chat inside overlays (Modal, Slideover, Drawer).
+- `UChatMessages` — scrollable message list with auto-scroll. Props: `messages`, `status`. Slots: `#part` (per part, unrendered parts fall back to the default output), `#content` (per message), `#actions`, `#indicator`.
+- `UChatMessage` — individual bubble. Props: `message`, `side` (`'left'`/`'right'`).
+- `UChatReasoning` — collapsible reasoning block. Auto-opens during streaming, auto-closes when done. Use `isPartStreaming(part, streaming)` from `@nuxt/ui/utils/ai`, with `streaming` from the `#part` slot.
+- `UChatTool` — tool invocation status. Use `isToolStreaming(part, streaming)`. Variants: `'inline'` (default), `'card'`.
+- `UChatPrompt` — enhanced textarea for chat. Its typed API exposes a selected subset of `UTextarea` props, forwards additional attributes to the underlying textarea, and adds chat-specific props such as `error` and `submitOnEnter`.
+- `UChatPromptSubmit` — submit button with automatic status handling (send/stop/reload).
+- `UChatPalette` — layout wrapper for chat inside overlays.
 
 ## Chat in a modal
 
@@ -203,11 +205,11 @@ Layout wrapper for chat inside overlays (Modal, Slideover, Drawer).
 <UModal v-model:open="isOpen">
   <template #content>
     <UChatPalette>
-      <UChatMessages :messages="chat.messages" :status="chat.status" />
+      <UChatMessages :messages="messages" :status="status" />
 
       <template #prompt>
         <UChatPrompt v-model="input" @submit="onSubmit">
-          <UChatPromptSubmit :status="chat.status" />
+          <UChatPromptSubmit :status="status" />
         </UChatPrompt>
       </template>
     </UChatPalette>
@@ -218,34 +220,24 @@ Layout wrapper for chat inside overlays (Modal, Slideover, Drawer).
 ## With model selector
 
 ```vue
-<script setup lang="ts">
-const input = ref('')
-const model = ref('claude-opus-4.6')
-const models = [
-  { label: 'Claude Opus 4.6', value: 'claude-opus-4.6', icon: 'i-simple-icons-anthropic' },
-  { label: 'Gemini 3 Pro', value: 'gemini-3-pro', icon: 'i-simple-icons-googlegemini' },
-  { label: 'GPT-5', value: 'gpt-5', icon: 'i-simple-icons-openai' }
-]
-</script>
+<UChatPrompt v-model="input" @submit="onSubmit">
+  <UChatPromptSubmit :status="status" />
 
-<template>
-  <UChatPrompt v-model="input" @submit="onSubmit">
-    <UChatPromptSubmit :status="chat.status" />
-
-    <template #footer>
-      <USelect
-        v-model="model"
-        :icon="models.find(m => m.value === model)?.icon"
-        placeholder="Select a model"
-        variant="ghost"
-        :items="models"
-      />
-    </template>
-  </UChatPrompt>
-</template>
+  <template #footer>
+    <USelect
+      v-model="model"
+      :icon="models.find(m => m.value === model)?.icon"
+      placeholder="Select a model"
+      variant="ghost"
+      :items="models"
+    />
+  </template>
+</UChatPrompt>
 ```
 
 ## Conversation sidebar
+
+Combine with dashboard layout for a ChatGPT-like interface:
 
 ```vue [layouts/dashboard.vue]
 <template>

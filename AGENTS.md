@@ -309,8 +309,21 @@ When I ask you to build features in this project:
 
 ## Agent tooling
 
-MCP servers, the NuxtUI skill, slash commands, and the cloud operations routines are
+MCP servers, skills, slash commands, and the cloud operations routines are
 documented in [`.claude/docs/agent-setup.md`](.claude/docs/agent-setup.md).
+
+**Skills: load the named one (Skill tool) at its moment**, before writing. `DESIGN.md` is the
+brief and wins over every design skill, and this file wins over all of them.
+
+| Moment | Load |
+| --- | --- |
+| Building or changing a page or component | `nuxt-ui`; plus `frontend-design` for a new page or a redesign |
+| A form, wizard or other multi-step flow | `state-machine` |
+| A view that fetches, submits or saves | `loading-states`, `error-handling-ux`, `feedback-patterns` |
+| Interface or landing copy | `ux-writing` |
+| Before calling UI work done | `design-qa-checklist`, then `web-design-guidelines` on the changed files |
+| Proposing or judging a growth bet | `a-b-test-design` (the `growth-review` routine's thresholds win) |
+| Writing or fixing a browser test | no skill yet: follow `test/a11y/accessibility.spec.ts` and run `bun run test:a11y` |
 
 Parallel agent worktrees under `.claude/worktrees/<name>` are supported and every gate in
 `bun run ci` is scoped to its own checkout. The rules that keep it that way — and the three

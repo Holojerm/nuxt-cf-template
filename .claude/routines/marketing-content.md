@@ -32,6 +32,7 @@ directly.
    `linkedin`, `utm_medium=social`, and as `utm_campaign` the slug of the open channel
    `growth-bet` the draft serves, or `marketing-content` when it serves none. Links inside
    `changelog.md` point at the product's own pages and carry no tags.
+   Load the `ux-writing` skill before drafting; the product's published voice wins over it.
 3. Ground everything in what actually shipped or measured — no invented metrics, testimonials,
    or "users love" claims (`_shared.md` rule: honest output). Match the product's existing voice
    if published copy exists in the repo.

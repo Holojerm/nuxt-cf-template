@@ -27,6 +27,8 @@ is a draft the owner readies.
    - Write or update a test that fails before the fix and passes after — a fix without a
      regression test isn't done unless the bug is genuinely untestable (say why in the PR).
    - Keep the diff minimal: fix the bug, don't refactor around it (`_shared.md` rule 7).
+   - A bug in a page or component: load the skills `AGENTS.md` › Agent tooling names for
+     that moment, and `design-qa-checklist` before opening the PR.
 3. Verify with the repo's own gate: `bun run ci` (lint + typecheck + test + build). Don't open
    the PR until it passes.
 4. Open a PR: describe the root cause, the fix, and the test; link `Fixes #<issue>`. Open it

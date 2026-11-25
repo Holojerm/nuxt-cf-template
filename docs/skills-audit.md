@@ -1,108 +1,145 @@
-# Skills pack audit — keep or cut
+# Skills pack audit
 
-Scope: the 83 skills under `.agents/skills/` plus `.claude/skills/nuxt-ui`. Measured 2026-11-24 at `093fabb`.
+The template carried 84 skills (83 under `.agents/skills/`, plus `.claude/skills/nuxt-ui`). It now carries 10, each a plain copy in `.claude/skills/` pinned in `skills-lock.json` and tied in `AGENTS.md` › Agent tooling to the moment an agent loads it. Audited 2026-11-24.
 
-## How it was measured
+## Why the pack went unused
 
-- **What loads.** Claude Code lists only `.claude/skills/` in a session: 16 symlinks into `.agents/skills/` plus `nuxt-ui`, 17 entries. The other 67 directories under `.agents/skills/` never reach a session. Checked against the skill listing recorded in fork session transcripts.
-- **Uses.** Every session transcript on the agent host, 424 files covering 2026-11-07 to 2026-11-24 (main sessions and subagents, all template forks): `Skill` tool calls by name, plus any tool call that read a file under a skill directory. Older sessions and other machines were not available.
-- **References.** Tracked files in the template and every fork (`AGENTS.md`, docs, `.claude/commands`, `.claude/routines`, scripts), excluding the skill directories and `skills-lock.json`.
+- **Measured use was zero.** Across 425 session transcripts on the agent host (2026-11-07 to 2026-11-24, main sessions and subagents, the template and every fork), the `Skill` tool was called 54 times, never for a pack skill.
+- **Most of the pack was invisible.** Claude Code lists `.claude/skills/` only. That held 16 symlinks into `.agents/skills/` plus `nuxt-ui`, and those 17 appeared in the skill listing of about 270 sessions each. The other 67 never reached a session.
+- **Nothing pointed at them, and their descriptions gave no trigger.** No instruction file named a pack skill at a moment of work. The vendored designer-skill descriptions said what each skill was ("Design loading, skeleton, and progressive content reveal patterns") but never when to use it. Upstream has since added "Use when" lines, and this refresh picks them up.
 
-## Result
+Context cost was never the problem: the 17 listed entries were about 640 tokens a session.
 
-- **No skill in the pack was used.** Zero `Skill` invocations of any pack skill. The only reads of skill files were template-sync and symlink checks, not uses. In the same window sessions invoked other skills 54 times (user-level plugins and this repo's slash commands), so the tool was in use; the pack was not.
-- **Nothing references the pack** except `agent-setup.md` (the NuxtUI skill) and one line in `README.md`.
-- **Cost.** 17 listed entries put about 2,550 characters (about 640 tokens) into every session's skill listing. The whole pack is 479 tracked files and about 10.2 MB in every checkout and worktree of every fork; `canvas-design` alone is 5.6 MB of fonts.
+## What changed
 
-Keeping three skills cuts the listing to about 880 characters (about 220 tokens) per session, and the pack to 12 files and about 80 KB.
+- Kept 10 skills (below), all refreshed to upstream through `bunx skills add` so the lock records source, commit and hash, and `bunx skills update -p -y` works.
+- `web-design-guidelines` 1.1.0 now reads a pinned copy of the guidelines (`references/command.md`, upstream commit `434b7f9`) instead of fetching `main` at run time.
+- `nuxt-ui` moved to upstream's current layout (guidelines, recipes and layouts references, 2026-10-28).
+- `.agents/skills/` and the symlinks are gone: one directory, real files. The pack went from 479 files and about 10.2 MB to 26 files and 188 KB.
+- Each kept skill has a row in `AGENTS.md` › Agent tooling, and the `growth-review`, `marketing-content`, `seo-content` and `bug-fix` routines name the skill they load.
+- `DESIGN.md` wins over every design skill. `frontend-design` already defers to "the brief", and `AGENTS.md` says the brief is `DESIGN.md`.
 
-## Table
+## Kept
 
-Uses counts `Skill` invocations and skill-file reads together. Size is the skill directory's bytes on disk.
+| Skill | Source | Moment | Why |
+| --- | --- | --- | --- |
+| `nuxt-ui` | nuxt/ui (MIT) | Building or changing a page or component | The only stack-specific skill. v4-correct (`UFieldGroup`, `UNavigationMenu`, `app.config.ts` › `ui.colors`, `@import "@nuxt/ui"`) |
+| `frontend-design` | anthropics/skills (Apache-2.0) | A new page or a redesign | Names the generic-AI tells to avoid and asks for a plan reviewed against the brief before code. It defers to the brief, which here is `DESIGN.md` |
+| `web-design-guidelines` | vercel-labs/agent-skills (MIT) | Before calling UI work done | A `file:line` review against about 100 interface rules. Now pinned, so it works offline |
+| `design-qa-checklist` | Owl-Listener/designer-skills (MIT) | Before calling UI work done | The full state matrix (hover, focus, active, disabled, empty, loading, error), touch targets, truncation, real content. Agents tend to ship the happy path |
+| `state-machine` | Owl-Listener/designer-skills | A form, wizard or multi-step flow | Lists states for form, fetch, auth and wizard flows, with no impossible pairs (loading and error) and no dead ends |
+| `loading-states` | Owl-Listener/designer-skills | A view that fetches, submits or saves | Duration tiers (under 100 ms nothing, up to 1 s subtle, up to 10 s clear, longer shows progress), no layout shift, optimistic updates that roll back |
+| `error-handling-ux` | Owl-Listener/designer-skills | A view that fetches, submits or saves | Error placement by context (field, form, page, network, permission), input kept on error, what-happened/why/what-next copy, no "Something went wrong" |
+| `feedback-patterns` | Owl-Listener/designer-skills | A view that fetches, submits or saves | Feedback nearest the action, errors persist, undo over "are you sure", never colour alone. Toast timing must stay pausable (WCAG 2.2.1) |
+| `ux-writing` | Owl-Listener/designer-skills | Interface or landing copy | Verb-first labels, the three-part error, empty states that lead to an action. Its neutral-voice defaults yield to `DESIGN.md` |
+| `a-b-test-design` | Owl-Listener/designer-skills | Proposing or judging a growth bet | Hypothesis form, one primary metric plus guardrails, no peeking, and "don't test at very low traffic", which fits these apps. The routine's 100-per-arm thresholds win |
 
-| Skill | Source | Listed in sessions | Uses | Last used | References | Size (bytes) | Description chars | Verdict | Reason |
-| --- | --- | --- | --- | --- | --- | ---: | ---: | --- | --- |
-| `a-b-test-design` | Owl-Listener/designer-skills | no | 0 | never | — | 1,781 | 91 | **cut** | Generic design-process prompt; never listed in a session |
-| `accessibility-audit` | Owl-Listener/designer-skills | no | 0 | never | — | 1,223 | 112 | **cut** | Generic design-process prompt; never listed in a session |
-| `accessibility-test-plan` | Owl-Listener/designer-skills | no | 0 | never | — | 1,753 | 85 | **cut** | Generic design-process prompt; never listed in a session |
-| `affinity-diagram` | Owl-Listener/designer-skills | no | 0 | never | — | 1,332 | 205 | **cut** | Generic design-process prompt; never listed in a session |
-| `algorithmic-art` | anthropics/skills | no | 0 | never | — | 59,796 | 324 | **cut** | p5.js generative art; no product use |
-| `animation-principles` | Owl-Listener/designer-skills | no | 0 | never | — | 1,774 | 78 | **cut** | Generic design-process prompt; never listed in a session |
-| `brand-guidelines` | anthropics/skills | no | 0 | never | — | 13,592 | 236 | **cut** | Applies Anthropic's own brand, not a fork's |
-| `canvas-design` | anthropics/skills | no | 0 | never | — | 5,554,015 | 289 | **cut** | Poster/art generator; 5.6 MB of bundled fonts; no product use |
-| `card-sort-analysis` | Owl-Listener/designer-skills | no | 0 | never | — | 1,082 | 144 | **cut** | Generic design-process prompt; never listed in a session |
-| `case-study` | Owl-Listener/designer-skills | no | 0 | never | — | 1,970 | 75 | **cut** | Generic design-process prompt; never listed in a session |
-| `claude-api` | anthropics/skills | no | 0 | never | — | 241,277 | 293 | **cut** | Claude Code ships its own claude-api skill |
-| `click-test-plan` | Owl-Listener/designer-skills | no | 0 | never | — | 1,611 | 82 | **cut** | Generic design-process prompt; never listed in a session |
-| `color-system` | Owl-Listener/designer-skills | yes | 0 | never | — | 1,480 | 107 | **cut** | Generic design prompt; listed every session, never invoked; DESIGN.md owns this |
-| `competitive-analysis` | Owl-Listener/designer-skills | no | 0 | never | — | 1,375 | 117 | **cut** | Generic design-process prompt; never listed in a session |
-| `component-spec` | Owl-Listener/designer-skills | yes | 0 | never | — | 1,234 | 125 | **cut** | Generic design prompt; listed every session, never invoked; DESIGN.md owns this |
-| `dark-mode-design` | Owl-Listener/designer-skills | yes | 0 | never | — | 1,590 | 92 | **cut** | Generic design prompt; listed every session, never invoked; DESIGN.md owns this |
-| `data-visualization` | Owl-Listener/designer-skills | yes | 0 | never | — | 1,906 | 90 | **cut** | Generic design prompt; listed every session, never invoked; DESIGN.md owns this |
-| `design-brief` | Owl-Listener/designer-skills | no | 0 | never | — | 1,112 | 111 | **cut** | Generic design-process prompt; never listed in a session |
-| `design-critique` | Owl-Listener/designer-skills | no | 0 | never | — | 1,937 | 94 | **cut** | Generic design-process prompt; never listed in a session |
-| `design-principles` | Owl-Listener/designer-skills | no | 0 | never | — | 1,121 | 95 | **cut** | Generic design-process prompt; never listed in a session |
-| `design-qa-checklist` | Owl-Listener/designer-skills | no | 0 | never | — | 2,049 | 66 | **cut** | Generic design-process prompt; never listed in a session |
-| `design-rationale` | Owl-Listener/designer-skills | no | 0 | never | — | 1,772 | 96 | **cut** | Generic design-process prompt; never listed in a session |
-| `design-review-process` | Owl-Listener/designer-skills | no | 0 | never | — | 1,728 | 80 | **cut** | Generic design-process prompt; never listed in a session |
-| `design-sprint-plan` | Owl-Listener/designer-skills | no | 0 | never | — | 1,796 | 84 | **cut** | Generic design-process prompt; never listed in a session |
-| `design-system-adoption` | Owl-Listener/designer-skills | no | 0 | never | — | 2,054 | 83 | **cut** | Generic design-process prompt; never listed in a session |
-| `design-token` | Owl-Listener/designer-skills | no | 0 | never | — | 1,417 | 117 | **cut** | Generic design-process prompt; never listed in a session |
-| `design-token-audit` | Owl-Listener/designer-skills | no | 0 | never | — | 1,797 | 71 | **cut** | Generic design-process prompt; never listed in a session |
-| `diary-study-plan` | Owl-Listener/designer-skills | no | 0 | never | — | 1,231 | 172 | **cut** | Generic design-process prompt; never listed in a session |
-| `doc-coauthoring` | anthropics/skills | no | 0 | never | — | 15,815 | 428 | **cut** | Generic doc workflow; not tied to this stack |
-| `documentation-template` | Owl-Listener/designer-skills | no | 0 | never | — | 1,076 | 107 | **cut** | Generic design-process prompt; never listed in a session |
-| `docx` | anthropics/skills | no | 0 | never | — | 1,121,303 | 785 | **cut** | Duplicates the user-level Anthropic docx skill |
-| `empathy-map` | Owl-Listener/designer-skills | no | 0 | never | — | 1,922 | 195 | **cut** | Generic design-process prompt; never listed in a session |
-| `error-handling-ux` | Owl-Listener/designer-skills | yes | 0 | never | — | 1,802 | 61 | **cut** | Generic design prompt; listed every session, never invoked; DESIGN.md owns this |
-| `experience-map` | Owl-Listener/designer-skills | no | 0 | never | — | 1,267 | 109 | **cut** | Generic design-process prompt; never listed in a session |
-| `feedback-patterns` | Owl-Listener/designer-skills | yes | 0 | never | — | 1,989 | 99 | **cut** | Generic design prompt; listed every session, never invoked; DESIGN.md owns this |
-| `frontend-design` | anthropics/skills | yes | 0 | never | README.md (generic mention) | 14,614 | 399 | **keep** | Only general UI-build skill; worth having on hand for page work alongside DESIGN.md |
-| `gesture-patterns` | Owl-Listener/designer-skills | no | 0 | never | — | 1,849 | 64 | **cut** | Generic design-process prompt; never listed in a session |
-| `handoff-spec` | Owl-Listener/designer-skills | no | 0 | never | — | 1,812 | 93 | **cut** | Generic design-process prompt; never listed in a session |
-| `heuristic-evaluation` | Owl-Listener/designer-skills | no | 0 | never | — | 1,846 | 93 | **cut** | Generic design-process prompt; never listed in a session |
-| `icon-system` | Owl-Listener/designer-skills | no | 0 | never | — | 1,042 | 107 | **cut** | Generic design-process prompt; never listed in a session |
-| `illustration-style` | Owl-Listener/designer-skills | no | 0 | never | — | 1,773 | 92 | **cut** | Generic design-process prompt; never listed in a session |
-| `internal-comms` | anthropics/skills | no | 0 | never | — | 22,405 | 329 | **cut** | Company internal comms; consumer apps, no team |
-| `interview-script` | Owl-Listener/designer-skills | no | 0 | never | — | 1,899 | 191 | **cut** | Generic design-process prompt; never listed in a session |
-| `jobs-to-be-done` | Owl-Listener/designer-skills | no | 0 | never | — | 1,610 | 184 | **cut** | Generic design-process prompt; never listed in a session |
-| `journey-map` | Owl-Listener/designer-skills | no | 0 | never | — | 1,988 | 187 | **cut** | Generic design-process prompt; never listed in a session |
-| `layout-grid` | Owl-Listener/designer-skills | no | 0 | never | — | 1,477 | 94 | **cut** | Generic design-process prompt; never listed in a session |
-| `loading-states` | Owl-Listener/designer-skills | yes | 0 | never | — | 1,745 | 66 | **cut** | Generic design prompt; listed every session, never invoked; DESIGN.md owns this |
-| `mcp-builder` | anthropics/skills | no | 0 | never | — | 121,768 | 277 | **cut** | The mcp/ Worker is already built; generic guide |
-| `metrics-definition` | Owl-Listener/designer-skills | no | 0 | never | — | 1,142 | 98 | **cut** | Generic design-process prompt; never listed in a session |
-| `micro-interaction-spec` | Owl-Listener/designer-skills | no | 0 | never | — | 1,710 | 84 | **cut** | Generic design-process prompt; never listed in a session |
-| `naming-convention` | Owl-Listener/designer-skills | no | 0 | never | — | 1,148 | 111 | **cut** | Generic design-process prompt; never listed in a session |
-| `north-star-vision` | Owl-Listener/designer-skills | no | 0 | never | — | 1,157 | 108 | **cut** | Generic design-process prompt; never listed in a session |
-| `nuxt-ui` | nuxt/ui | yes | 0 | never | agent-setup.md | 62,812 | 240 | **keep** | Stack-specific; documented in agent-setup.md; complements the nuxt-ui MCP server |
-| `opportunity-framework` | Owl-Listener/designer-skills | no | 0 | never | — | 1,059 | 110 | **cut** | Generic design-process prompt; never listed in a session |
-| `pattern-library` | Owl-Listener/designer-skills | no | 0 | never | — | 1,227 | 111 | **cut** | Generic design-process prompt; never listed in a session |
-| `pdf` | anthropics/skills | no | 0 | never | — | 58,692 | 437 | **cut** | Duplicates the user-level Anthropic pdf skill |
-| `playwright-ui-testing` | az9713/playwright-ui-testing | yes | 0 | never | — | 120,296 | 87 | **cut** | Index of /test-* commands that do not exist in this repo |
-| `pptx` | anthropics/skills | no | 0 | never | — | 1,129,944 | 694 | **cut** | Duplicates the user-level Anthropic pptx skill |
-| `presentation-deck` | Owl-Listener/designer-skills | no | 0 | never | — | 2,085 | 83 | **cut** | Generic design-process prompt; never listed in a session |
-| `prototype-strategy` | Owl-Listener/designer-skills | no | 0 | never | — | 1,756 | 73 | **cut** | Generic design-process prompt; never listed in a session |
-| `responsive-design` | Owl-Listener/designer-skills | yes | 0 | never | — | 1,594 | 93 | **cut** | Generic design prompt; listed every session, never invoked; DESIGN.md owns this |
-| `skill-creator` | anthropics/skills | no | 0 | never | — | 225,004 | 319 | **cut** | Duplicates the user-level Anthropic skill-creator skill |
-| `slack-gif-creator` | anthropics/skills | no | 0 | never | — | 43,709 | 226 | **cut** | Slack GIFs; no product use |
-| `spacing-system` | Owl-Listener/designer-skills | no | 0 | never | — | 1,329 | 90 | **cut** | Generic design-process prompt; never listed in a session |
-| `stakeholder-alignment` | Owl-Listener/designer-skills | no | 0 | never | — | 1,179 | 119 | **cut** | Generic design-process prompt; never listed in a session |
-| `state-machine` | Owl-Listener/designer-skills | yes | 0 | never | — | 1,815 | 88 | **cut** | Generic design prompt; listed every session, never invoked; DESIGN.md owns this |
-| `summarize-interview` | Owl-Listener/designer-skills | no | 0 | never | — | 1,417 | 185 | **cut** | Generic design-process prompt; never listed in a session |
-| `team-workflow` | Owl-Listener/designer-skills | no | 0 | never | — | 2,105 | 83 | **cut** | Generic design-process prompt; never listed in a session |
-| `template-skill` | anthropics/skills | no | 0 | never | — | 140 | 68 | **cut** | Empty placeholder |
-| `test-scenario` | Owl-Listener/designer-skills | no | 0 | never | — | 1,608 | 84 | **cut** | Generic design-process prompt; never listed in a session |
-| `theme-factory` | anthropics/skills | no | 0 | never | — | 144,106 | 262 | **cut** | Themes for slides/docs artifacts, not app UI |
-| `theming-system` | Owl-Listener/designer-skills | yes | 0 | never | — | 1,267 | 114 | **cut** | Generic design prompt; listed every session, never invoked; DESIGN.md owns this |
-| `typography-scale` | Owl-Listener/designer-skills | yes | 0 | never | — | 1,374 | 83 | **cut** | Generic design prompt; listed every session, never invoked; DESIGN.md owns this |
-| `usability-test-plan` | Owl-Listener/designer-skills | no | 0 | never | — | 1,578 | 174 | **cut** | Generic design-process prompt; never listed in a session |
-| `user-flow-diagram` | Owl-Listener/designer-skills | no | 0 | never | — | 1,680 | 69 | **cut** | Generic design-process prompt; never listed in a session |
-| `user-persona` | Owl-Listener/designer-skills | no | 0 | never | — | 2,373 | 203 | **cut** | Generic design-process prompt; never listed in a session |
-| `ux-writing` | Owl-Listener/designer-skills | no | 0 | never | — | 1,933 | 84 | **cut** | Generic design-process prompt; never listed in a session |
-| `version-control-strategy` | Owl-Listener/designer-skills | no | 0 | never | — | 1,723 | 78 | **cut** | Generic design-process prompt; never listed in a session |
-| `visual-hierarchy` | Owl-Listener/designer-skills | yes | 0 | never | — | 1,740 | 87 | **cut** | Generic design prompt; listed every session, never invoked; DESIGN.md owns this |
-| `web-artifacts-builder` | anthropics/skills | no | 0 | never | — | 45,852 | 288 | **cut** | Builds claude.ai artifacts, not Nuxt pages |
-| `web-design-guidelines` | vercel-labs/agent-skills | yes | 0 | never | — | 1,231 | 184 | **keep** | Small; a review pass for UI/a11y that fetches the current guideline list |
-| `webapp-testing` | anthropics/skills | yes | 0 | never | — | 22,406 | 204 | **cut** | Repo has its own Playwright suites and test:a11y |
-| `wireframe-spec` | Owl-Listener/designer-skills | no | 0 | never | — | 1,628 | 85 | **cut** | Generic design-process prompt; never listed in a session |
-| `xlsx` | anthropics/skills | no | 0 | never | — | 1,093,063 | 943 | **cut** | Duplicates the user-level Anthropic xlsx skill |
+Some upstream descriptions point to skills we don't carry (`handoff-spec`, `form-design`, `doherty-threshold`). Those pointers are harmless.
+
+## Cut
+
+Shortlist picks overturned on reading: `accessibility-audit` only restates the WCAG headings, and axe plus `design-qa-checklist` already cover it. `responsive-design` uses 375/640/1024/1440 breakpoints, which are not Tailwind's. `dark-mode-design` prescribes `#121212` and off-white text against a fork's palette. `metrics-definition` is a generic HEART taxonomy, and `a-b-test-design` covers the primary and guardrail metrics. `playwright-ui-testing` drives a `playwright-cli` binary and `/test-*` commands that this repo doesn't have.
+
+| Skill | Source | Reason |
+| --- | --- | --- |
+| `algorithmic-art` | anthropics/skills | p5.js generative art; no product use |
+| `brand-guidelines` | anthropics/skills | Applies Anthropic's brand, not a fork's |
+| `canvas-design` | anthropics/skills | Poster and art renderer; 5.6 MB of fonts |
+| `claude-api` | anthropics/skills | Sessions have a built-in `claude-api`; the vendored copy pinned stale model ids |
+| `doc-coauthoring` | anthropics/skills | Generic document workflow; no licence file upstream |
+| `docx`, `pdf`, `pptx`, `xlsx` | anthropics/skills | Duplicates of skills every session has; about 3.4 MB together |
+| `internal-comms` | anthropics/skills | Company status reports; consumer apps with no team |
+| `mcp-builder` | anthropics/skills | Python and Node MCP SDK guide; the `mcp/` Worker is built differently |
+| `skill-creator` | anthropics/skills | Duplicates the built-in |
+| `slack-gif-creator` | anthropics/skills | No product use |
+| `template-skill` | anthropics/skills | Empty placeholder |
+| `theme-factory` | anthropics/skills | Themes for slides and docs; `DESIGN.md` owns theme |
+| `web-artifacts-builder` | anthropics/skills | React and shadcn artifacts, not Nuxt pages |
+| `webapp-testing` | anthropics/skills | Python Playwright with `networkidle` waits; the repo's suites are TypeScript |
+| `playwright-ui-testing` | az9713/playwright-ui-testing | Needs a CLI and commands this repo lacks; 1 star upstream |
+| `accessibility-audit` | Owl-Listener/designer-skills | WCAG headings only; axe and `design-qa-checklist` cover it |
+| `accessibility-test-plan` | Owl-Listener/designer-skills | Needs screen-reader sessions and real users |
+| `affinity-diagram`, `card-sort-analysis`, `click-test-plan`, `diary-study-plan`, `empathy-map`, `interview-script`, `summarize-interview`, `test-scenario`, `usability-test-plan` | Owl-Listener/designer-skills | Research activities that need real participants or transcripts |
+| `case-study`, `presentation-deck`, `stakeholder-alignment`, `team-workflow`, `design-sprint-plan`, `design-system-adoption`, `design-review-process`, `design-critique` | Owl-Listener/designer-skills | Portfolio, meeting and org-process artifacts for a design team |
+| `design-brief`, `design-rationale`, `documentation-template`, `handoff-spec`, `component-spec`, `pattern-library`, `wireframe-spec`, `user-flow-diagram`, `prototype-strategy` | Owl-Listener/designer-skills | Documents for a human handoff; here the agent writes the code |
+| `journey-map`, `experience-map`, `jobs-to-be-done`, `user-persona`, `north-star-vision`, `opportunity-framework`, `competitive-analysis` | Owl-Listener/designer-skills | Strategy artifacts; personas without research are fabrication |
+| `color-system`, `typography-scale`, `spacing-system`, `layout-grid`, `theming-system`, `design-token`, `design-token-audit`, `dark-mode-design`, `illustration-style`, `icon-system`, `design-principles` | Owl-Listener/designer-skills | Invent taste or token schemes that `DESIGN.md`, Tailwind v4 `@theme` and NuxtUI semantic colours already own; several contradict them (non-Tailwind breakpoints, `icon-` names against `i-lucide-*`) |
+| `responsive-design` | Owl-Listener/designer-skills | Non-Tailwind breakpoints; its good checks are in `design-qa-checklist` and the a11y suite |
+| `visual-hierarchy`, `heuristic-evaluation` | Owl-Listener/designer-skills | Theory a capable model already applies (Nielsen's ten, one primary action) |
+| `animation-principles`, `micro-interaction-spec`, `gesture-patterns` | Owl-Listener/designer-skills | Motion character is `DESIGN.md`'s; the apps have almost no custom gestures |
+| `data-visualization` | Owl-Listener/designer-skills | Sessions have a stronger built-in `dataviz` skill |
+| `metrics-definition` | Owl-Listener/designer-skills | Generic taxonomy; `fleet.json` › `product` defines the metrics |
+| `naming-convention`, `version-control-strategy` | Owl-Listener/designer-skills | Figma naming and file versioning; they contradict the repo's Vue and git conventions |
+
+`skills-lock.json` also listed a `contributing` skill from nuxt/ui that was never on disk. It is gone.
+
+## Gap research
+
+Signals were read 2026-11-24 from the GitHub API (`gh api repos/<owner>/<repo>`: stars, last push, licence) and from skills.sh's per-skill all-time install counts. skills.sh shows no date and its counts are unaudited. Treat them as relative, not absolute.
+
+**Most-installed skills overall** (skills.sh): `frontend-design` (anthropics, 1.2M), `vercel-react-best-practices` (931K), `web-design-guidelines` (903K), `vercel-composition-patterns` (472K), `ui-ux-pro-max` (471K), superpowers `brainstorming` (442K), `skill-creator` (442K), `impeccable` (433K), superpowers `systematic-debugging` (347K). The two most-installed skills that fit this stack are already kept. The Owl-Listener pack this template vendored has about 3K installs per skill (262K across 111 skills), flat across skills, which points to whole-pack installs.
+
+**Packs checked**
+
+| Pack | Stars | Last push | Licence | Fit |
+| --- | ---: | --- | --- | --- |
+| anthropics/skills | 200K | 2026-11-16 | Apache-2.0 per skill (Office skills since 2026-11-06) | `frontend-design` kept; the rest are built-in or off-stack |
+| obra/superpowers | 326K | 2026-11-24 | MIT | Process skills; `systematic-debugging` proposed |
+| coreyhaines31/marketingskills | 62K | 2026-11-24 | MIT | Most-installed SEO and copy skills; `seo-audit` and `copywriting` proposed |
+| pbakaus/impeccable | 116K | 2026-11-24 | Apache-2.0 | Design-command vocabulary; overlaps `frontend-design` and brings its own taste |
+| vercel-labs/agent-skills | 35K | 2026-11-20 | MIT (README) | `web-design-guidelines` kept; the rest are React- or Vercel-specific |
+| cloudflare/skills | 3.4K | 2026-11-24 | Apache-2.0 | `workers-best-practices` proposed; the rest are in the Cloudflare plugin |
+| stripe/ai | 2.1K | 2026-11-24 | MIT | `stripe-best-practices` (104K installs), in the Stripe plugin |
+| microsoft/playwright-cli | 15K | 2026-11-24 | Apache-2.0 | `playwright-cli` (227K installs) drives a CLI browser; it doesn't write TypeScript specs |
+| PostHog/skills | 80 | 2026-11-24 | MIT | `creating-experiments`, `instrument-feature-flags` (521 KB); the repo says it is under construction |
+| resend/resend-skills | 219 | 2026-11-19 | MIT | `email-best-practices` (60 KB) |
+| antfu/skills | 6.1K | 2026-11-11 | MIT | `nuxt` (148 KB, 25K installs), `vue`, `nitro` |
+| trailofbits/skills | 8.4K | 2026-10-23 | CC-BY-SA-4.0 | Security review; share-alike, so not for an MIT template |
+| Owl-Listener/designer-skills | 3.5K | 2026-11-19 | MIT | The source of seven kept skills |
+
+**Proposed additions** (vendored like a dependency, so they wait for a yes):
+
+| Skill | Source, licence | Size | Signal | Moment | What it changes here |
+| --- | --- | --- | --- | --- | --- |
+| `systematic-debugging` | obra/superpowers, MIT | 6 files, 29 KB | 347K installs | A bug or failing test, before proposing a fix; the `bug-fix` routine | Root cause before any fix, with a trace-back method and a test-polluter finder. Nothing built-in does this |
+| `workers-best-practices` | cloudflare/skills, Apache-2.0 | 5 files, 34 KB | 155K installs | Writing or reviewing `server/` code or `wrangler.toml` | Interactive sessions have it through the Cloudflare plugin. Cloud routines and fresh fork sessions don't. Its LICENSE must come with it |
+| `seo-audit` | coreyhaines31/marketingskills, MIT | 66 KB without evals | 266K installs | The `seo-content` routine; any new public content page | A technical and on-page audit beyond `seo:check`: indexing, canonicals, titles, Core Web Vitals |
+| `copywriting` | coreyhaines31/marketingskills, MIT | 56 KB without evals | 267K installs | Landing and marketing copy; the `marketing-content` routine | Conversion copy where `ux-writing` covers interface copy. Its rule that every claim must be supportable matches the routines' honest-output rule |
+
+**Referenced, not vendored**
+
+- `stripe-best-practices`: billing changes are rare and need the owner, and sessions that make them have the plugin.
+- PostHog `creating-experiments`: the repo is under construction, and flags here go through `scripts/flags.ts`.
+- `playwright-cli`: needs its CLI installed.
+- antfu `nuxt`: overlaps `AGENTS.md` and the `nuxt` MCP. Revisit if Nuxt 4 mistakes recur.
+- Resend `email-best-practices`: revisit at the next email build.
+- Cloudflare `web-perf`: in the plugin.
+- impeccable: overlaps `frontend-design` and brings its own taste.
+
+**Gaps left open**
+
+- **Browser tests.** No published skill writes TypeScript Playwright and axe specs. The `AGENTS.md` row points at `test/a11y/accessibility.spec.ts`. Write a short skill of our own once a session gets a spec wrong.
+- **Email.** No Maizzle or mustache skill exists. `.claude/docs/email.md` stays the guide.
+- **D1 and Drizzle migrations.** No vendor skill exists. The `/db-migrate` command covers them.
+- **Security review.** Use the built-in `/security-review`. No permissive skill with real traction exists.
+- **Mobile with Expo.** A fork-level choice, not the template's. Vercel's `react-native-skills` (289K installs) is the candidate.
+
+## Re-measure on 2026-12-08
+
+On the agent host, count `Skill` calls by name since this change landed:
+
+```bash
+cd ~/.claude/projects && find . -name '*.jsonl' -newermt 2026-11-25 -print0 \
+  | xargs -0 grep -ho '"name":"Skill","input":{"skill":"[^"]*"' \
+  | sed 's/.*"skill":"//;s/"$//' | sort | uniq -c | sort -rn
+```
+
+For each kept skill, also count the sessions that listed it:
+
+```bash
+find . -name '*.jsonl' -newermt 2026-11-25 -print0 | xargs -0 grep -l -- 'n- loading-states: ' | wc -l
+```
+
+Cloud routine runs leave no transcript on the host. For those, check whether the routine's PRs show the skill's checks.
+
+A kept skill with no load in the window is cut, unless no session in the window did the work its moment names. In that case it gets one more window.

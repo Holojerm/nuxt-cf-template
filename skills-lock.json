@@ -1,20 +1,75 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
+    "a-b-test-design": {
+      "source": "Owl-Listener/designer-skills",
+      "commit": "9a6930cf84a822eb458624bd11c61aac5bbdf224",
+      "sourceType": "github",
+      "skillPath": "prototyping-testing/skills/a-b-test-design/SKILL.md",
+      "computedHash": "a371feedf4cd43d1295334a652094c454e1bd73440718f6f22625e9f91efd11f"
+    },
+    "design-qa-checklist": {
+      "source": "Owl-Listener/designer-skills",
+      "commit": "9a6930cf84a822eb458624bd11c61aac5bbdf224",
+      "sourceType": "github",
+      "skillPath": "design-ops/skills/design-qa-checklist/SKILL.md",
+      "computedHash": "be16d83357782d903e6302f64c2cddc1514f85865f7c55dc06303a2c8cfa8d46"
+    },
+    "error-handling-ux": {
+      "source": "Owl-Listener/designer-skills",
+      "commit": "9a6930cf84a822eb458624bd11c61aac5bbdf224",
+      "sourceType": "github",
+      "skillPath": "interaction-design/skills/error-handling-ux/SKILL.md",
+      "computedHash": "f810f7aafa8fd8442bde18550039dfd820a19edf84e6084251194fa2a1c9d521"
+    },
+    "feedback-patterns": {
+      "source": "Owl-Listener/designer-skills",
+      "commit": "9a6930cf84a822eb458624bd11c61aac5bbdf224",
+      "sourceType": "github",
+      "skillPath": "interaction-design/skills/feedback-patterns/SKILL.md",
+      "computedHash": "fdd954c641fda1c508794e2e16d11499a1a15c10cb82b0a50a4d742c80a98264"
+    },
     "frontend-design": {
       "source": "anthropics/skills",
+      "commit": "e4bb5d960d87126ff3b3a8af1a104b7db67560ba",
       "sourceType": "github",
-      "computedHash": "063a0e6448123cd359ad0044cc46b0e490cc7964d45ef4bb9fd842bd2ffbca67"
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "computedHash": "83485963700bcf11d5bf78118facb301676b69d918fee2e45a95e7f1a2840f6c"
+    },
+    "loading-states": {
+      "source": "Owl-Listener/designer-skills",
+      "commit": "9a6930cf84a822eb458624bd11c61aac5bbdf224",
+      "sourceType": "github",
+      "skillPath": "interaction-design/skills/loading-states/SKILL.md",
+      "computedHash": "84670507ec9ceebb3411a57e202a939073d29b7035ef2b8f63a23982c2256a64"
     },
     "nuxt-ui": {
       "source": "nuxt/ui",
+      "commit": "64207da7971c6c998408c9562f12dcd73c383086",
       "sourceType": "github",
-      "computedHash": "9b7ff4c14185b7205c04c7ef41969d7b5c01e59c85e6d64083a7f497bf90b8d7"
+      "skillPath": "skills/nuxt-ui/SKILL.md",
+      "computedHash": "89a36be1af44314309cc668fab6294b566393e282e2526fa03c6dbc9ca9f2779"
+    },
+    "state-machine": {
+      "source": "Owl-Listener/designer-skills",
+      "commit": "9a6930cf84a822eb458624bd11c61aac5bbdf224",
+      "sourceType": "github",
+      "skillPath": "interaction-design/skills/state-machine/SKILL.md",
+      "computedHash": "e6f7c4cdc7a36599522f8edcde757d07ca1da658181de2b9f32a4223ccad5b62"
+    },
+    "ux-writing": {
+      "source": "Owl-Listener/designer-skills",
+      "commit": "9a6930cf84a822eb458624bd11c61aac5bbdf224",
+      "sourceType": "github",
+      "skillPath": "designer-toolkit/skills/ux-writing/SKILL.md",
+      "computedHash": "31631bd17b5aa86221d1a58a2a08b0005f663b329b73295c3086a829bce15f99"
     },
     "web-design-guidelines": {
       "source": "vercel-labs/agent-skills",
+      "commit": "5a37a6329fbad3666c3207392a6a7c0110e92efb",
       "sourceType": "github",
-      "computedHash": "a6a44d5498f7e8f68289902f3dedfc6f38ae0cee1e96527c80724cf27f727c2a"
+      "skillPath": "skills/web-design-guidelines/SKILL.md",
+      "computedHash": "5994e4cfd86144903d2ba750f862b9e36af15e3297aac983679e347b99f6cb71"
     }
   }
 }
