@@ -3,7 +3,7 @@ fire: fleet # fires the API trigger when a collect finds new ops events or a dep
 schedule: "37 6 * * *" # daily backstop
 gate: |
   Run `git fetch -q origin main && curl -sS -f -H "Authorization: Bearer $OPS_TOKEN" "$OPS_BASE_URL/api/ops/events?hours=25" | bun -e 'const o = await Bun.stdin.json(); const head = Bun.spawnSync(["git", "rev-parse", "origin/main"]).stdout.toString().trim(); if (o.events.length || o.migrations?.pending?.length || (o.build?.sha && !head.startsWith(o.build.sha))) console.log("work")'`. Never print the token. Empty output means nothing to do.
-model: claude-sonnet-5
+model: claude-opus-5-5
 connectors: [github]
 tier: 2
 enabled: false
