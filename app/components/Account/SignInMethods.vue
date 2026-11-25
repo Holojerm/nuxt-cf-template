@@ -19,6 +19,7 @@ const pending = ref<string | null>(null)
 const LINK_ERRORS: Record<string, string> = {
   taken:
     'That account already signs in to a different account here, so it was not linked. Sign in with it to reach that account.',
+  expired: 'Linking took longer than ten minutes, so nothing was linked. Start again from here.',
   provider_error:
     "The provider returned an error, so nothing was linked. That's usually temporary.",
 }
