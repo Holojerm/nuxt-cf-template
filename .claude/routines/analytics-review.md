@@ -1,7 +1,7 @@
 ---
 schedule: "30 12 * * 1"
 model: claude-sonnet-5
-connectors: [github, cloudflare]
+connectors: [github]
 enabled: false
 ---
 

@@ -1,7 +1,7 @@
 ---
 schedule: "30 13 * * 1"
 model: claude-opus-5-5
-connectors: [github, cloudflare]
+connectors: [github]
 enabled: false
 tier: 2
 ---
