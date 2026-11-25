@@ -26,15 +26,15 @@ so the repo ships the *definitions* and a sync command:
 
 | File | Trigger (UTC) | What it does | Needs |
 | --- | --- | --- | --- |
-| `issue-triage.md` | GitHub issue opened or reopened; weekly sweep Mon 11:00, gated | Labels, deduplicates, and assesses new GitHub issues; checks the issues other routines escalate against the code and data, and closes the ones the evidence disproves | GitHub connector (+ Cloudflare connector); Claude GitHub App |
+| `issue-triage.md` | GitHub issue opened or reopened; weekly sweep Mon 11:00, gated | Labels, deduplicates, and assesses new GitHub issues; checks the issues other routines escalate against the code and data, and closes the ones the evidence disproves | GitHub connector (+ D1 read token); Claude GitHub App |
 | `bug-fix.md` | Daily 12:00, gated on an open fixable bug | Picks the top triaged bug, opens a fix PR with a regression test; with a tier-2 grant it merges through the queue, otherwise it is a draft | GitHub connector; tier 2 |
 | `roadmap-build.md` | Daily 16:00, gated on fleet's `roadmapWork.pick` | Builds the one roadmap item fleet picks for the app (one in flight at a time), opens a draft PR and claims the item on fleet's board; with a tier-2 grant it then readies the PR. An item too big for one PR becomes a `needs-owner` issue proposing a split. About 8–15M tokens an item | GitHub connector + FLEET_SCOREBOARD_URL / FLEET_SCOREBOARD_TOKEN / FLEET_ROADMAP_AGENT_TOKEN env vars; tier 2 |
-| `feedback-triage.md` | API, fired by fleet when the open feedback count rises; weekly backstop Mon 11:30 | Turns the in-app feedback queue (D1 `feedback` table) into GitHub issues | GitHub connector (+ Cloudflare connector); API trigger token in fleet |
+| `feedback-triage.md` | API, fired by fleet when the open feedback count rises; weekly backstop Mon 11:30 | Turns the in-app feedback queue (D1 `feedback` table) into GitHub issues | GitHub connector (+ D1 read token); API trigger token in fleet |
 | `support-inbox.md` | Daily 13:00, gated on a support thread | Triages support email, **drafts** replies, files bugs as issues; on an operator repo it sends how-to answers and acknowledgements, signed as the product's assistant | Gmail + GitHub connectors |
 | `analytics-review.md` | Weekly Mon 12:30 | Reviews product/traffic metrics, writes a report, files opportunities; counts visits and signups per open channel bet | GitHub connector (+ analytics access) |
 | `marketing-content.md` | Weekly Thu 14:00 | Drafts changelog + marketing copy into `ops/marketing/` for review; off-site links in drafts are tagged | GitHub connector |
-| `growth-review.md` | Weekly Mon 13:30 | Judges last week's `growth-bet`s by type (channel, activation, monetisation, retention), turns every open `growth-idea` issue (filed by any routine or the owner: `_shared.md` › Growth ideas) and its own picks into bets against `fleet.json` › `product`, giving each idea an outcome every run, and ships each as a flagged (default-off) or content PR. Under 200 signups in 28 days it picks channel bets first, judged on visits and signups from one tagged source; never paid traffic. On an operator repo it starts and ends the rollout of its own `growth-…` flags (`scripts/flags.ts`) and submits free directory listings under the product's own name | GitHub connector (+ Cloudflare connector); tier 2 |
-| `seo-content.md` | Weekly Tue 13:00, gated on new commits, left-over work or search numbers | Keeps `seo:check` green, adds pages from the product's own data (page collections: rows or one new collection a run), and refreshes up to three pages losing clicks once fleet's scoreboard carries `search`; without it, skips that step and says so. Content PRs only; never buys links or posts off the site | GitHub connector (+ Cloudflare connector) + FLEET_SCOREBOARD_URL / FLEET_SCOREBOARD_TOKEN env vars; tier 2 |
+| `growth-review.md` | Weekly Mon 13:30 | Judges last week's `growth-bet`s by type (channel, activation, monetisation, retention), turns every open `growth-idea` issue (filed by any routine or the owner: `_shared.md` › Growth ideas) and its own picks into bets against `fleet.json` › `product`, giving each idea an outcome every run, and ships each as a flagged (default-off) or content PR. Under 200 signups in 28 days it picks channel bets first, judged on visits and signups from one tagged source; never paid traffic. On an operator repo it starts and ends the rollout of its own `growth-…` flags (`scripts/flags.ts`) and submits free directory listings under the product's own name | GitHub connector (+ D1 read token); tier 2 |
+| `seo-content.md` | Weekly Tue 13:00, gated on new commits, left-over work or search numbers | Keeps `seo:check` green, adds pages from the product's own data (page collections: rows or one new collection a run), and refreshes up to three pages losing clicks once fleet's scoreboard carries `search`; without it, skips that step and says so. Content PRs only; never buys links or posts off the site | GitHub connector (+ D1 read token) + FLEET_SCOREBOARD_URL / FLEET_SCOREBOARD_TOKEN env vars; tier 2 |
 | `x-post.md` | Tue/Thu 15:00 | One post about something that shipped, from the product's X account (`scripts/x-post.ts`), with a tagged link that carries the open channel bet's campaign when there is one; drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
 | `x-replies.md` | Twice daily 09:00, 17:00, gated on a new reply or mention | Answers people who replied to or mentioned the product's X account (a few a run at most), escalates support/billing/press, skips the rest (`scripts/x-replies.ts`); a link it gives is tagged; drafts without a tier-3 grant | GitHub connector + `X_*` env vars; tier 3 |
 | `ops-triage.md` | API, fired by fleet on new ops events or a deploy that never landed; daily backstop 06:37, gated | Reads the ops spool (`GET /api/ops/events`), retriggers a deploy that never landed, fixes **Mechanical fixes** classes, files the rest as triaged issues | GitHub connector + OPS_BASE_URL / OPS_TOKEN env vars (+ optional deploy hook URL); API trigger token in fleet; tier 2 |
@@ -108,14 +108,18 @@ details in [`_shared.md`](_shared.md).
 1. **Fork setup**: fill in [`routines.config.md`](routines.config.md) (product name, owner email,
    support inbox query, analytics sources). Leave its Operator section off unless the routines
    are meant to run the product (Safety model, below).
-2. **Connectors**: connect GitHub, Gmail and Cloudflare's API server, named `cloudflare`
-   (`https://mcp.cloudflare.com/mcp`; the D1-reading routines use it instead of an API token,
-   for `SELECT`s only, per `_shared.md` › Reading production D1) at https://claude.ai/customize/connectors — routines
-   that need a missing connector will log the failure to the journal instead of acting.
-3. **Sync**: `/routines sync`, then enable the ones you want. Start with `issue-triage` and
+2. **Connectors**: connect GitHub and Gmail at https://claude.ai/customize/connectors —
+   routines that need a missing connector will log the failure to the journal instead of
+   acting. Never attach a Cloudflare connector to a routine.
+3. **Production D1** (`_shared.md` › Reading production D1): create a Cloudflare API token
+   with Account · D1 · Read and nothing else. In the routines' cloud environment, add it as
+   `CLOUDFLARE_API_TOKEN` along with `CLOUDFLARE_ACCOUNT_ID`, and add `api.cloudflare.com` and
+   the production host to the environment's allowed domains (a host missing from that list
+   fails with a proxy 403).
+4. **Sync**: `/routines sync`, then enable the ones you want. Start with `issue-triage` and
    `daily-digest` (or, on an operator repo, fleet's weekly digest); add the rest once you trust
    the output.
-4. **Event triggers**: install the Claude GitHub App on the repo before syncing, so the sync can
+5. **Event triggers**: install the Claude GitHub App on the repo before syncing, so the sync can
    attach `issue-triage`'s issue events. For each routine with `fire:`, add an API trigger in
    its web editor, generate the token, and give fleet the trigger id and token as secrets
    (Triggers › Who fires the API triggers).
