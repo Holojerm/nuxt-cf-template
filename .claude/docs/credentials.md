@@ -22,7 +22,7 @@ credentials: { enabled: true, primary: true },     // /login becomes /auth/sign-
 | `prf` | `false` | Asks passkeys for the PRF extension (below) |
 | `iterations` | `600000` | PBKDF2 rounds for **new** passwords; the server refuses fewer |
 
-A fork vendors it with `bun run layers:pull credentials`, adds `export * from '../../layers/credentials/server/db/schema'` to `server/db/schema.ts`, and runs `bun run db:generate`. It needs `@simplewebauthn/server` and `@simplewebauthn/browser` (^11, the range `nuxt-auth-utils` 0.5 accepts) in `package.json`. Nothing in core links to the layer's pages: link `/settings/security` from your account page or menu. Making it the only sign-in is the "Credentials only" recipe in the repo's TEARDOWN checklist.
+A fork vendors it with `bun run layers:pull credentials`, adds `export * from '../../layers/credentials/server/db/schema'` to `server/db/schema.ts`, and runs `bun run db:generate`. It needs `@simplewebauthn/server` and `@simplewebauthn/browser` (^14; `nuxt-auth-utils` 0.6 declares ^13 as its optional peer, and its WebAuthn handlers call only APIs that 14 keeps) in `package.json`. Nothing in core links to the layer's pages: link `/settings/security` from your account page or menu. Making it the only sign-in is the "Credentials only" recipe in the repo's TEARDOWN checklist.
 
 ## What is where
 
@@ -98,9 +98,9 @@ Sign-up is email first. `signUp({ email })` only mails a link and fires nothing;
 
 ## Passkeys and PRF
 
-Registration and sign-in run through `nuxt-auth-utils`' `defineWebAuthnRegisterEventHandler` and `defineWebAuthnAuthenticateEventHandler`, with challenges stored in D1 and spent by the read that verifies them. Credentials are discoverable, so sign-in sends no address and there is no list of which accounts hold a passkey.
+Registration and sign-in run through `nuxt-auth-utils`' `defineWebAuthnRegisterEventHandler` and `defineWebAuthnAuthenticateEventHandler`, with challenges stored in D1 and spent by the read that verifies them. Credentials are discoverable, so sign-in sends no address and there is no list of which accounts hold a passkey. `@simplewebauthn/server` 14 offers the post-quantum ML-DSA-44 first only where `SubtleCrypto.supports('verify', 'ML-DSA-44')` is true; workerd has no `supports`, so a Worker offers and accepts EdDSA, ES256 and RS256, as on 13.
 
-**PRF does not pass through `nuxt-auth-utils`' client.** Its server handlers would forward an `extensions` option, but `useWebAuthn()` returns only a boolean and drops the authenticator's extension results, and `@simplewebauthn/browser` 11 passes `extensions` to the browser as given, so a PRF input serialised by the server would arrive as a string instead of bytes. The layer therefore calls `@simplewebauthn/browser`'s `startRegistration` / `startAuthentication` itself (`passkey-ceremony.ts`), adds `prf.eval.first` as bytes in the browser, reads `getClientExtensionResults().prf`, and removes it from the response before posting. The PRF output never reaches the server.
+**PRF does not pass through `nuxt-auth-utils`' client.** Its server handlers would forward an `extensions` option, but `useWebAuthn()` returns only a boolean and drops the authenticator's extension results, and `@simplewebauthn/browser` passes `extensions` to the browser as given, so a PRF input serialised by the server would arrive as a string instead of bytes. The layer therefore calls `@simplewebauthn/browser`'s `startRegistration` / `startAuthentication` itself (`passkey-ceremony.ts`), adds `prf.eval.first` as bytes in the browser, reads `getClientExtensionResults().prf`, and removes it from the response before posting. The PRF output never reaches the server.
 
 - The PRF input is a fixed label (`PASSKEY_PRF_INPUT`), so one passkey returns the same 32 bytes on every sign-in. Each passkey has its own.
 - `unavailable` means the authenticator was asked and returned nothing (older security keys, some password managers). The passkey still signs in; fall back to `unlock(password)`.
