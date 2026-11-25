@@ -140,6 +140,10 @@ code with a `state` matching this browser's HttpOnly `nuxt-auth-state`.
 
 - Refused, with a plain message on /account, if the provider account already
   signs in to another account (`?link_error=taken`). Nothing is merged or moved.
+- Refused (`?link_error=expired`) if the intent is past its ten minutes, edited,
+  or for another provider. The cookie lives an hour, longer than the intent it
+  carries, so a slow link comes back as expired instead of as a plain sign-in,
+  which for a hidden Apple address would create a second account.
 - Refused (`/login?error=link_session_expired`) if the starting session was
   revoked or the account deleted since (`checkSession()`), or if the callback
   arrives with a different session user.

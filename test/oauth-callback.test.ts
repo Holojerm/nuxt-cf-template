@@ -101,9 +101,9 @@ beforeEach(async () => {
   ])
 })
 
-async function intentCookie(userId: string, provider = 'apple') {
+async function intentCookie(userId: string, provider = 'apple', ttl = 600) {
   const now = Math.floor(Date.now() / 1000)
-  return signLinkIntent(PASSWORD, { userId, provider, issuedAt: now, expiresAt: now + 600 })
+  return signLinkIntent(PASSWORD, { userId, provider, issuedAt: now, expiresAt: now + ttl })
 }
 
 const appleProfile = {
@@ -142,6 +142,16 @@ describe('POST /api/account/identities/link', () => {
       sameSite: 'none',
       path: '/api/auth/',
     })
+  })
+
+  it('keeps the intent cookie for an hour, past the ten minutes its intent lives', async () => {
+    const event = fakeEvent({
+      method: 'POST',
+      body: { provider: 'apple' },
+      session: { user: { id: 'u1' } },
+    })
+    await linkStart(event)
+    expect(event.set[IDENTITY_LINK_COOKIE]?.opts).toMatchObject({ maxAge: 3600 })
   })
 })
 
@@ -183,13 +193,42 @@ describe('the provider callback', () => {
     expect(await findIdentityOwner(db, 'apple', 'apple-001')).toBe('u2')
   })
 
-  it('ignores an intent for a different provider and signs in instead', async () => {
+  it('reports an expired link as expired, never as a sign-in that would make a second account', async () => {
+    const event = fakeEvent({
+      method: 'POST',
+      cookies: { [IDENTITY_LINK_COOKIE]: await intentCookie('u1', 'apple', -1) },
+    })
+    const result = await callback.finishOAuth(event as never, {
+      profile: appleProfile,
+      emailVerified: true,
+    })
+    expect(result).toEqual({ redirect: '/account?link_error=expired' })
+    expect(completeOAuthSignIn).not.toHaveBeenCalled()
+    expect(await findIdentityOwner(db, 'apple', 'apple-001')).toBeNull()
+    expect(event.set[IDENTITY_LINK_COOKIE]?.opts).toMatchObject({ deleted: true })
+  })
+
+  it('treats an intent for a different provider the same way', async () => {
     const event = fakeEvent({
       cookies: { [IDENTITY_LINK_COOKIE]: await intentCookie('u1', 'google') },
     })
-    await callback.finishOAuth(event as never, { profile: appleProfile, emailVerified: true })
-    expect(completeOAuthSignIn).toHaveBeenCalledTimes(1)
+    const result = await callback.finishOAuth(event as never, {
+      profile: appleProfile,
+      emailVerified: true,
+    })
+    expect(result).toEqual({ redirect: '/account?link_error=expired' })
+    expect(completeOAuthSignIn).not.toHaveBeenCalled()
     expect(await findIdentityOwner(db, 'apple', 'apple-001')).toBeNull()
+  })
+
+  it('treats a tampered intent cookie the same way', async () => {
+    const event = fakeEvent({ cookies: { [IDENTITY_LINK_COOKIE]: 'not-a-signed-intent' } })
+    const result = await callback.finishOAuth(event as never, {
+      profile: appleProfile,
+      emailVerified: true,
+    })
+    expect(result).toEqual({ redirect: '/account?link_error=expired' })
+    expect(completeOAuthSignIn).not.toHaveBeenCalled()
   })
 
   it('drops a pending link when a plain sign-in starts, and keeps it for ?link=1', async () => {
