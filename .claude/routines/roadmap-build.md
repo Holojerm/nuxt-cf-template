@@ -2,7 +2,7 @@
 schedule: "0 16 * * *"
 gate: |
   Run `[ -n "$FLEET_SCOREBOARD_URL" ] && [ -n "$FLEET_SCOREBOARD_TOKEN" ] && [ -n "$FLEET_ROADMAP_AGENT_TOKEN" ] && curl -sS -f -H "Authorization: Bearer $FLEET_SCOREBOARD_TOKEN" "$FLEET_SCOREBOARD_URL" 2>/dev/null | bun -e 'const s = await Bun.stdin.json(); if (s.roadmapWork?.pick?.itemId) console.log(s.roadmapWork.pick.itemId)' 2>/dev/null`. Never print a token. Empty output means nothing to do.
-model: claude-sonnet-5
+model: claude-opus-5-5
 connectors: [github]
 tier: 2
 enabled: false
