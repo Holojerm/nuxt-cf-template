@@ -28,6 +28,11 @@
 // sign-out, and when any plain sign-in starts in the same browser
 // (server/utils/oauth-callback.ts), so an abandoned link cannot attach the next
 // person's provider account to the first person's account.
+//
+// The cookie outlives the intent it carries (an hour against ten minutes), so a
+// link that took too long comes back with a dead intent rather than no cookie.
+// The callback can then say "expired" instead of treating the return as a plain
+// sign-in, which for a hidden Apple address would create a second account.
 
 import type { H3Event } from 'h3'
 import type { ExtensionDb as Db } from './extensions'
@@ -39,6 +44,7 @@ import type { IdentityRef, LinkOutcome } from './user-identities'
 
 export const IDENTITY_LINK_COOKIE = 'identity-link'
 export const IDENTITY_LINK_TTL_SECONDS = 10 * 60
+const COOKIE_MAX_AGE_SECONDS = 60 * 60
 const COOKIE_PATH = '/api/auth/'
 
 export interface LinkIntent {
@@ -96,7 +102,7 @@ export async function setLinkIntentCookie(
       secure: true,
       sameSite: 'none',
       path: COOKIE_PATH,
-      maxAge: IDENTITY_LINK_TTL_SECONDS,
+      maxAge: COOKIE_MAX_AGE_SECONDS,
     },
   )
 }
@@ -109,12 +115,22 @@ export function clearLinkIntentCookie(event: H3Event) {
   deleteCookie(event, IDENTITY_LINK_COOKIE, { path: COOKIE_PATH, secure: true, sameSite: 'none' })
 }
 
-/** Read and clear: an intent is good for one callback, whatever happens in it. */
-export async function takeLinkIntent(event: H3Event, sessionPassword: string, provider: string) {
+/**
+ * Read and clear: an intent is good for one callback, whatever happens in it.
+ *
+ * `null` means no link was under way, so the callback is a sign-in. `'invalid'`
+ * means one was (the cookie came back) but its intent is expired, tampered with
+ * or for another provider: the callback must refuse, never sign in instead.
+ */
+export async function takeLinkIntent(
+  event: H3Event,
+  sessionPassword: string,
+  provider: string,
+): Promise<LinkIntent | 'invalid' | null> {
   const raw = getCookie(event, IDENTITY_LINK_COOKIE)
   if (!raw) return null
   clearLinkIntentCookie(event)
-  return verifyLinkIntent(sessionPassword, raw, provider)
+  return (await verifyLinkIntent(sessionPassword, raw, provider)) ?? 'invalid'
 }
 
 export type LinkAttempt = LinkOutcome | { outcome: 'expired' }

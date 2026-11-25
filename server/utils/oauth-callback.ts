@@ -3,8 +3,8 @@
 //
 //   withLinkAwareStart()  wraps the handler: a plain sign-in start voids any
 //                         pending link in this browser.
-//   finishOAuth()         onSuccess: link when a valid intent for this provider
-//                         came back, sign in otherwise.
+//   finishOAuth()         onSuccess: link when a link intent came back, sign in
+//                         when none did.
 //   failOAuth()           onError: back to whichever page started it.
 
 import type { H3Event } from 'h3'
@@ -49,7 +49,10 @@ export function withLinkAwareStart<T extends (event: RequestEvent) => unknown>(h
 export async function finishOAuth(event: H3Event, { profile, emailVerified }: FinishOAuthOptions) {
   const password = useRuntimeConfig(event).sessionPassword
   const intent = await takeLinkIntent(event, password, profile.provider)
-  if (!intent) return completeOAuthSignIn(event, { profile, emailVerified })
+  if (intent === null) return completeOAuthSignIn(event, { profile, emailVerified })
+  // A link was under way and its intent no longer holds. Never a sign-in instead:
+  // for a hidden Apple address that would create a second account.
+  if (intent === 'invalid') return sendRedirect(event, '/account?link_error=expired')
   if (!profile.subject) return sendRedirect(event, '/account?link_error=provider_error')
 
   // A link proves ownership through the session, not the address, so the
