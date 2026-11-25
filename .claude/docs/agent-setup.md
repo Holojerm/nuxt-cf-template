@@ -14,14 +14,14 @@ This project ships with Claude Code configuration in `.mcp.json.example` and `.c
 | Server | Type | Purpose |
 | --- | --- | --- |
 | `cloudflare-docs` | Remote HTTP | Workers, D1, KV, R2, Pages documentation — always active |
-| `cloudflare-bindings` | Remote HTTP | Workers bindings and API reference — always active |
+| `cloudflare` | Remote HTTP | The whole Cloudflare API through `search` + `execute` — OAuth sign-in on first use |
 | `nuxt-ui` | Remote HTTP | NuxtUI v4 component API docs, composables, templates, migration guide — always active |
 | `github` | Remote HTTP | GitHub repo/PR/issue context — requires `GITHUB_TOKEN` env var |
 | `nuxt` | Local SSE | Live project introspection (pages, components, auto-imports, config) — requires `bun dev` |
 | `drizzle` | Local stdio | Schema introspection against `server/db/schema.ts` |
 
 **Setup notes:**
-- `cloudflare-*` and `nuxt-ui` work with no credentials — always available.
+- `cloudflare-docs` and `nuxt-ui` work with no credentials — always available.
 - For GitHub MCP: set `GITHUB_TOKEN` in your shell (a PAT with repo read scope is enough).
 - For live Nuxt introspection: start `bun dev` before opening Claude Code. The `nuxt` server URL in the MCP config is `https://<portless-name>.localhost/__mcp/sse` and must match the `portless.name` in `package.json`. Rename both when you fork.
 - **In a linked worktree the dev host is different**, so that committed URL is wrong there by design — see the worktree section below. `bun dev` prints the host it's using, and `nuxt-mcp` repoints the local MCP config at it on boot so introspection keeps working. The file is gitignored, so there is nothing to commit.
@@ -73,7 +73,7 @@ analytics review, marketing drafts, and a single daily digest email to the owner
 sync` registers them (disabled) in your claude.ai account, and each one is enabled explicitly.
 Routines coordinate through an `ops-journal` branch (never merged to `main`, so journal commits
 don't trigger deploys). When forking: fill in `.claude/routines/routines.config.md`, connect
-GitHub + Gmail at claude.ai/customize/connectors, then `/routines sync`. Full docs in
+GitHub, Gmail and `cloudflare` at claude.ai/customize/connectors, then `/routines sync`. Full docs in
 [.claude/routines/README.md](../routines/README.md).
 
 ---
