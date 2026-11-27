@@ -163,10 +163,11 @@ CI/CD runs on [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/b
 3. Configure two build triggers:
    - **Production branch `main`**:
      - **Build command**: `bun run typecheck && bun run build`
-     - **Deploy command**: `bun run deploy:ci`. This applies pending D1 migrations to
+     - **Deploy command**: `bun run deploy:ci`. This checks the Worker has every secret
+       `fleet.json` › `secrets` names (`deploy:secrets`), applies pending D1 migrations to
        production, deploys, then runs `deploy:smoke` (fails the build if `/` or `/api/health`
-       is not serving). If a migration fails, the deploy doesn't run and production stays on
-       the previous build.
+       is not serving). If a secret is missing or a migration fails, the deploy doesn't run and
+       production stays on the previous build.
    - **Non-production branches** (`*`, excluding `main` and `ops-journal`):
      - **Build command**: `bun run ci` (the PR gate: format:check, email:build, the check scripts including migrations:check, typecheck, test, build)
      - **Deploy command**: `echo "Preview uploads disabled: branch builds would run with production bindings"`,
