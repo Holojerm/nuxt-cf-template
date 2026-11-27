@@ -1,0 +1,29 @@
+diff --git a/dist/module.mjs b/dist/module.mjs
+index 3e04e8f5f411b0b09e1383c79b7d817f42bc1772..fc1632ee3def3b15eae690c4c7ae1c3be8ead9b6 100644
+--- a/dist/module.mjs
++++ b/dist/module.mjs
+@@ -154,8 +154,12 @@ function useToolsRuntime() {
+ 
+ function toolsScaffold({ mcp, nuxt }) {
+   const setup = async () => {
+-    const { main } = await import('nuxi');
+-    const add2 = await (await main.subCommands).add();
++    // nuxi >=4 is a thin launcher whose own subCommands hold only `init`; the
++    // full command set, `add` included, lives in @nuxt/cli.
++    const { main } = await import('@nuxt/cli').catch(() => import('nuxi'));
++    const load = (await main.subCommands).add;
++    if (typeof load !== 'function') throw new Error('nuxt-mcp: this Nuxt CLI has no `add` command');
++    const add2 = await load();
+     const { runCommand: run } = await import('citty');
+     return {
+       add: add2,
+@@ -163,6 +167,9 @@ function toolsScaffold({ mcp, nuxt }) {
+     };
+   };
+   const promise = setup();
++  // Surfaced when the nuxt-scaffold tool is called, not as an unhandled
++  // rejection at dev-server start (Nuxt 4.7's dev overlay badges every page).
++  promise.catch(() => {});
+   async function add(args, options) {
+     const { add: add2, run } = await promise;
+     return await run(add2, {

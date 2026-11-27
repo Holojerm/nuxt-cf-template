@@ -14,6 +14,11 @@
 // A key and a channel send. To stop posting, delete the key.
 export default defineNuxtConfig({
   $meta: { name: 'social' },
+  // This layer has no app/ folder. Without an explicit srcDir, Nuxt 4.7 uses
+  // the layer root as its source dir, so the generated app tsconfig includes
+  // all of layers/social/ — test/ too, whose `cloudflare:test` import only
+  // resolves under vitest — and `nuxt typecheck` fails on it.
+  srcDir: 'app',
   runtimeConfig: {
     social: {
       bufferApiKey: '',

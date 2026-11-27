@@ -165,8 +165,10 @@ test('sign up by mail, sign in, passkey with PRF, change and reset the password'
   // ── The security page: axe, add a passkey, PRF arrives ─────────────────────
   await open(page, '/settings/security')
   await expect(page.getByRole('heading', { name: 'Passkeys' })).toBeVisible()
+  // Nuxt's dev-only problems badge never ships (see test/a11y/accessibility.spec.ts).
   const { violations } = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'])
+    .exclude('nuxt-error-overlay-badge')
     .analyze()
   expect(violations.map((violation) => `${violation.id}: ${violation.help}`)).toEqual([])
 
