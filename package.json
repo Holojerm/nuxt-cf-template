@@ -54,7 +54,7 @@
     "ci": "bun run scripts/ci.ts",
     "ci:fast": "bun run scripts/ci.ts --fast",
     "deploy": "nuxt build && wrangler --cwd .output deploy",
-    "deploy:ci": "bun run db:migrate:remote && wrangler --cwd .output deploy && bun run deploy:smoke",
+    "deploy:ci": "bun run deploy:secrets && bun run db:migrate:remote && wrangler --cwd .output deploy && bun run deploy:smoke",
     "build:preview": "CLOUDFLARE_ENV=preview nuxt build",
     "deploy:preview": "CLOUDFLARE_ENV=preview nuxt build && wrangler --cwd .output deploy",
     "mcp:dev": "bun run --cwd mcp dev",
@@ -65,6 +65,7 @@
     "mcp:pack": "bun run scripts/mcp-pack.ts",
     "mcp:publish": "bun run scripts/mcp-publish.ts",
     "migrations:check": "bun run scripts/check-migrations.ts",
+    "deploy:secrets": "bun run scripts/deploy-secrets.ts",
     "deploy:smoke": "bun run scripts/deploy-smoke.ts"
   },
   "dependencies": {
