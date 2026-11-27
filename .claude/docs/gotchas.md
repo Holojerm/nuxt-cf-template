@@ -48,7 +48,8 @@ So a deploy that adds a table ships a Worker querying a table that does not exis
 failure surfaces as a 500 on a route that worked perfectly in dev.
 
 **Workers Builds closes that gap with its deploy command, `bun run deploy:ci`.** It runs
-`db:migrate:remote`, then `wrangler --cwd .output deploy`, so the schema lands before the
+`deploy:secrets` (holds the deploy while the Worker lacks a secret `fleet.json` › `secrets`
+names), `db:migrate:remote`, then `wrangler --cwd .output deploy`, so the schema lands before the
 code that needs it, then `deploy:smoke`, which fails the build if `/` or `/api/health` is not
 serving 90 s later (the new version is already live; the red build is the alert). On the PR
 gate, `migrations:check` fails when `schema.ts` has changes no migration records, or when a new
@@ -341,7 +342,7 @@ The MCP worker deploys from a Workers Build of its own, with `mcp/` as the root 
 
 CI/CD runs on Cloudflare Workers Builds (repo connected in the dashboard under Worker → Settings → Build). The Worker's name in the dashboard must exactly match `name` in the root `wrangler.toml`, or every build fails before it starts. When you fork and rename the project, reconnect the repo to a Worker with the new name. Build settings live in the dashboard, not in the repo, as two triggers. Production branch `main`: build `bun run typecheck && bun run build`, deploy `bun run deploy:ci` (migrates production D1, then deploys; needs D1 Edit on the build token, see above). Non-production branches (excluding `main` and `ops-journal`): build `bun run ci` (the PR gate), deploy a no-op `echo`, so branch builds upload nothing. `NUXT_SESSION_PASSWORD` must be set as a build variable there too — the old GitHub Actions secrets are gone. `NUXT_APP_SECRET` is runtime-only: build and tests run without it, so it is a Worker secret, not a build variable.
 
-**nuxt-auth-utils says `NUXT_SESSION_PASSWORD` "is not used anymore". It is, by this app.** Since 0.6 the module seals sessions from Nuxt's `appSecret` (`NUXT_APP_SECRET`) and warns once per isolate while the old variable is set. The app still reads it as `sessionPassword`, the salt for unsubscribe links, IP and search hashes, and legacy referral refs. Deleting it to quiet the warning changes all of those silently. Missing `NUXT_APP_SECRET` in production is loud instead: every session read 500s.
+**nuxt-auth-utils says `NUXT_SESSION_PASSWORD` "is not used anymore". It is, by this app.** Since 0.6 the module seals sessions from Nuxt's `appSecret` (`NUXT_APP_SECRET`) and warns once per isolate while the old variable is set. The app still reads it as `sessionPassword`, the salt for unsubscribe links, IP and search hashes, and legacy referral refs. Deleting it to quiet the warning changes all of those silently. Missing `NUXT_APP_SECRET` in production is loud instead: every session read 500s. `bun run deploy:ci` now refuses to deploy while any name in `fleet.json` › `secrets` is absent from the Worker (`scripts/deploy-secrets.ts`), so add a new required secret to that list in the same commit that starts reading it.
 
 ## The browser suites run in GitHub Actions, NOT in `bun run ci`
 
