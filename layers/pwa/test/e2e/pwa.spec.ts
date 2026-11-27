@@ -34,8 +34,10 @@ test('the offline page passes axe and fits a phone', async ({ page }) => {
   const response = await page.goto('/offline')
   expect(response?.status()).toBe(200)
 
+  // Nuxt's dev-only problems badge never ships (see test/a11y/accessibility.spec.ts).
   const { violations } = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'])
+    .exclude('nuxt-error-overlay-badge')
     .analyze()
   expect(violations.map((violation) => `${violation.id}: ${violation.help}`)).toEqual([])
 
