@@ -139,7 +139,13 @@ async function scanWithAxe(page: Page): Promise<string[]> {
   // Contrast is measured against rendered pixels, so the webfonts have to have
   // landed before axe runs or it can sample a fallback face.
   await page.evaluate(() => document.fonts.ready)
-  const { violations } = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze()
+  // `nuxt-error-overlay-badge` is Nuxt's dev-only problems badge (4.7+). It shows
+  // whenever the dev server has logged a warning, sits outside every landmark,
+  // and never ships, so it is not the page under test.
+  const { violations } = await new AxeBuilder({ page })
+    .withTags(WCAG_TAGS)
+    .exclude('nuxt-error-overlay-badge')
+    .analyze()
   return format(violations)
 }
 

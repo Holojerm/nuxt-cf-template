@@ -67,8 +67,10 @@ async function openSettings(page: Page): Promise<void> {
 }
 
 async function expectAccessible(page: Page): Promise<void> {
+  // Nuxt's dev-only problems badge never ships (see test/a11y/accessibility.spec.ts).
   const { violations } = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'])
+    .exclude('nuxt-error-overlay-badge')
     .analyze()
   expect(
     violations.map(

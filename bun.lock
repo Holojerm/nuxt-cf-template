@@ -50,6 +50,7 @@
     },
   },
   "patchedDependencies": {
+    "nuxt-mcp@0.2.6": "patches/nuxt-mcp@0.2.6.patch",
     "@nuxthub/core@0.10.12": "patches/@nuxthub%2Fcore@0.10.12.patch",
   },
   "packages": {

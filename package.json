@@ -117,6 +117,7 @@
   },
   "packageManager": "bun@1.4.0",
   "patchedDependencies": {
-    "@nuxthub/core@0.10.12": "patches/@nuxthub%2Fcore@0.10.12.patch"
+    "@nuxthub/core@0.10.12": "patches/@nuxthub%2Fcore@0.10.12.patch",
+    "nuxt-mcp@0.2.6": "patches/nuxt-mcp@0.2.6.patch"
   }
 }
