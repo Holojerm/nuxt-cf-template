@@ -239,14 +239,38 @@ export function parseAttribution({ url, referrer, origin }: ParseAttributionInpu
 }
 
 /**
- * Parse whatever was in the cookie into something safe to store.
+ * The cookie's one wire encoding: JSON text, URI-encoded once. The plugin hands
+ * these to `useCookie` because Nuxt's default encoder JSON-stringifies any
+ * string that parses to an object, so the server received a JSON string
+ * literal, read it as null, and filed every signup under 'direct'.
+ */
+export const attributionCookieCodec = {
+  encode: (value: string | null): string => encodeURIComponent(value ?? ''),
+  decode: (value: string): string | null => {
+    if (!value) return null
+    try {
+      return decodeURIComponent(value)
+    } catch {
+      return null
+    }
+  },
+}
+
+/**
+ * Parse whatever was in the cookie into something safe to store. `raw` is the
+ * value a cookie parser returns, already URI-decoded: h3's `getCookie` on the
+ * server, `attributionCookieCodec.decode` in the plugin.
  * Returns null when the cookie is absent, unparseable, or carries nothing.
  */
-export function readAttributionCookie(raw: string | undefined): Attribution | null {
+export function readAttributionCookie(raw: string | null | undefined): Attribution | null {
   if (!raw) return null
   let candidate: unknown
   try {
-    candidate = JSON.parse(decodeURIComponent(raw))
+    candidate = JSON.parse(raw)
+    // Cookies written with Nuxt's default encoder hold the object as a JSON
+    // string inside JSON. They last 90 days, so unwrap them rather than lose
+    // those visitors' first touch.
+    if (typeof candidate === 'string') candidate = JSON.parse(candidate)
   } catch {
     return null
   }

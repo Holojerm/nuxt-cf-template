@@ -21,6 +21,7 @@
 import {
   ATTRIBUTION_COOKIE,
   ATTRIBUTION_MAX_AGE_SECONDS,
+  attributionCookieCodec,
   nextAttributionCookie,
   parseAttribution,
   readAttributionCookie,
@@ -35,6 +36,7 @@ export default defineNuxtPlugin(() => {
     // the request that creates the account.
     sameSite: 'lax',
     secure: window.location.protocol === 'https:',
+    ...attributionCookieCodec,
   })
 
   // First touch wins for the CHANNEL — a returning visitor already has the one
@@ -44,7 +46,7 @@ export default defineNuxtPlugin(() => {
   // claim; nextAttributionCookie() owns that decision and explains it, and
   // returns null when there is nothing to write.
   const next = nextAttributionCookie(
-    readAttributionCookie(cookie.value ?? undefined),
+    readAttributionCookie(cookie.value),
     parseAttribution({
       url: window.location.href,
       referrer: document.referrer,

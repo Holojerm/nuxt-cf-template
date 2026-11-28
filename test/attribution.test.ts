@@ -6,9 +6,12 @@
 // cookie half is security-relevant: it flows into a database write on the code
 // path that creates somebody's account.
 
+import { getCookie, type H3Event } from 'h3'
 import { describe, expect, it } from 'vitest'
 
 import {
+  ATTRIBUTION_COOKIE,
+  attributionCookieCodec,
   nextAttributionCookie,
   parseAttribution,
   readAttributionCookie,
@@ -209,14 +212,49 @@ describe('nextAttributionCookie', () => {
   })
 })
 
-describe('readAttributionCookie', () => {
-  it('reads back what the plugin wrote', () => {
-    const written = encodeURIComponent(
-      JSON.stringify({ source: 'newsletter', medium: 'email', campaign: 'launch' }),
-    )
-    expect(readAttributionCookie(written)).toMatchObject({ source: 'newsletter', medium: 'email' })
+/** What the server's routes do: h3's getCookie on the request's Cookie header. */
+function serverReads(wireValue: string) {
+  const event = {
+    node: { req: { headers: { cookie: `attr=${wireValue}` } } },
+  } as unknown as H3Event
+  return readAttributionCookie(getCookie(event, ATTRIBUTION_COOKIE))
+}
+
+/** Nuxt 4.5–4.7's default useCookie encoder, copied from nuxt/dist/app/composables/cookie.js. */
+function nuxtDefaultEncode(val: string) {
+  try {
+    if (typeof JSON.parse(val) !== 'string') return encodeURIComponent(JSON.stringify(val))
+  } catch {}
+  return encodeURIComponent(val)
+}
+
+describe('attribution cookie round trip', () => {
+  // A referrer with an escape in it proves the value is decoded exactly once.
+  const touch = {
+    source: 'newsletter',
+    medium: 'email',
+    campaign: 'launch',
+    referrer: 'https://news.example/item?q=a%20b',
+  }
+
+  it('reads on the server what the plugin writes in the browser', () => {
+    const wire = attributionCookieCodec.encode(JSON.stringify(touch))
+    expect(serverReads(wire)).toMatchObject(touch)
+    expect(readAttributionCookie(attributionCookieCodec.decode(wire))).toMatchObject(touch)
   })
 
+  it('still reads a cookie written with the old double encoding', () => {
+    const wire = nuxtDefaultEncode(JSON.stringify(touch))
+    expect(serverReads(wire)).toMatchObject(touch)
+    expect(readAttributionCookie(attributionCookieCodec.decode(wire))).toMatchObject(touch)
+  })
+
+  it('treats a malformed escape as no cookie rather than throwing', () => {
+    expect(attributionCookieCodec.decode('%E0%A4%A')).toBeNull()
+  })
+})
+
+describe('readAttributionCookie', () => {
   it('returns null for an absent or unparseable cookie', () => {
     expect(readAttributionCookie(undefined)).toBeNull()
     expect(readAttributionCookie('{{{')).toBeNull()
