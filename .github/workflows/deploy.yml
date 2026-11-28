@@ -1,0 +1,139 @@
+# Deploy from GitHub Actions, for a fork whose Cloudflare account Workers Builds
+# cannot reach.
+#
+# Workers Builds runs inside the Cloudflare account its GitHub app installation
+# is linked to, and one installation links to one account. A fork in any other
+# account gets the two Workers Builds triggers here instead, on the Mac mini's
+# runner while it is up (pick-runner.yml):
+#
+#   gate    every pull request, merge-queue drafts included: `bun run ci`, the
+#           check the non-production branch trigger gave. Required check `gate`.
+#   deploy  every push to main, or a manual run on main: typecheck and build,
+#           `bun run deploy:ci` (secrets, migrations, deploy, smoke), then the
+#           mcp/ worker. A failed step, the smoke test included, fails the run.
+#
+# Off unless the repository variable DEPLOY_FROM_ACTIONS is `true`: a fork on
+# Workers Builds leaves it unset and every job here is skipped. Switching it on
+# (token, environment, ruleset): README › Deploy from GitHub Actions.
+
+name: Deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      smoke_url:
+        description: Deploy main as usual, then smoke-test this URL instead of fleet.json › urls.prod.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    if: ${{ vars.DEPLOY_FROM_ACTIONS == 'true' }}
+    uses: ./.github/workflows/pick-runner.yml
+    with:
+      label: mini
+      trusted: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+
+  gate:
+    needs: route
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ${{ fromJSON(needs.route.outputs.runner || '"ubuntu-latest"') }}
+    timeout-minutes: 20
+    # A second push to the same branch makes the first run irrelevant.
+    concurrency:
+      group: gate-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      # The mini (`mini-*`) keeps this cache on local disk.
+      - uses: actions/cache@v4
+        if: ${{ !startsWith(runner.name, 'mini-') }}
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run ci
+
+  deploy:
+    needs: route
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ${{ fromJSON(needs.route.outputs.runner || '"ubuntu-latest"') }}
+    # The token lives in this environment, which only main may deploy to, so a
+    # run on any other branch never sees it.
+    environment: production
+    timeout-minutes: 30
+    # One deploy at a time, never cancelled halfway through a migration. A push
+    # that lands while one runs waits; a later push replaces the waiting one.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - uses: actions/cache@v4
+        if: ${{ !startsWith(runner.name, 'mini-') }}
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      # Workers Builds' production build command, plus the MCP worker's
+      # typecheck, so a broken worker stops the run before either deploys.
+      - name: Typecheck and build
+        run: |
+          bun run typecheck
+          if [ -f mcp/wrangler.jsonc ]; then
+            bun install --cwd mcp --frozen-lockfile
+            bun run --cwd mcp typecheck
+          fi
+          bun run build
+
+      - name: Deploy the app
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SMOKE_INPUT: ${{ inputs.smoke_url }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is not set on the production environment."
+            exit 1
+          fi
+          if [ -n "$SMOKE_INPUT" ]; then export SMOKE_URL="$SMOKE_INPUT"; fi
+          bun run deploy:ci
+
+      # After the app, whose deploy:ci migrates the database they share; its own
+      # wait-for-migrations check is then a single command.
+      - name: Deploy the MCP worker
+        if: ${{ hashFiles('mcp/wrangler.jsonc') != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bun run --cwd mcp deploy:ci

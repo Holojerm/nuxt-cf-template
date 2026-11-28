@@ -144,7 +144,11 @@ builds it from `mcp/`: `bun run build:ci` (the typecheck), then `bun run deploy:
    start on the same push;
 3. runs `wrangler deploy`.
 
-Setting it up, once per fork:
+A fork that deploys from GitHub Actions instead (README › Deploy from GitHub Actions) needs none of
+the setup below: `.github/workflows/deploy.yml` runs the same `deploy:ci` after the app's, so the
+wait is one command.
+
+Setting it up, once per fork on Workers Builds:
 
 1. `bun run mcp:deploy` from a machine, so the Worker exists.
 2. `bun run mcp:build:setup`. It copies the app's repository connection and build token to a

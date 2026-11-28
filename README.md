@@ -195,6 +195,28 @@ mode if someone later sets `NODE_VERSION` to something older is not a clear erro
 interactive install prompt that dies in `postinstall`. Workers Builds reads `.node-version`,
 `.nvmrc`, and a `NODE_VERSION` build variable, in case you prefer the dashboard.
 
+### 4b. Or: deploy from GitHub Actions
+
+Workers Builds can only build in the Cloudflare account that the GitHub app installation is linked
+to, and one installation links to one account. A fork whose Worker lives in another account runs the
+same two triggers from `.github/workflows/deploy.yml`, on the owner's Mac mini runner when it is up
+and on `ubuntu-latest` otherwise: `gate` runs `bun run ci` on every pull request, and `deploy` runs on
+every push to `main` (typecheck and build, `bun run deploy:ci`, then the `mcp/` worker's `deploy:ci`).
+A manual run (Actions › Deploy › Run workflow, on `main`) redeploys without a commit. To switch it on:
+
+1. Create a Cloudflare API token limited to that account and its zones, with Account › Workers
+   Scripts › Edit, Account › D1 › Edit, Zone › Workers Routes › Edit and Zone › Zone › Read.
+2. Create the GitHub environment `production`, deployable from `main` only, and give it the token
+   (the value never appears in a command line):
+   ```bash
+   gh api -X PUT repos/<owner>/<repo>/environments/production --input - <<<'{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
+   gh api -X POST repos/<owner>/<repo>/environments/production/deployment-branch-policies -f name=main -f type=branch
+   op read "op://<vault>/<item>/credential" | gh secret set CLOUDFLARE_API_TOKEN --env production -R <owner>/<repo>
+   ```
+3. `gh variable set DEPLOY_FROM_ACTIONS --body true -R <owner>/<repo>`.
+4. Once `gate` has passed on a pull request, make it the ruleset's required check in place of
+   `Workers Builds: <worker>`, then delete the Workers Builds triggers.
+
 ### 5. Run locally and deploy
 
 ```bash
