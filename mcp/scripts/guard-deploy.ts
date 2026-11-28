@@ -7,8 +7,8 @@
 // uploaded under the app's name, replacing the app and detaching its domain,
 // and the site answered Cloudflare error 1016 until the app was rolled back and
 // its triggers re-deployed by hand (2026-11-18). Deploy this worker from a
-// machine, or from a Workers Build of its own with `mcp/` as the root
-// directory, where the forced name is this worker's.
+// machine, from .github/workflows/deploy.yml, or from a Workers Build of its own
+// with `mcp/` as the root directory, where the forced name is this worker's.
 
 import { readFileSync } from 'node:fs'
 
