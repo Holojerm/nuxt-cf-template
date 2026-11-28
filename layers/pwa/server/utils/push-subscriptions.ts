@@ -6,8 +6,8 @@ import { z } from 'zod'
 
 import * as tables from '../db/schema'
 import type { PushSubscriptionRow } from '../db/schema'
-import type { ExtensionDb } from '#server/utils/extensions'
 import { base64UrlToBytes, isPushServiceEndpoint } from '../../shared/utils/push'
+import type { PushDb } from './push-db'
 
 /**
  * A person's phone, tablet and a couple of browsers. Each send is one
@@ -46,7 +46,7 @@ export type PushSubscriptionInput = z.infer<typeof pushSubscriptionSchema>
  * nobody is sent the notifications of whoever signed in before them.
  */
 export async function savePushSubscription(
-  db: ExtensionDb,
+  db: PushDb,
   userId: string,
   input: PushSubscriptionInput,
 ): Promise<void> {
@@ -72,7 +72,7 @@ export async function savePushSubscription(
 
 /** True when a row was removed. Scoped to the account: nobody unsubscribes someone else. */
 export async function removePushSubscription(
-  db: ExtensionDb,
+  db: PushDb,
   userId: string,
   endpoint: string,
 ): Promise<boolean> {
@@ -90,7 +90,7 @@ export async function removePushSubscription(
 
 /** Whether this browser's subscription is stored for this account. */
 export async function hasPushSubscription(
-  db: ExtensionDb,
+  db: PushDb,
   userId: string,
   endpoint: string,
 ): Promise<boolean> {
@@ -105,7 +105,7 @@ export async function hasPushSubscription(
 }
 
 export async function listPushSubscriptions(
-  db: ExtensionDb,
+  db: PushDb,
   userId: string,
 ): Promise<PushSubscriptionRow[]> {
   return db
