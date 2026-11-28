@@ -155,6 +155,7 @@ await sendPush(userId, { title: 'Your plan changed', body: 'Coach moved Thursday
 - **Ten subscriptions per account** (`MAX_PUSH_SUBSCRIPTIONS_PER_USER`); the oldest makes room. Each send is one subrequest per row.
 - **The message** is `{ title, body, url }`. Title and body are clipped to 100 and 300 characters. `url` must be same-origin: a click focuses a window already on it or opens one, and anything else goes to the home page. `pushsubscriptionchange` is not handled.
 - **Nothing is cached.** The worker shows the notification and keeps nothing.
+- **From a Worker that is not the app** (a fork's MCP worker, say), call `deliverPush({ db, keys: { publicKey, privateKey, subject }, fetch? }, userId, message)` from `push-send.ts`; `sendPush` is that call with the app's config filled in. Its imports stop at drizzle, the layer's own schema and `#server/utils/log` (a leaf), so a plain Worker's program needs only a `#server/*` path and `@cloudflare/workers-types`. `db` is any Drizzle client whose schema has the layer's tables (`PushDb`). That Worker needs both VAPID keys as its own secrets, the same pair as the app's, and `subject` is the app's URL unless `NUXT_PWA_VAPID_SUBJECT` says otherwise.
 
 ### Keys
 

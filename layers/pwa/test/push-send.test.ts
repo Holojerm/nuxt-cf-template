@@ -8,6 +8,7 @@ import { drizzle } from 'drizzle-orm/d1'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import * as schema from '~~/server/db/schema'
+import * as pwaSchema from '../server/db/schema'
 import { generateVapidKeys } from '../server/utils/push-crypto'
 import { deliverPush, PUSH_TTL_SECONDS } from '../server/utils/push-send'
 import type { PushKeys } from '../server/utils/push-send'
@@ -212,5 +213,22 @@ describe('deliverPush', () => {
     expect([...shown.title]).toHaveLength(100)
     expect([...shown.body]).toHaveLength(300)
     expect(shown.body.endsWith('😀')).toBe(true)
+  })
+
+  // What a Worker that is not the Nuxt app has: its own client over the same
+  // D1, knowing only this layer's tables.
+  it('sends with a client that knows only the pwa tables', async () => {
+    const browser = await subscribe(USER, PHONE)
+    const service = pushService()
+
+    const result = await deliverPush(
+      { db: drizzle(env.DB, { schema: pwaSchema }), keys, fetch: service.fetch, now: () => NOW },
+      USER,
+      MESSAGE,
+    )
+
+    expect(result).toEqual({ sent: 1, removed: 0, failed: 0 })
+    expect(JSON.parse(await decryptPushPayload(browser, service.sent[0]!.body))).toEqual(MESSAGE)
+    expect((await rows())[0]?.lastSuccessAt).toEqual(NOW)
   })
 })
