@@ -1,0 +1,58 @@
+# Picks the runner for a job that prefers the owner's Mac mini.
+#
+# A job pinned to a self-hosted label waits up to 24 hours when that runner is
+# offline, and auto-merge waits with it. The mini writes the current Unix time
+# to the repository variable MINI_HEARTBEAT every 5 minutes while its runner
+# loops can take jobs; a heartbeat older than 15 minutes sends the job to
+# ubuntu-latest instead. A busy mini keeps its heartbeat, so jobs still queue
+# for it rather than spilling over.
+#
+# No secret is needed: the variable is readable by any workflow in this
+# repository and only an admin can write it.
+
+name: Pick runner
+
+on:
+  workflow_call:
+    inputs:
+      label:
+        description: The mini's runner label (mini or mini-light).
+        type: string
+        required: true
+      trusted:
+        description: False for fork pull requests, which never run on the mini.
+        type: boolean
+        default: true
+    outputs:
+      runner:
+        description: JSON for runs-on.
+        value: ${{ jobs.pick.outputs.runner }}
+
+permissions: {}
+
+jobs:
+  pick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        env:
+          HEARTBEAT: ${{ vars.MINI_HEARTBEAT }}
+          LABEL: ${{ inputs.label }}
+          TRUSTED: ${{ inputs.trusted }}
+        run: |
+          # Validated before arithmetic: bash evaluates the text of a variable
+          # used inside $(( )), command substitutions included.
+          [[ $HEARTBEAT =~ ^[0-9]+$ ]] || HEARTBEAT=0
+          age=$(( $(date +%s) - HEARTBEAT ))
+          if [[ $TRUSTED != true ]]; then
+            runner='"ubuntu-latest"'; why='fork pull request'
+          elif (( age <= 900 )); then
+            runner="[\"self-hosted\",\"linux\",\"ARM64\",\"$LABEL\"]"; why="mini heartbeat ${age}s old"
+          else
+            runner='"ubuntu-latest"'; why="mini heartbeat ${age}s old, falling back"
+          fi
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          echo "::notice::$why: $runner"

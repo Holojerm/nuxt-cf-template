@@ -32,7 +32,7 @@ Read the row that matches what you are about to touch. Do not load them all.
 
 **Three gotchas are load-bearing enough to state here**, because each one fails with
 no error at all: local D1 lives in two places and only `.data/db/sqlite.db` is real;
-**production D1 is migrated only by the Workers Builds deploy command `bun run deploy:ci`**
+**production D1 is migrated only by the deploy command `bun run deploy:ci`** (Workers Builds', or `.github/workflows/deploy.yml`'s)
 (migrate, then deploy; a manual `bun run deploy` still skips it, so run
 `bun run db:migrate:remote` after one); and `bun dev` caches its DB connection, so an external write needs a
 restart. The rest are in [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).
@@ -99,6 +99,7 @@ restart. The rest are in [`.claude/docs/gotchas.md`](.claude/docs/gotchas.md).
 ├── public/                 # Static assets — og.png, favicon.svg, apple-touch-icon.png
 ├── .github/                # Dependabot + browser-suites.yml (PR checks: ci, forkless, axe/CSP/E2E — the browser half is the only CI
 │                           # not in Workers Builds; that image can't launch Chromium) + mcp-publish.yml (MCP Registry, on main)
+│                           # + deploy.yml (CI and deploys for a fork Workers Builds cannot reach; off by default)
 ├── fleet.json              # How this app describes itself to the portfolio dashboard — see bun run fleet:check
 ├── content.config.ts       # Blog collection + frontmatter schema
 ├── drizzle.config.ts       # Drizzle Kit config
@@ -217,7 +218,7 @@ Each of these has a full contract in its own doc — this is the one-line versio
 
 ## Git Workflow
 
-- **`main`** — production branch, auto-deploys via Cloudflare Workers Builds
+- **`main`** — production branch, auto-deploys via Cloudflare Workers Builds (or `.github/workflows/deploy.yml`, README › 4b)
 - **`dev`** — integration branch (optional for larger features)
 - **Feature branches**: `feat/workout-builder`, `fix/auth-redirect`, `chore/update-deps`
 - **Commit format**: `feat: add workout builder`, `fix: correct auth redirect`, `chore: update deps`
