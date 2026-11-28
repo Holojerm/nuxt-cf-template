@@ -2,6 +2,10 @@
 // in. Everything it needs is an argument, so the workerd tests drive it with a
 // real D1 and a fake push service; `sendPush` (push.ts) fills them in.
 //
+// No Nitro anywhere below this file (only `#server/utils/log`, a leaf): a
+// Worker that is not the Nuxt app, such as a fork's MCP worker, calls
+// `deliverPush` with its own D1 client and the app's VAPID keys.
+//
 // A push is a side effect of something else (a plan changed, the post
 // arrived), so nothing here throws for a subscription that failed: it is
 // logged, counted, and the others still go out.
@@ -9,11 +13,11 @@
 import { eq } from 'drizzle-orm'
 
 import * as tables from '../db/schema'
-import type { ExtensionDb } from '#server/utils/extensions'
 import { logEvent } from '#server/utils/log'
 import { base64UrlToBytes } from '../../shared/utils/push'
 import type { PushMessage } from '../../shared/utils/push'
 import { encryptPushPayload, vapidAuthorization } from './push-crypto'
+import type { PushDb } from './push-db'
 import { listPushSubscriptions } from './push-subscriptions'
 
 export interface PushKeys {
@@ -24,7 +28,7 @@ export interface PushKeys {
 }
 
 export interface PushDeps {
-  db: ExtensionDb
+  db: PushDb
   /** Null when the app has no VAPID keys: sending is then a no-op. */
   keys: PushKeys | null
   fetch?: typeof fetch

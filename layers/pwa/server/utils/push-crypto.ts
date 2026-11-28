@@ -2,10 +2,16 @@
 // encrypted to the browser's key (RFC 8291, in the `aes128gcm` coding of RFC
 // 8188), and the request is signed with the app's VAPID key (RFC 8292).
 // test/push-crypto.test.ts holds the first to the RFC's own test vector.
+//
+// It typechecks under both Nuxt's DOM types and @cloudflare/workers-types,
+// because a plain Worker (no Nitro) sends pushes with it too: see push-send.ts.
 
 import { base64UrlToBytes, bytesToBase64Url } from '../../shared/utils/push'
 
 const encoder = new TextEncoder()
+// workers-types says `encode` returns a Uint8Array on any buffer, which
+// WebCrypto's DOM types refuse; a copy is on a plain ArrayBuffer under both.
+const utf8 = (text: string): Uint8Array<ArrayBuffer> => new Uint8Array(encoder.encode(text))
 const ECDH = { name: 'ECDH', namedCurve: 'P-256' } as const
 const RECORD_SIZE = 4096
 /** salt (16), record size (4), key id length (1), the sender's public key (65). */
@@ -102,20 +108,21 @@ export async function encryptPushPayload(
   }
 
   const uaKey = await crypto.subtle.importKey('raw', input.uaPublic, ECDH, false, [])
-  const shared = new Uint8Array(
-    await crypto.subtle.deriveBits({ name: 'ECDH', public: uaKey }, senderPrivate, 256),
-  )
+  // workers-types spells the ECDH param `$public` (a C++ keyword escaped);
+  // the runtime, like the spec and the DOM types, reads `public`.
+  const ecdh = { name: 'ECDH', public: uaKey } as Parameters<SubtleCrypto['deriveBits']>[0]
+  const shared = new Uint8Array(await crypto.subtle.deriveBits(ecdh, senderPrivate, 256))
 
   // RFC 8291 §3.4: the auth secret and both public keys go into the key, so a
   // message is bound to this subscription and this sender.
   const ikm = await hkdf(
     input.authSecret,
     shared,
-    concat(encoder.encode('WebPush: info\0'), input.uaPublic, senderPublic),
+    concat(utf8('WebPush: info\0'), input.uaPublic, senderPublic),
     256,
   )
-  const contentKey = await hkdf(salt, ikm, encoder.encode('Content-Encoding: aes128gcm\0'), 128)
-  const nonce = await hkdf(salt, ikm, encoder.encode('Content-Encoding: nonce\0'), 96)
+  const contentKey = await hkdf(salt, ikm, utf8('Content-Encoding: aes128gcm\0'), 128)
+  const nonce = await hkdf(salt, ikm, utf8('Content-Encoding: nonce\0'), 96)
 
   const key = await crypto.subtle.importKey('raw', contentKey, 'AES-GCM', false, ['encrypt'])
   // One record. 0x02 marks it as the last, and nothing pads it.
